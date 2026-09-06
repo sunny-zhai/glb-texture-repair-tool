@@ -1,0 +1,191 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.titlebar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  height: 44px;
+  border-bottom: 1px solid #334155;
+  background: #0b1220;
+  user-select: none;
+}
+
+.titlebar-drag {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  -webkit-app-region: drag;
+}
+
+.app-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.window-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  width: 46px;
+  border: 0;
+  border-left: 1px solid #1f2937;
+  border-radius: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.window-control:hover {
+  background: #1e293b;
+}
+
+.window-control.close:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
+.app {
+  padding: 20px;
+}
+
+.panel {
+  border: 1px solid #334155;
+  background: #111827;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+button {
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.summary {
+  min-height: 40px;
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  word-break: break-word;
+}
+
+.list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.log {
+  margin: 0;
+  min-height: 140px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #020617;
+  white-space: pre-wrap;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.preview-heading h2 {
+  margin-bottom: 0;
+}
+
+.status {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.status.ok {
+  color: #86efac;
+}
+
+.status.error {
+  color: #fca5a5;
+}
+
+.validation-model-summary {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cesium-container {
+  height: 360px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #eaf1f5;
+}
+
+.cesium-viewer-bottom,
+.cesium-viewer-animationContainer,
+.cesium-viewer-timelineContainer,
+.cesium-viewer-fullscreenContainer,
+.cesium-viewer-geocoderContainer,
+.cesium-viewer-toolbar {
+  display: none !important;
+}
+
+.ok {
+  color: #86efac;
+}
+
+.error {
+  color: #fca5a5;
+}
