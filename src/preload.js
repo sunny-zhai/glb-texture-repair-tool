@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('repairApp', {
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
+  windowOpenDevTools: () => ipcRenderer.invoke('window-open-devtools'),
   onWindowMaximizeState: (callback) => {
     ipcRenderer.on('window-maximize-state', (_, value) => callback(value))
   },

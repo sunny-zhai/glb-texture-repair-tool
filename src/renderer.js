@@ -9,6 +9,7 @@ const cesiumContainer = document.getElementById('cesiumContainer')
 const minimizeWindow = document.getElementById('minimizeWindow')
 const maximizeWindow = document.getElementById('maximizeWindow')
 const closeWindow = document.getElementById('closeWindow')
+const openDevTools = document.getElementById('openDevTools')
 
 const state = {
   inputMode: 'files',
@@ -49,7 +50,7 @@ function renderResults(reports) {
       li.textContent = `ERROR ${report.inputPath}：${report.error}`
       appendLog(`修复失败：${report.inputPath}：${report.error}`, 'error')
     } else {
-      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0})`
+      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, baked=${report.skinnedMeshesBaked || 0}, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0})`
     }
     resultList.appendChild(li)
   }
@@ -79,6 +80,7 @@ async function validateModel(filePath) {
     const payload = await window.repairApp.readGlbDataUrl(filePath)
     state.validationBounds = payload.bounds
     setValidationModelSummary(payload.filePath, payload.bytes)
+    appendValidationMetadata(payload.metadata)
     if (!state.viewer) {
       state.viewer = new Cesium.Viewer(cesiumContainer, {
         animation: false,
@@ -101,6 +103,10 @@ async function validateModel(filePath) {
       state.viewer.scene.moon.show = false
       state.viewer.scene.screenSpaceCameraController.minimumZoomDistance = 0.02
       state.viewer.camera.frustum.near = 0.01
+      state.viewer.scene.requestRenderMode = false
+      state.viewer.scene.renderError.addEventListener((scene, error) => {
+        appendLog(`Cesium 渲染错误：${formatError(error)}`, 'error')
+      })
     }
 
     if (state.model) {
@@ -112,14 +118,22 @@ async function validateModel(filePath) {
       url: payload.dataUrl,
       scale: 1,
       modelMatrix: Cesium.Matrix4.IDENTITY,
+      backFaceCulling: false,
+      minimumPixelSize: 96,
     })
     if (!model) {
       throw new Error('Cesium 未返回模型对象。')
     }
     state.model = model
+    model.backFaceCulling = false
+    model.minimumPixelSize = 96
+    model.debugShowBoundingVolume = false
     state.viewer.scene.primitives.add(model)
+    appendLog(`Cesium 模型对象已创建：${filePath}`)
     await waitForModelReady(model)
-    setModelViewFromCesiumBounds(model, payload.bounds)
+    appendModelDiagnostics(model, payload.bounds)
+    startModelAnimations(model, payload.metadata)
+    await frameModelPreview(model, payload.bounds)
     state.viewer.scene.requestRender()
 
     const decimalMegabytes = (payload.bytes / 1000 / 1000).toFixed(2)
@@ -130,6 +144,25 @@ async function validateModel(filePath) {
     setValidationStatus('加载失败', 'error')
     appendLog(`Cesium 验证失败：${error.message}`, 'error')
   }
+}
+
+function appendValidationMetadata(metadata) {
+  if (!metadata) return
+  appendLog(`Cesium 验证输入：meshes=${metadata.meshCount}, materials=${metadata.materialCount}, images=${metadata.imageCount}, skins=${metadata.skinCount}, animations=${metadata.animationCount}, skinned=${metadata.hasSkinnedMeshes}`)
+  if (metadata.extensionsRequired.length) {
+    appendLog(`GLB 必需扩展：${metadata.extensionsRequired.join(', ')}`)
+  }
+  if (metadata.extensionsUsed.length) {
+    appendLog(`GLB 使用扩展：${metadata.extensionsUsed.join(', ')}`)
+  }
+  if (metadata.externalImageUris.length) {
+    appendLog(`GLB 存在外部贴图：${metadata.externalImageUris.join(' | ')}`, 'error')
+  }
+}
+
+function formatError(error) {
+  if (!error) return '未知错误'
+  return error.message || error.toString()
 }
 
 function waitForModelReady(model) {
@@ -148,19 +181,89 @@ function waitForModelReady(model) {
     if (model.errorEvent) {
       removeErrorListener = model.errorEvent.addEventListener((error) => {
         cleanup()
-        reject(error instanceof Error ? error : new Error(String(error)))
+        reject(error instanceof Error ? error : new Error(formatError(error)))
       })
     }
   })
 }
 
+function appendModelDiagnostics(model, fallbackBounds) {
+  const sphere = model.boundingSphere
+  if (sphere && Number.isFinite(sphere.radius) && sphere.radius > 0) {
+    const center = sphere.center
+    appendLog(`Cesium 模型就绪：boundingSphere radius=${sphere.radius.toFixed(3)}, center=(${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`, 'ok')
+    return
+  }
+
+  if (fallbackBounds) {
+    appendLog(`Cesium 模型就绪，但未取得有效 boundingSphere；改用 accessors 范围 radius=${fallbackBounds.radius.toFixed(3)}`)
+    return
+  }
+
+  appendLog('Cesium 模型就绪，但没有可用 boundingSphere 或 POSITION 范围。', 'error')
+}
+
+function startModelAnimations(model, metadata) {
+  if (!metadata?.animationCount) return
+  if (!model.activeAnimations?.addAll) {
+    appendLog('Cesium 动画：当前模型对象未暴露 activeAnimations。', 'error')
+    return
+  }
+
+  try {
+    model.activeAnimations.addAll({
+      loop: Cesium.ModelAnimationLoop.REPEAT,
+    })
+    appendLog(`Cesium 动画：已启动 ${metadata.animationCount} 个动画。`, 'ok')
+  } catch (error) {
+    appendLog(`Cesium 动画启动失败：${formatError(error)}`, 'error')
+  }
+}
+
 function setModelViewFromCesiumBounds(model, fallbackBounds) {
   if (model.boundingSphere && model.boundingSphere.radius > 0) {
-    const radius = model.boundingSphere.radius
-    state.viewer.camera.viewBoundingSphere(model.boundingSphere, new Cesium.HeadingPitchRange(0, -0.18, radius * 2.8))
+    setCameraToSphere(model.boundingSphere.center, model.boundingSphere.radius)
     return
   }
   setInitialModelView(fallbackBounds)
+}
+
+function setCameraToSphere(center, radius) {
+  const safeRadius = Math.max(radius || 1, 0.25)
+  const distance = safeRadius * 5.5
+  const viewDirection = Cesium.Cartesian3.normalize(new Cesium.Cartesian3(1.8, -2.4, 1.25), new Cesium.Cartesian3())
+  const cameraPosition = Cesium.Cartesian3.add(
+    center,
+    Cesium.Cartesian3.multiplyByScalar(viewDirection, distance, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  )
+  const direction = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.subtract(center, cameraPosition, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  )
+  const right = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.cross(direction, Cesium.Cartesian3.UNIT_Z, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  )
+  const up = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.cross(right, direction, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  )
+
+  state.viewer.camera.setView({
+    destination: cameraPosition,
+    orientation: {
+      direction,
+      up,
+    },
+  })
+  appendCameraDiagnostics(center, safeRadius)
+  state.viewer.scene.requestRender()
+}
+
+async function frameModelPreview(model, fallbackBounds) {
+  setModelViewFromCesiumBounds(model, fallbackBounds)
+  state.viewer.scene.requestRender()
 }
 
 function setInitialModelView(bounds) {
@@ -168,17 +271,22 @@ function setInitialModelView(bounds) {
   const radius = Math.max(bounds?.radius || 1, 0.25)
   const target = new Cesium.Cartesian3(center[0], center[1], center[2])
   const offset = new Cesium.Cartesian3(
-    radius * 3.8,
-    radius * 0.8,
-    radius * 1.1,
+    radius * 4.5,
+    radius * 1.3,
+    radius * 1.9,
   )
 
   state.viewer.camera.lookAt(target, offset)
   // Release the temporary lookAt transform so Cesium's normal mouse controls
   // remain active after the initial framing.
   state.viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY)
-state.viewer.scene.requestRender()
-  }
+  state.viewer.scene.requestRender()
+}
+
+function appendCameraDiagnostics(target, radius) {
+  const position = state.viewer.camera.position
+  appendLog(`Cesium 相机：position=(${position.x.toFixed(3)}, ${position.y.toFixed(3)}, ${position.z.toFixed(3)}), target=(${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)}), radius=${radius.toFixed(3)}`)
+}
 
 function resetModelView() {
   if (!state.viewer || !state.validationBounds) return
@@ -244,6 +352,10 @@ maximizeWindow.addEventListener('click', async () => {
 
 closeWindow.addEventListener('click', () => {
   window.repairApp.windowClose()
+})
+
+openDevTools.addEventListener('click', () => {
+  window.repairApp.windowOpenDevTools()
 })
 
 window.repairApp.onWindowMaximizeState((maximized) => {

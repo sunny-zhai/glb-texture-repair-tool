@@ -2,11 +2,12 @@
   "name": "glb-texture-repair-tool",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron desktop tool for repairing Cesium-compatible GLB textures",
+  "description": "Electron desktop tool for repairing Cesium-incompatible GLB textures, materials, and skinned meshes",
   "main": "src/main.js",
   "scripts": {
-    "dev": "electron .",
-    "start": "electron .",
+    "ensure:cesium": "node scripts/ensure-cesium.js",
+    "dev": "npm run ensure:cesium && electron .",
+    "start": "npm run ensure:cesium && electron .",
     "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/repair.js",
     "test": "node --test"
   },

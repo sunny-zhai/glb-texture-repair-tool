@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://cesium.com https://*.cesium.com; script-src 'self' https://cesium.com https://*.cesium.com 'unsafe-eval'; style-src 'self' https://cesium.com https://*.cesium.com 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https:; worker-src blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:;">
   <title>GLB 贴图修复桌面工具</title>
-  <script>window.CESIUM_BASE_URL = 'https://cesium.com/downloads/cesiumjs/releases/1.144/Build/Cesium/';</script>
-  <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.144/Build/Cesium/Widgets/widgets.css" />
+  <script>window.CESIUM_BASE_URL = '../vendor/cesium/1.128/Build/Cesium/';</script>
+  <link rel="stylesheet" href="../vendor/cesium/1.128/Build/Cesium/Widgets/widgets.css" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -15,6 +15,7 @@
       <div class="app-title">GLB 贴图修复桌面工具</div>
     </div>
     <div class="window-controls">
+      <button id="openDevTools" class="titlebar-action" aria-label="打开控制台">控制台</button>
       <button id="minimizeWindow" class="window-control" aria-label="最小化">−</button>
       <button id="maximizeWindow" class="window-control" aria-label="最大化">□</button>
       <button id="closeWindow" class="window-control close" aria-label="关闭">×</button>
@@ -60,7 +61,7 @@
       </section>
     </section>
   </main>
-  <script src="https://cesium.com/downloads/cesiumjs/releases/1.144/Build/Cesium/Cesium.js"></script>
+  <script src="../vendor/cesium/1.128/Build/Cesium/Cesium.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>
