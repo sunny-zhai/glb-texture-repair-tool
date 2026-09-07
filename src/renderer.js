@@ -9,7 +9,6 @@ const cesiumContainer = document.getElementById('cesiumContainer')
 const minimizeWindow = document.getElementById('minimizeWindow')
 const maximizeWindow = document.getElementById('maximizeWindow')
 const closeWindow = document.getElementById('closeWindow')
-const openDevTools = document.getElementById('openDevTools')
 
 const state = {
   inputMode: 'files',
@@ -352,10 +351,6 @@ maximizeWindow.addEventListener('click', async () => {
 
 closeWindow.addEventListener('click', () => {
   window.repairApp.windowClose()
-})
-
-openDevTools.addEventListener('click', () => {
-  window.repairApp.windowOpenDevTools()
 })
 
 window.repairApp.onWindowMaximizeState((maximized) => {

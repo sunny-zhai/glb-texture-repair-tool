@@ -33,9 +33,6 @@ function createWindow() {
   })
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow?.webContents.send('window-maximize-state', mainWindow?.isMaximized() || false)
-    if (!app.isPackaged) {
-      mainWindow?.webContents.openDevTools({ mode: 'detach' })
-    }
   })
 }
 
@@ -127,10 +124,6 @@ ipcMain.handle('window-toggle-maximize', () => {
 
 ipcMain.handle('window-close', () => {
   mainWindow?.close()
-})
-
-ipcMain.handle('window-open-devtools', () => {
-  mainWindow?.webContents.openDevTools({ mode: 'detach' })
 })
 
 function getPositionBounds(json) {
