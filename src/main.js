@@ -58,7 +58,7 @@ ipcMain.handle('pick-output-dir', async () => {
   return result.filePaths[0] || ''
 })
 
-ipcMain.handle('repair-glb', async (_, payload) => {
+ipcMain.handle('repair-glb', async (event, payload) => {
   const inputPaths = normalizeSelection(payload?.inputPaths)
   const outputDir = payload?.outputDir
   if (!inputPaths.length) {
@@ -69,7 +69,14 @@ ipcMain.handle('repair-glb', async (_, payload) => {
   }
 
   fs.mkdirSync(outputDir, { recursive: true })
-  return repairMany(inputPaths, outputDir)
+  const options = {}
+  if (payload?.freezePose) options.poseTime = 'start'
+  const sender = event.sender
+  options.onProgress = (progress) => {
+    if (sender.isDestroyed()) return
+    sender.send('repair-progress', progress)
+  }
+  return repairMany(inputPaths, outputDir, options)
 })
 
 ipcMain.handle('read-glb-data-url', async (_, filePath) => {

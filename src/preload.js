@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld('repairApp', {
   onWindowMaximizeState: (callback) => {
     ipcRenderer.on('window-maximize-state', (_, value) => callback(value))
   },
+  onRepairProgress: (callback) => {
+    ipcRenderer.on('repair-progress', (_, progress) => callback(progress))
+  },
 })

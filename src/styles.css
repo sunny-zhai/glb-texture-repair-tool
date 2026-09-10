@@ -81,6 +81,23 @@ body {
   margin-bottom: 16px;
 }
 
+.options {
+  margin: -8px 0 16px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.options input {
+  accent-color: #3b82f6;
+}
+
 button {
   border: 1px solid #475569;
   background: #1e293b;
@@ -93,6 +110,57 @@ button {
 button.primary {
   background: #2563eb;
   border-color: #2563eb;
+}
+
+.progress-wrap {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.progress-wrap[hidden] {
+  display: none;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: #1e293b;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  background: #2563eb;
+  transition: width 0.15s ease;
+}
+
+.progress-fill.done {
+  background: #16a34a;
+}
+
+.progress-text {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+#progressText {
+  overflow-wrap: anywhere;
+}
+
+.progress-counter {
+  flex: none;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
 }
 
 .grid {

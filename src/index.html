@@ -31,6 +31,20 @@
         <button id="runRepair" class="primary">开始修复</button>
       </div>
 
+      <div class="options">
+        <label><input type="checkbox" id="freezePose" checked /> 带动画的蒙皮模型：烘焙为动画起始姿势（不勾选则烘焙为绑定站姿）</label>
+      </div>
+
+      <div id="progressWrap" class="progress-wrap" hidden>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div class="progress-text">
+          <span id="progressText">准备中…</span>
+          <span id="progressCounter" class="progress-counter"></span>
+        </div>
+      </div>
+
       <div class="grid">
         <div>
           <h2>输入</h2>
