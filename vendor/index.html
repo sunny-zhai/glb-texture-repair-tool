@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:;">
+  <title>GLB 贴图修复桌面工具</title>
+  <script>window.CESIUM_BASE_URL = '../vendor/cesium/1.128/Build/Cesium/';</script>
+  <link rel="stylesheet" href="../vendor/cesium/1.128/Build/Cesium/Widgets/widgets.css" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="titlebar">
+    <div class="titlebar-drag">
+      <div class="app-title">GLB 贴图修复桌面工具</div>
+    </div>
+    <div class="window-controls">
+      <button id="minimizeWindow" class="window-control" aria-label="最小化">−</button>
+      <button id="maximizeWindow" class="window-control" aria-label="最大化">□</button>
+      <button id="closeWindow" class="window-control close" aria-label="关闭">×</button>
+    </div>
+  </header>
+  <main class="app">
+    <section class="panel">
+      <div class="toolbar">
+        <button id="pickFiles">选择文件</button>
+        <button id="pickDir">选择目录</button>
+        <button id="pickOutput">选择输出目录</button>
+        <button id="pickValidation">选择验证模型</button>
+        <button id="resetView">重置视角</button>
+        <button id="runRepair" class="primary">开始修复</button>
+      </div>
+
+      <div class="options">
+        <label><input type="checkbox" id="freezePose" checked /> 带动画的蒙皮模型：烘焙为动画起始姿势（不勾选则烘焙为绑定站姿）</label>
+      </div>
+
+      <div id="progressWrap" class="progress-wrap" hidden>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div class="progress-text">
+          <span id="progressText">准备中…</span>
+          <span id="progressCounter" class="progress-counter"></span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <h2>输入</h2>
+          <div id="inputSummary" class="summary">未选择</div>
+          <ul id="inputList" class="list"></ul>
+        </div>
+        <div>
+          <h2>输出目录</h2>
+          <div id="outputSummary" class="summary">未选择</div>
+          <h2>结果</h2>
+          <ul id="resultList" class="list"></ul>
+        </div>
+      </div>
+
+      <section>
+        <div class="preview-heading">
+          <h2>Cesium 模型验证</h2>
+          <span id="validationStatus" class="status">未加载模型</span>
+        </div>
+        <div id="validationModelSummary" class="validation-model-summary">当前验证模型：未选择</div>
+        <div id="cesiumContainer" class="cesium-container"></div>
+      </section>
+
+      <section>
+        <h2>日志</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </section>
+  </main>
+  <script src="../vendor/cesium/1.128/Build/Cesium/Cesium.js"></script>
+  <script src="./renderer.js"></script>
+</body>
+</html>
