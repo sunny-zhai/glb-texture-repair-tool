@@ -8,10 +8,60 @@
     "ensure:cesium": "node scripts/ensure-cesium.js",
     "dev": "npm run ensure:cesium && electron .",
     "start": "npm run ensure:cesium && electron .",
+    "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
     "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/repair.js",
     "test": "node --test"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.glbtexturerepair.tool",
+    "productName": "GLB Texture Repair Tool",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "scripts/**/*",
+      "assets/**/*",
+      "vendor/cesium/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
   }
 }

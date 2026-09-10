@@ -6,10 +6,14 @@ const log = document.getElementById('log')
 const validationStatus = document.getElementById('validationStatus')
 const validationModelSummary = document.getElementById('validationModelSummary')
 const cesiumContainer = document.getElementById('cesiumContainer')
+const progressWrap = document.getElementById('progressWrap')
+const progressFill = document.getElementById('progressFill')
+const progressText = document.getElementById('progressText')
+const progressCounter = document.getElementById('progressCounter')
+const runRepairButton = document.getElementById('runRepair')
 const minimizeWindow = document.getElementById('minimizeWindow')
 const maximizeWindow = document.getElementById('maximizeWindow')
 const closeWindow = document.getElementById('closeWindow')
-const openDevTools = document.getElementById('openDevTools')
 
 const state = {
   inputMode: 'files',
@@ -50,9 +54,66 @@ function renderResults(reports) {
       li.textContent = `ERROR ${report.inputPath}：${report.error}`
       appendLog(`修复失败：${report.inputPath}：${report.error}`, 'error')
     } else {
-      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, baked=${report.skinnedMeshesBaked || 0}, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0})`
+      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, baked=${report.skinnedMeshesBaked || 0}, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0}, uv=${report.texCoordsFilled || 0}, merged=${report.primitivesMerged || 0})`
     }
     resultList.appendChild(li)
+  }
+}
+
+function showProgress(done, total, message, className = '') {
+  progressWrap.hidden = false
+  progressText.textContent = message
+  progressCounter.textContent = total > 0 ? `${done}/${total}` : ''
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0
+  progressFill.style.width = `${percent}%`
+  progressFill.className = `progress-fill ${className}`.trim()
+}
+
+function setRunning(running) {
+  runRepairButton.disabled = running
+  runRepairButton.textContent = running ? '修复中…' : '开始修复'
+}
+
+function handleRepairProgress(progress) {
+  switch (progress?.phase) {
+    case 'scanning':
+      showProgress(0, 0, '正在扫描输入，统计待修复模型数量…')
+      break
+    case 'start':
+      if (progress.total === 0) {
+        showProgress(0, 0, '未在所选输入中找到 GLB 文件。', 'done')
+        appendLog('未在所选输入中找到 GLB 文件。', 'error')
+        break
+      }
+      showProgress(0, progress.total, `共 ${progress.total} 个模型，开始批量修复…`)
+      appendLog(`开始批量修复：共 ${progress.total} 个模型`)
+      break
+    case 'file-start':
+      showProgress(progress.index, progress.total, `正在修复：${progress.relativePath}`)
+      appendLog(`[${progress.index + 1}/${progress.total}] 修复中：${progress.relativePath}`)
+      break
+    case 'file-done':
+      showProgress(
+        progress.completed,
+        progress.total,
+        progress.status === 'error'
+          ? `失败：${progress.relativePath}`
+          : `已完成：${progress.relativePath}`,
+        progress.completed === progress.total ? 'done' : '',
+      )
+      break
+    case 'done':
+      showProgress(
+        progress.completed,
+        progress.total,
+        progress.failed > 0
+          ? `批量修复结束：成功 ${progress.completed - progress.failed} 个，失败 ${progress.failed} 个。`
+          : `批量修复结束：全部 ${progress.completed} 个模型修复成功。`,
+        'done',
+      )
+      break
+    default:
+      break
   }
 }
 
@@ -288,9 +349,13 @@ function appendCameraDiagnostics(target, radius) {
   appendLog(`Cesium 相机：position=(${position.x.toFixed(3)}, ${position.y.toFixed(3)}, ${position.z.toFixed(3)}), target=(${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)}), radius=${radius.toFixed(3)}`)
 }
 
+// 复用加载时的取景入口，保证「重置视角」与加载模型的默认视角完全一致。
+// 之前这里直接调 setInitialModelView，走的是 accessor 边界那条回退路径，
+// 和加载时优先采用的 boundSphere 取景不同，重置后视角会跳。
 function resetModelView() {
-  if (!state.viewer || !state.validationBounds) return
-  setInitialModelView(state.validationBounds)
+  if (!state.viewer || !state.model) return
+  setModelViewFromCesiumBounds(state.model, state.validationBounds)
+  state.viewer.scene.requestRender()
 }
 
 document.getElementById('pickFiles').addEventListener('click', async () => {
@@ -323,13 +388,16 @@ document.getElementById('pickValidation').addEventListener('click', async () => 
 
 document.getElementById('resetView').addEventListener('click', resetModelView)
 
-document.getElementById('runRepair').addEventListener('click', async () => {
+runRepairButton.addEventListener('click', async () => {
   resultList.innerHTML = ''
+  showProgress(0, 0, '正在扫描输入，统计待修复模型数量…')
+  setRunning(true)
   try {
     const reports = await window.repairApp.repairGlb({
       inputPaths: state.inputPaths,
       inputMode: state.inputMode,
       outputDir: state.outputDir,
+      freezePose: document.getElementById('freezePose').checked,
     })
     renderResults(reports)
     appendLog(`完成：${reports.length} 个任务`, 'ok')
@@ -337,8 +405,13 @@ document.getElementById('runRepair').addEventListener('click', async () => {
     if (firstSuccess) await validateModel(firstSuccess.outputPath)
   } catch (error) {
     appendLog(error.message, 'error')
+    showProgress(0, 0, `批量修复中断：${error.message}`)
+  } finally {
+    setRunning(false)
   }
 })
+
+window.repairApp.onRepairProgress(handleRepairProgress)
 
 minimizeWindow.addEventListener('click', () => {
   window.repairApp.windowMinimize()
@@ -352,10 +425,6 @@ maximizeWindow.addEventListener('click', async () => {
 
 closeWindow.addEventListener('click', () => {
   window.repairApp.windowClose()
-})
-
-openDevTools.addEventListener('click', () => {
-  window.repairApp.windowOpenDevTools()
 })
 
 window.repairApp.onWindowMaximizeState((maximized) => {

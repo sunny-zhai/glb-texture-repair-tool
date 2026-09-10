@@ -1,52 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="GLB texture repair tool icon">
   <defs>
-    <linearGradient id="bg" x1="140" y1="98" x2="888" y2="918" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1e3a5f"/>
-      <stop offset="0.55" stop-color="#14213d"/>
-      <stop offset="1" stop-color="#0b1020"/>
+    <linearGradient id="bg" x1="120" y1="104" x2="904" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#10253f"/>
+      <stop offset="0.58" stop-color="#0d1a2f"/>
+      <stop offset="1" stop-color="#08111f"/>
     </linearGradient>
-    <linearGradient id="cubeTop" x1="338" y1="228" x2="688" y2="412" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#e0f2fe"/>
+    <linearGradient id="cubeTop" x1="338" y1="216" x2="684" y2="396" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f0f9ff"/>
+      <stop offset="0.55" stop-color="#7dd3fc"/>
       <stop offset="1" stop-color="#38bdf8"/>
     </linearGradient>
-    <linearGradient id="cubeLeft" x1="266" y1="356" x2="522" y2="724" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#22d3ee"/>
+    <linearGradient id="cubeLeft" x1="246" y1="376" x2="504" y2="730" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14b8a6"/>
       <stop offset="1" stop-color="#0f766e"/>
     </linearGradient>
-    <linearGradient id="cubeRight" x1="520" y1="348" x2="756" y2="724" gradientUnits="userSpaceOnUse">
+    <linearGradient id="cubeRight" x1="530" y1="360" x2="792" y2="742" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#60a5fa"/>
-      <stop offset="1" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="32" stdDeviation="28" flood-color="#000" flood-opacity="0.35"/>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#000" flood-opacity="0.35"/>
     </filter>
   </defs>
 
   <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
-  <circle cx="804" cy="214" r="74" fill="#22c55e" opacity="0.92"/>
-  <path d="M772 214l22 23 44-54" fill="none" stroke="#ecfdf5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
 
   <g filter="url(#shadow)">
-    <path d="M512 160l304 176-304 176-304-176z" fill="url(#cubeTop)"/>
-    <path d="M208 336l304 176v352L208 688z" fill="url(#cubeLeft)"/>
-    <path d="M816 336L512 512v352l304-176z" fill="url(#cubeRight)"/>
+    <path d="M512 168l286 164-286 164-286-164z" fill="url(#cubeTop)"/>
+    <path d="M226 332l286 164v336L226 668z" fill="url(#cubeLeft)"/>
+    <path d="M798 332L512 496v336l286-164z" fill="url(#cubeRight)"/>
   </g>
 
-  <g fill="none" stroke="#e0f2fe" stroke-linecap="round" opacity="0.62">
-    <path d="M300 390l212 122 212-122" stroke-width="18"/>
-    <path d="M512 512v248" stroke-width="18"/>
-    <path d="M312 470l200 116 200-116" stroke-width="12"/>
-    <path d="M312 548l200 116 200-116" stroke-width="12"/>
-    <path d="M312 626l200 116 200-116" stroke-width="12"/>
-    <path d="M400 420v266" stroke-width="10"/>
-    <path d="M624 420v266" stroke-width="10"/>
+  <g fill="none" stroke="#dbeafe" stroke-linecap="round" opacity="0.72">
+    <path d="M302 376l210 118 210-118" stroke-width="16"/>
+    <path d="M512 494v258" stroke-width="16"/>
+    <path d="M338 432l174 98 174-98" stroke-width="11"/>
+    <path d="M338 510l174 98 174-98" stroke-width="11"/>
+    <path d="M338 588l174 98 174-98" stroke-width="11"/>
   </g>
 
-  <g>
-    <rect x="222" y="706" width="580" height="112" rx="34" fill="#f8fafc"/>
-    <text x="512" y="780" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="800" fill="#172554">GLB</text>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M324 226c96-54 214-54 310 0" stroke="#86efac" stroke-width="30"/>
+    <path d="M618 226l18 66 68-18" stroke="#86efac" stroke-width="30"/>
+    <circle cx="742" cy="246" r="64" fill="#22c55e"/>
+    <path d="M716 246l20 20 34-42" stroke="#ecfdf5" stroke-width="22"/>
   </g>
 
-  <path d="M312 246c64-78 174-110 276-78 37 12 71 31 99 56" fill="none" stroke="#86efac" stroke-width="28" stroke-linecap="round"/>
-  <path d="M694 164l9 75-75-8" fill="none" stroke="#86efac" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="214" y="700" width="596" height="116" rx="34" fill="#f8fafc"/>
+  <text x="512" y="777" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="800" fill="#1e3a8a">GLB</text>
 </svg>
