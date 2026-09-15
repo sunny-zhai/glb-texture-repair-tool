@@ -71,6 +71,8 @@ ipcMain.handle('repair-glb', async (event, payload) => {
   fs.mkdirSync(outputDir, { recursive: true })
   const options = {}
   if (payload?.freezePose) options.poseTime = 'start'
+  // 默认保留 JPEG 贴图原格式；只有界面明确取消勾选时才统一转 PNG。
+  options.keepJpeg = payload?.keepJpeg !== false
   const sender = event.sender
   options.onProgress = (progress) => {
     if (sender.isDestroyed()) return
