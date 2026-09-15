@@ -398,6 +398,7 @@ runRepairButton.addEventListener('click', async () => {
       inputMode: state.inputMode,
       outputDir: state.outputDir,
       freezePose: document.getElementById('freezePose').checked,
+      keepJpeg: document.getElementById('keepJpeg').checked,
     })
     renderResults(reports)
     appendLog(`完成：${reports.length} 个任务`, 'ok')
