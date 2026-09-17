@@ -5,8 +5,7 @@
 ## 当前功能
 
 - 选择单个 GLB 文件或目录，批量生成修复后的 GLB。
-- **JPEG 贴图默认原样保留**，不做转码，避免模型体积膨胀（转 PNG 会让照片类贴图大约膨胀 5 倍）；取消勾选该选项才统一转 PNG。
-- 将 GLB 内嵌的 JPG 等图片转码为 PNG（仅在关闭「保留 JPEG」或遇到 CMYK 四分量 JPEG 时）。
+- 将 GLB 内嵌的 JPG 等图片转码为 PNG。
 - 定位并嵌入外部贴图 URI，包括相对路径、Windows 路径和 `.fbm` 目录中的图片。
 - 清理 Cesium 兼容性风险较高的 `KHR_materials_specular` 扩展。
 - 将包含 `skins`、`JOINTS_0`、`WEIGHTS_0` 的蒙皮模型烘焙为静态网格。
