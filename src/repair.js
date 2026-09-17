@@ -486,10 +486,7 @@ function readGlb(filePath) {
 
   return {
     json,
-    // Keep a view over the input buffer instead of copying the whole BIN.
-    // The returned view intentionally retains `bytes` until repair finishes,
-    // but avoids holding two equally large BIN buffers at once.
-    bin: bytes.subarray(binStart, binStart + binLength),
+    bin: Buffer.from(bytes.slice(binStart, binStart + binLength)),
   }
 }
 
@@ -518,74 +515,11 @@ function createGlbBuffer(json, bin) {
 
 function writeGlb(filePath, json, bin) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  // Stream the four GLB sections so writing does not create another full-size
-  // Buffer on top of `bin` (createGlbBuffer remains available for callers that
-  // explicitly need an in-memory GLB).
-  const jsonBytes = Buffer.from(JSON.stringify(json), 'utf8')
-  const paddedJsonLength = align4(jsonBytes.length)
-  const paddedBinLength = align4(bin.length)
-  const totalLength = 12 + 8 + paddedJsonLength + 8 + paddedBinLength
-  const header = Buffer.alloc(12)
-  header.write('glTF', 0, 4, 'ascii')
-  header.writeUInt32LE(2, 4)
-  header.writeUInt32LE(totalLength, 8)
-  const jsonHeader = Buffer.alloc(8)
-  jsonHeader.writeUInt32LE(paddedJsonLength, 0)
-  jsonHeader.write('JSON', 4, 4, 'ascii')
-  const binHeader = Buffer.alloc(8)
-  binHeader.writeUInt32LE(paddedBinLength, 0)
-  binHeader.write('BIN\0', 4, 4, 'ascii')
-
-  const fd = fs.openSync(filePath, 'w')
-  try {
-    fs.writeSync(fd, header)
-    fs.writeSync(fd, jsonHeader)
-    fs.writeSync(fd, jsonBytes)
-    if (paddedJsonLength > jsonBytes.length) fs.writeSync(fd, Buffer.alloc(paddedJsonLength - jsonBytes.length, 0x20))
-    fs.writeSync(fd, binHeader)
-    fs.writeSync(fd, bin)
-    if (paddedBinLength > bin.length) fs.writeSync(fd, Buffer.alloc(paddedBinLength - bin.length))
-  } finally {
-    fs.closeSync(fd)
-  }
+  fs.writeFileSync(filePath, createGlbBuffer(json, bin))
 }
 
 function isPng(buffer) {
   return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-}
-
-function isJpeg(buffer) {
-  return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
-}
-
-// 从 SOF 段读出 JPEG 的分量数：1=灰度、3=YCbCr、4=CMYK/YCCK。
-// 返回 0 表示没解析到 SOF（截断或非法数据），调用方据此退回转码路径。
-function jpegComponentCount(buffer) {
-  let offset = 2 // 跳过 SOI(FFD8)
-  while (offset + 3 < buffer.length) {
-    if (buffer[offset] !== 0xff) {
-      offset += 1
-      continue
-    }
-    const marker = buffer[offset + 1]
-    // 无长度字段的标记：填充字节、RSTn、SOI。
-    if (marker === 0xff || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
-      offset += 2
-      continue
-    }
-    if (marker === 0xda) return 0 // 已进入扫描数据，说明前面没有 SOF
-    const length = buffer.readUInt16BE(offset + 2)
-    if (length < 2) return 0
-    // SOF0-3 / SOF5-7 / SOF9-11 / SOF13-15 都带分量数，DHT/JPG 等其它段跳过。
-    const isStartOfFrame = (marker >= 0xc0 && marker <= 0xc3)
-      || (marker >= 0xc5 && marker <= 0xc7)
-      || (marker >= 0xc9 && marker <= 0xcb)
-      || (marker >= 0xcd && marker <= 0xcf)
-    // SOF 布局：长度(2) 精度(1) 高(2) 宽(2) 分量数(1)
-    if (isStartOfFrame) return buffer[offset + 9] || 0
-    offset += 2 + length
-  }
-  return 0
 }
 
 function decodeUriComponent(value) {
@@ -659,12 +593,11 @@ function resolveExternalImage(inputPath, uri) {
 // runtime dependency (previously shelled out to ffmpeg, which is absent on
 // end-user Windows machines -> spawnSync ffmpeg ENOENT). Accepts PNG or JPEG
 // bytes and returns PNG bytes; anything else raises a per-file error.
-// 默认路径并不会调用它：JPEG 现在原样保留（见 repairGlbFile 的 keepJpeg），
-// 只有显式关闭 keepJpeg 或遇到四分量 CMYK JPEG 时才走这里转码。
 function encodePng(inputBytes) {
   if (isPng(inputBytes)) return inputBytes
 
-  if (!isJpeg(inputBytes)) {
+  const isJpeg = inputBytes.length >= 3 && inputBytes[0] === 0xff && inputBytes[1] === 0xd8 && inputBytes[2] === 0xff
+  if (!isJpeg) {
     throw new Error('不支持的图片格式：只能处理 PNG 或 JPEG，请先将其转换为 PNG 或 JPEG 再重试。')
   }
 
@@ -1193,44 +1126,10 @@ function appendBufferViewToBinary(json, bin, bytes) {
   return { bin: newBin, bufferView: json.bufferViews.length - 1 }
 }
 
-// Append several image bufferViews in one allocation. Calling
-// appendBufferViewToBinary repeatedly would copy the complete BIN once per
-// external image and can briefly multiply memory usage for large models.
-function appendExternalImages(json, bin, externalImages) {
-  if (externalImages.length === 0) return bin
-  const chunks = [bin]
-  let length = bin.length
-  for (const external of externalImages) {
-    const offset = align4(length)
-    if (offset > length) {
-      chunks.push(Buffer.alloc(offset - length))
-      length = offset
-    }
-    const bytes = external.bytes
-    const bufferView = {
-      buffer: 0,
-      byteOffset: offset,
-      byteLength: bytes.length,
-    }
-    if (!Array.isArray(json.bufferViews)) json.bufferViews = []
-    json.bufferViews.push(bufferView)
-    external.image.bufferView = json.bufferViews.length - 1
-    external.image.mimeType = external.mimeType || 'image/png'
-    delete external.image.uri
-    chunks.push(bytes)
-    length += bytes.length
-  }
-  const newBin = Buffer.concat(chunks, length)
-  if (!Array.isArray(json.buffers)) json.buffers = [{ byteLength: newBin.length }]
-  json.buffers[0].byteLength = newBin.length
-  return newBin
-}
-
 function repairGlbFile(inputPath, outputPath, options = {}) {
   const replacements = new Map()
   const externalImages = []
   let imagesConverted = 0
-  let imagesKeptJpeg = 0
   let oldBytes = 0
 
   try {
@@ -1238,8 +1137,6 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
     // 只有转成 error report 才能让 repairMany 继续处理批次里的其余文件。
     oldBytes = fs.statSync(inputPath).size
     const { json, bin } = readGlb(inputPath)
-    // 默认保留 JPEG 原格式（体积小得多）；显式传 keepJpeg: false 才统一转 PNG。
-    const keepJpeg = options.keepJpeg !== false
     // 追加型步骤（补 TEXCOORD、合并图元）会把新字节续到 bin 末尾，累积在 workingBin 上；
     // 既有偏移不受影响，所以读取仍可按原偏移进行。
     let workingBin = bin
@@ -1260,20 +1157,7 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
 
       if (isPng(original)) {
         image.mimeType = 'image/png'
-        if (typeof image.uri === 'string') externalImages.push({ image, bytes: original, mimeType: 'image/png' })
-        continue
-      }
-
-      // JPEG 原样保留：规范允许 image/jpeg，Cesium 原生支持，不做解码重编码，
-      // 贴图体积因此零膨胀（照片类 JPEG 转无损 PNG 会膨胀约 5 倍）。
-      // 仅确认是 1/3 分量（灰度 / YCbCr）时才保留：四分量 CMYK/YCCK 的 JPEG
-      // 浏览器解码支持很差，分量数解析不出来时也一并退回转码，保持原有兜底行为。
-      const jpegComponents = isJpeg(original) ? jpegComponentCount(original) : 0
-      if (keepJpeg && (jpegComponents === 1 || jpegComponents === 3)) {
-        imagesKeptJpeg += 1
-        image.mimeType = 'image/jpeg'
-        // 内嵌图字节没变，不必登记 replacements；只有外链图需要重新嵌进 BIN。
-        if (typeof image.uri === 'string') externalImages.push({ image, bytes: original, mimeType: 'image/jpeg' })
+        if (typeof image.uri === 'string') externalImages.push({ image, bytes: original })
         continue
       }
 
@@ -1282,7 +1166,7 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
       if (typeof image.bufferView === 'number') {
         replacements.set(image.bufferView, converted)
       } else {
-        externalImages.push({ image, bytes: converted, mimeType: 'image/png' })
+        externalImages.push({ image, bytes: converted })
       }
       image.mimeType = 'image/png'
     }
@@ -1303,11 +1187,13 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
     workingBin = merge.bin
 
     let newBin = rebuildBinary(json, workingBin, replacements)
-    newBin = appendExternalImages(json, newBin, externalImages)
-    const externalImagesEmbedded = externalImages.length
-    // Do not retain references to external image buffers after the BIN has
-    // been assembled; this matters when repairMany processes large batches.
-    externalImages.length = 0
+    for (const external of externalImages) {
+      const appended = appendBufferViewToBinary(json, newBin, external.bytes)
+      newBin = appended.bin
+      external.image.bufferView = appended.bufferView
+      external.image.mimeType = 'image/png'
+      delete external.image.uri
+    }
     writeGlb(outputPath, json, newBin)
 
     return {
@@ -1316,9 +1202,8 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
       oldBytes,
       newBytes: fs.statSync(outputPath).size,
       imagesConverted,
-      imagesKeptJpeg,
       skinnedMeshesBaked,
-      externalImagesEmbedded,
+      externalImagesEmbedded: externalImages.length,
       texCoordsFilled: texCoords.filled,
       primitivesMerged: merge.merged,
       extensionsRemoved: ['KHR_materials_specular'],
@@ -1331,7 +1216,6 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
       oldBytes,
       newBytes: 0,
       imagesConverted: 0,
-      imagesKeptJpeg: 0,
       skinnedMeshesBaked: 0,
       externalImagesEmbedded: 0,
       texCoordsFilled: 0,
@@ -1451,9 +1335,6 @@ module.exports = {
   createGlbBuffer,
   encodePng,
   fillMissingTexCoords,
-  isJpeg,
-  isPng,
-  jpegComponentCount,
   mergePrimitivesByMaterial,
   readGlb,
   repairGlbFile,
