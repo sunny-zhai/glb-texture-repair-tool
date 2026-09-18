@@ -83,6 +83,7 @@ test('report-format: formatBox/formatCenter 对 null 与畸形盒给占位符而
     { min: 'x', max: [1, 1, 1] },
     { min: [0, NaN, 0], max: [1, 1, 1] },
     { min: [0, 0, 0], max: [1, 1, 'z'] },
+    { min: [3, 3, 3], max: [1, 1, 1] }, // min/max 倒挂：尺寸会是负数，中心也没有意义
     'box',
   ]) {
     assert.equal(formatBox(malformed), '—', `${JSON.stringify(malformed)} 应给占位符`)
@@ -157,6 +158,12 @@ test('report-format: 偏差档位与文案必须一致（颜色不能和文字�
     { factor: 10, parts: { sizeRatio: 10, centerOffsetRatio: 0 }, level: 'warn' },
     { factor: 999.99, parts: { sizeRatio: 1, centerOffsetRatio: 998.99 }, level: 'warn' },
     { factor: 1000, parts: { sizeRatio: 1000, centerOffsetRatio: 0 }, level: 'error' },
+    // 只有总量、没有分量分解时也必须过档位（冷审实测这一支曾漏判，ok 档却写"会错位"）
+    { factor: 1, parts: null, level: 'ok' },
+    { factor: 5, parts: null, level: 'ok' },
+    { factor: 9.99, parts: null, level: 'ok' },
+    { factor: 10, parts: null, level: 'warn' },
+    { factor: 5000, parts: null, level: 'error' },
   ]
   for (const item of cases) {
     const report = build(item.factor, item.parts)
@@ -164,7 +171,7 @@ test('report-format: 偏差档位与文案必须一致（颜色不能和文字�
     const text = deviationText(report)
     if (item.level === 'ok') {
       // ok 档的文字里绝不能出现"错位"，否则面板会出现"正常配色的文字在报严重问题"
-      assert.doesNotMatch(text, /错位/, `偏差 ${item.factor} 是 ok 档：${text}`)
+      assert.doesNotMatch(text, /错位/, `偏差 ${item.factor}（parts=${JSON.stringify(item.parts)}）是 ok 档：${text}`)
       assert.match(text, item.factor > 1 ? /未到告警门槛/ : /一致/, `偏差 ${item.factor} 的文案：${text}`)
     } else {
       assert.match(text, /相差/, `偏差 ${item.factor} 是 ${item.level} 档，文案必须点出偏差：${text}`)
@@ -358,9 +365,11 @@ test('report-format: 比例尺行在 hint 为空时退化为中位缩放（否�
     factRows({ scale: { medianNodeScale: 1, scaledNodeCount: 0, hint: null } }),
     [{ label: '比例尺', value: '中位节点缩放 1（未见异常缩放）' }],
   )
+  // 有非单位缩放节点时只摆事实：inspect.js 的门槛是严格 >100，100 恰好"不算异常"，
+  // 再并排印一句"未见异常缩放"会读着别扭
   assert.deepEqual(
-    factRows({ scale: { medianNodeScale: 100, scaledNodeCount: 70 } }),
-    [{ label: '比例尺', value: '中位节点缩放 100 · 70 个节点不是单位缩放（未见异常缩放）' }],
+    factRows({ scale: { medianNodeScale: 100, scaledNodeCount: 3 } }),
+    [{ label: '比例尺', value: '中位节点缩放 100 · 3 个节点不是单位缩放' }],
   )
   // 有 hint 时优先用 hint（那是 inspect.js 的结论）
   assert.deepEqual(

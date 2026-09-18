@@ -27,9 +27,11 @@
 
   // 上轴三态（ADR-002）：auto/y 都不额外旋转，z 表示"这份数据其实是 Z-up"，
   // 预览里绕 X 轴 −90° 转正（与 src/ive.js 的轴转换同向、同角度）。
+  // 注：`guessUpAxis` 目前只会给 Y 或 unknown，所以 auto 与 y 的效果相同——将来推断若返回 Z，
+  // 也不能让 auto 自动转轴，标签里把这条写清楚。
   const AXIS_OPTIONS = ['auto', 'y', 'z']
   const AXIS_LABELS = {
-    auto: '自动（按推断展示，不额外旋转）',
+    auto: '自动（不额外旋转——推断绝不自作主张）',
     y: 'Y-up（不额外旋转）',
     z: 'Z-up → Y-up（预览绕 X 轴 −90°）',
   }

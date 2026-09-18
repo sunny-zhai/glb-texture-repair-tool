@@ -42,6 +42,25 @@ async function connect() {
 
   let nextId = 0
   const steps = []
+  const send = (method, params = {}) => {
+    nextId += 1
+    const id = nextId
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(undefined), 5000)
+      const handler = (event) => {
+        const message = JSON.parse(event.data)
+        if (message.id !== id) return
+        clearTimeout(timer)
+        socket.removeEventListener('message', handler)
+        resolve(message.result)
+      }
+      socket.addEventListener('message', handler)
+      socket.send(JSON.stringify({ id, method, params }))
+    })
+  }
+  // 窗口被遮挡时页面会进入 hidden，rAF 被节流 → Cesium 一帧都不渲染 → 模型的 ready 永远不置。
+  // 冒烟因此先把页面提到前台，否则它天然依赖"跑测试时人把窗口留在最前面"。
+  await send('Page.bringToFront')
   const evaluate = (label, expression, awaitPromise = false, timeout = 30000) => {
     nextId += 1
     const id = nextId

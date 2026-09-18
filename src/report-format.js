@@ -49,9 +49,9 @@
     return size.some((value) => value < 0) ? null : size
   }
 
-  /** @description 每个轴的中心（(min + max) ÷ 2）；盒畸形时为 null。 */
+  /** @description 每个轴的中心（(min + max) ÷ 2）；盒畸形或 min/max 倒挂时为 null。 */
   function boxCenter(box) {
-    if (!isBox(box)) return null
+    if (!boxSize(box)) return null
     return [0, 1, 2].map((axis) => (box.min[axis] + box.max[axis]) / 2)
   }
 
@@ -113,15 +113,21 @@
     const sizeRatio = formatRatio(bounds.deviationParts?.sizeRatio)
     const centerRatio = formatRatio(bounds.deviationParts?.centerOffsetRatio)
 
-    // 没有分解数据时只能退回总量：一致就不提偏差，避免无中生有的告警。
+    // 没有分解数据时只能退回总量：一致就不提偏差，避免无中生有的告警。**同样要过档位**：
+    // factor 在 <10 的 ok 档时不得说"会错位"（BR-025 对配色与文案的一致性没有例外分支）。
     if (sizeRatio === null && centerRatio === null) {
       const factor = formatRatio(bounds.deviationFactor)
-      return factor === null || Number(factor) <= 1
-        ? '世界盒与 accessor 盒一致，未发现取景偏差。'
-        : `世界盒与 accessor 盒相差 ${factor} 倍，按 accessor 盒取景会错位。`
+      if (factor === null || Number(factor) <= 1) {
+        return '世界盒与 accessor 盒一致，未发现取景偏差。'
+      }
+      if (deviationLevel(Number(factor)) === 'ok') {
+        return `世界盒与 accessor 盒相差 ${factor} 倍，未到告警门槛（10 倍）；报告没有给出偏差分量。`
+      }
+      return `世界盒与 accessor 盒相差 ${factor} 倍，按 accessor 盒取景会错位。`
     }
 
-    // 只对**报告实际给出的**分量下判断：缺一个分量时绝不替它断言"一致"（BR-025 不编造）。
+    // 只对**报告实际给出的**分量下判断：缺一个分量时绝不替它断言"一致"（BR-025 不编造），
+    // 连"两个盒一致"这个结论也不能推广到没检查的分量上。
     const parts = []
     const exceeding = []
     const consistent = []
@@ -137,7 +143,10 @@
       else consistent.push(text)
     }
 
-    if (!exceeding.length) return `世界盒与 accessor 盒一致（${parts.join('、')}）。`
+    if (!exceeding.length) {
+      const scope = parts.length === 2 ? '一致' : '在报告给出的分量上一致'
+      return `世界盒与 accessor 盒${scope}（${parts.join('、')}）。`
+    }
     const factor = formatRatio(bounds.deviationFactor)
     if (factor === null) {
       return `世界盒与 accessor 盒存在偏差（${exceeding.join('、')}），但报告没有给出偏差倍数。`
@@ -240,7 +249,8 @@
    * @description 比例尺行。`inspect.js` 只在"中位节点缩放 <0.01 或 >100"时给 `hint`，而
    *   多数正常资产都是 1 倍缩放，于是"比例尺"这一行会整行消失——那正是本任务要求展示的
    *   事实之一。所以 hint 为空时退化成"中位节点缩放 + 带非单位缩放的节点数"，仍然只报有
-   *   的数据，绝不编造。
+   *   的数据，绝不编造。`inspect.js` 的异常门槛是严格 `>100`，所以 100 会出现"数字看着
+   *   吓人、结论说正常"的并排；此时不再加"未见异常缩放"这个括注，只摆事实。
    */
   function scaleRow(rows, scale) {
     if (!scale || typeof scale !== 'object') return
@@ -249,11 +259,13 @@
       return
     }
     const parts = []
+    let scaledNodes = 0
     if (isFiniteNumber(scale.medianNodeScale)) parts.push(`中位节点缩放 ${scale.medianNodeScale}`)
     if (isFiniteNumber(scale.scaledNodeCount) && scale.scaledNodeCount > 0) {
-      parts.push(`${scale.scaledNodeCount} 个节点不是单位缩放`)
+      scaledNodes = scale.scaledNodeCount
+      parts.push(`${scaledNodes} 个节点不是单位缩放`)
     }
-    if (parts.length) rows.push({ label: '比例尺', value: `${parts.join(' · ')}（未见异常缩放）` })
+    if (parts.length) rows.push({ label: '比例尺', value: `${parts.join(' · ')}${scaledNodes ? '' : '（未见异常缩放）'}` })
   }
 
   /**
