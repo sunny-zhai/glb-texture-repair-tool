@@ -126,6 +126,24 @@
   ④ 第二轮独立冷上下文复审（交付前，`condition: 有条件通过 / 无阻塞级`）指出 1 条重要问题并已修复：**`CANVAS_MIN_HEIGHT=160` 当时只兑现到 127px**——`clampLayout` 的高度预算漏了中栏自己的标题行 `.pane-center .pane-header`（34px）。修法是把它计入 `chrome`（`src/renderer.js`），并把冒烟阈值从写死的 `> 120` 改成引用模块常量（`window.__layout.limits.canvasMinHeight`），另新增"日志拖到上限后画布仍 ≥ 常量"的断言。**实测证据**：种入 `bottom:99999` 并重载后画布 **161px ≥ 160**、标题行 34px（旧代码同口径为 127 < 160，该断言在旧代码上必红）；`node test/ui-smoke.cjs` GLB 与 IVE 两遍仍为 **32 步 / 99 条断言 / 0 失败**。同轮另外落地 4 条次要项：分隔条折叠/展开的 resize 断言改为**前后分别计数**（不再被 `ResizeObserver` 顺带触发蒙过）、`initLayout()` 加幂等护栏、`localStorage` 布尔字段只认真正布尔（真值垃圾串不再静默折叠日志）、以及给冒烟加**假绿防线**——任一步骤超时/未返回即红 + 已执行断言数下限（99）+ 真正安装页面错误采集（`window.__smokeErrors` 此前是从未赋值的死字段）。
   ⑤ 人工目视（拖拽手感、配色层级、900px 窄布局）**待 sunny-zhai 确认**。
 
+### TASK-011 修掉"栏位尺寸被数据改写"（REQ-006 缺陷修复）
+- **关联需求**：REQ-006（回归验收标准 2/3/5；不改写 TASK-010 的历史结论）
+- **依赖**：TASK-010（缺陷由它的交付暴露）
+- **做什么**：用户反馈"界面宽高会受到数据影响自动调整"。实测（窗口 1100×760）**宽度不受数据影响**（左/右栏全程 260/340 未动），但**高度会**：
+  ① 模型路径变长时 `#validationModelSummary` 从 1 行（18px）**换行成 2 行（36px）**，预览条 126→144px，3D 画布被顶掉 18px（161→143）；
+  ② 更严重的是它**会改写用户设定的日志高度**：`clampLayout` 的高度预算里减了实时的 `previewBar.offsetHeight` 与 `helpPanel.offsetHeight`，于是"路径变长 → 预览条变高 → 日志上限变小 → 下一次重算（缩窗/拖分隔条）把 `--pane-bottom` 从 313 夹到 295 **并 `saveLayout()` 落盘**，换回短路径也不恢复"（实测 A→D 四态）；
+  ③ 打开帮助面板同样把用户日志高度预算改小（帮助是**临时**面板，不该写进布局记忆）。
+  **修法**：让高度预算只依赖"窗口尺寸 + 用户操作"，不依赖内容——(a) 预览信息行改为**单行省略号**（完整路径挂 `title`，信息不丢）；(b) `clampLayout` **不再减 `helpPanel.offsetHeight`**（帮助面板由 `minmax(0,1fr)` 的工作区行吸收，并给它加 `max-height` + 内部滚动，保证仍不整页滚动）。
+- **产出**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`（回归断言）
+- **文件范围**：`src/renderer.js`, `src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：① 回归断言——同一窗口下把 `#validationModelSummary` 文本从 20 字改成 400 字，预览条高度与 `--pane-bottom` **必须完全不变**；打开帮助面板前后 `--pane-bottom` 与 `localStorage` 里的 `bottom` **必须不变**；② 种入"贴着上限"的日志高度后加载超长路径模型并强制重算，`--pane-bottom` 与落盘值不得改变；③ `npm run lint` + `npm test` 全绿；④ 冒烟 `node test/ui-smoke.cjs` 在 GLB 与 IVE 上仍全绿。
+- **状态**：已完成
+- **验证结果**：
+  ① 修复前后对比（同一台机器、1280×800、日志顶到当前窗口上限）：**修复前**——模型信息 18→108px（3 行）、预览条 99→189px、日志 380→**290px** 且 `localStorage.bottom` 380→**290**，换回短文本仍是 290（画布 160→250 有残留偏移），打开/收起帮助同样改写日志高度与落盘值；**修复后**——预览条 126 恒定、画布 161 恒定、日志 313 恒定，而 `localStorage` 里用户设定的 **367 保持不被改写**（换到大窗口仍会回到 367）。
+  ② 回归断言（6 条，写在 `test/ui-smoke.cjs` 的"栏位尺寸不得被数据改写"步骤里）：长短文本下预览条高度/`--pane-bottom`/落盘 `bottom` 三者都不得变化；换回短文本必须逐像素复原；帮助开关都不得改日志高度与落盘值。**这 6 条在修复前的代码（`b8bdddc`）上实测全红，且只有这 6 条红**（证明回归网精准、既有断言未被削弱）；修复后 GLB 与 IVE 两遍各 **33 步 / 105 条断言 / 0 失败**。
+  ③ 连带修掉一个更严重的隐性问题：`white-space: nowrap` 让 `.pane-center` 的隐式网格列被内容撑到 **2994px**（视觉被 `overflow:hidden` 裁掉、宽度已爆，也是拖拽宽度断言偏 4px 的根因）——由 `grid-template-columns: minmax(0, 1fr)` 修复。
+  ④ `npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。设计/测试文档同步：`docs/design/ADR.md` 新增 ADR-007、`docs/001-code-design.md` 新增 BR-028、`docs/testing/TEST_PLAN.md` 新增 TC-016。
+
 ## 依赖 DAG
 
 ```text
@@ -137,6 +155,8 @@ TASK-006（追溯登记，独立）
 TASK-007 ──▶ TASK-008 ──▶ TASK-009（缺陷修复，依赖 TASK-008 的冒烟证据）
 
 TASK-010（REQ-006 界面重排，独立；与 TASK-009 的 `renderer.js` 改动串行）
+
+TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写）
 ```
 
 ## 并行批次
@@ -155,6 +175,7 @@ TASK-010（REQ-006 界面重排，独立；与 TASK-009 的 `renderer.js` 改动
 | 7 | TASK-008 | 依赖 TASK-007，且与其文件范围不重叠 |
 | 8 | TASK-009 | 依赖 TASK-008（缺陷由它的冒烟暴露），文件范围与 TASK-008 不重叠 |
 | 9 | TASK-010 | REQ-006 界面重排；文件范围与 TASK-009 不重叠，但同在 `renderer.js`，故排在 TASK-009 之后串行 |
+| 10 | TASK-011 | REQ-006 缺陷修复，依赖 TASK-010（缺陷由它的交付暴露） |
 
 ## 进度
 
@@ -170,3 +191,4 @@ TASK-010（REQ-006 界面重排，独立；与 TASK-009 的 `renderer.js` 改动
 | TASK-008 | REQ-005 | 已完成（待人工目视确认） | ☑ 自动 / ☐ 人工 |
 | TASK-009 | REQ-005 | 已完成（待冷审查与人工目视） | ☑ |
 | TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
+| TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |

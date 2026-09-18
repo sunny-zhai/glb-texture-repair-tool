@@ -126,6 +126,10 @@ body {
   padding: 10px 14px 12px;
   border-bottom: 1px solid #334155;
   background: #111827;
+  /* 帮助是**临时**面板（TASK-011）：限高并内部滚动，绝不参与栏位尺寸预算——
+     打开/收起它都不得改写用户设定的日志高度（只临时占用工作区高度）。 */
+  max-height: 26vh;
+  overflow: auto;
 }
 
 .help-panel[hidden] {
@@ -322,6 +326,10 @@ button.ghost[aria-expanded="true"] {
 .pane-center {
   grid-column: 3;
   display: grid;
+  /* 显式写 minmax(0, 1fr)：只写 grid-template-rows 时隐式列是 `auto`，会被内容的
+     min-content 撑开——模型信息行改成 nowrap 后实测把这一列顶到 2994px（视觉被
+     overflow:hidden 裁掉，但宽度已爆、连带拖拽宽度断言偏 4px）。TASK-011 */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   background: #0f172a;
 }
@@ -475,6 +483,7 @@ h2 {
 /* ---------------------------------------------------------------- 中栏：预览 */
 
 .preview-bar {
+  min-width: 0;
   padding: 8px 12px 10px;
   border-bottom: 1px solid #1f2937;
   background: #111827;
@@ -484,7 +493,13 @@ h2 {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
-  overflow-wrap: anywhere;
+  /* 单行省略号（TASK-011）：这一行**绝不能换行**。它换行就会把预览条顶高 18px，
+     进而顶掉 3D 画布、并让日志上限变小——实测"路径变长 → 画布 161→143px →
+     重算时把日志从 313px 夹到 295px 并写进 localStorage，换回短路径也不恢复"。
+     完整路径挂 title，信息不丢。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .preview-controls {

@@ -41,7 +41,7 @@ const failures = []
 // 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
 let checksRun = 0
 // 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
-const EXPECTED_CHECK_COUNT = 99
+const EXPECTED_CHECK_COUNT = 105
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -327,6 +327,91 @@ async function main() {
     check('右栏没有体检结果时必须给出中文空态提示（不能是一片空白）',
       wide.inspectEmpty.hidden === false && wide.inspectEmpty.visible === true && /选择预览模型/.test(wide.inspectEmpty.text),
       JSON.stringify(wide.inspectEmpty))
+  }
+
+  // ---------------------------------------------------------------- 栏位尺寸必须与内容无关（TASK-011）
+  // 用户反馈"界面宽高会被数据自动调整"。根因是高度预算里读了实时内容高度（预览信息行换行）
+  // 且把夹取结果直接落盘。这里把"内容变化不得改变任何栏位尺寸/不得落盘"钉成回归断言。
+  const dataIndependence = await run('栏位尺寸不得被数据改写（REQ-006 缺陷回归）', `(async () => {
+    const shell = document.getElementById('appShell');
+    const summary = document.getElementById('validationModelSummary');
+    const bar = document.querySelector('.preview-bar');
+    const help = document.getElementById('helpPanel');
+    const bottomVar = () => getComputedStyle(shell).getPropertyValue('--pane-bottom').trim();
+    const saved = () => JSON.parse(localStorage.getItem(window.__layout.key) || '{}');
+    const snap = () => ({
+      bar: Math.round(bar.getBoundingClientRect().height),
+      summary: Math.round(summary.getBoundingClientRect().height),
+      bottom: bottomVar(),
+      savedBottom: saved().bottom,
+      canvas: Math.round(document.getElementById('cesiumContainer').getBoundingClientRect().height),
+      help: Math.round(help.getBoundingClientRect().height),
+    });
+    // 让帮助面板处于关闭状态（本步只关心尺寸与内容/临时面板无关）
+    if (!help.hidden) { document.getElementById('toggleHelp').click(); await new Promise((r) => setTimeout(r, 200)); }
+    // 把日志高度顶到**当前窗口下的上限**：默认 200px 离上限（1280×800 约 363px）很远，
+    // 内容变高根本触发不到夹取，断言就会自我满足（旧代码也能过）。顶到上限后才咬得住。
+    const current = window.__layout.get();
+    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 1, ...current, bottom: 99999 }));
+    window.__layout.restore();
+    // 走一次真实的用户保存路径（键盘微调 0px：夹取后原值 → commitLayout + saveLayout），
+    // 否则 localStorage 里还是刚种进去的 99999，"不得改写落盘值"就成了自我满足的断言
+    nudgeSplitter('bottom', 0);
+    await new Promise((r) => setTimeout(r, 250));
+    // 先稳定一次：把当前窗口下的夹取先落定，后面比较的才是"纯内容效应"
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 400));
+    const baseline = snap();
+    const original = summary.textContent;
+    // 把模型信息换成超长文本（等价于加载一个超长路径的模型）
+    summary.textContent = '当前验证模型：/' + 'very-long-directory/'.repeat(24) + 'model.glb · 14987160 字节';
+    await new Promise((r) => setTimeout(r, 60));
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 400));
+    const longText = snap();
+    summary.textContent = original;
+    await new Promise((r) => setTimeout(r, 60));
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 400));
+    const restored = snap();
+    // 帮助断言同样要咬得住：先在"帮助关闭"状态下把日志重新顶到上限并保存。否则
+    // 旧代码（把帮助高度算进预算）也不会被这两条抓到——实测日志 290px 时离上限还有 100px 余量。
+    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 1, ...window.__layout.get(), bottom: 99999 }));
+    window.__layout.restore();
+    nudgeSplitter('bottom', 0);
+    await new Promise((r) => setTimeout(r, 250));
+    // 打开帮助面板：只允许临时占用工作区高度，不得改日志高度、不得落盘
+    const helpBefore = snap();
+    document.getElementById('toggleHelp').click();
+    await new Promise((r) => setTimeout(r, 300));
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 400));
+    const helpOpen = snap();
+    document.getElementById('toggleHelp').click();
+    await new Promise((r) => setTimeout(r, 300));
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 400));
+    const helpClosed = snap();
+    return { baseline, longText, restored, helpBefore, helpOpen, helpClosed };
+  })()`, true)
+  if (dataIndependence) {
+    const { baseline, longText, restored, helpBefore, helpOpen, helpClosed } = dataIndependence
+    check('模型信息从短文本变成长文本时，预览条高度不得变化（否则会顶掉 3D 画布）',
+      longText.bar === baseline.bar && longText.summary === baseline.summary,
+      JSON.stringify({ baseline, longText }))
+    check('模型信息长度变化后日志高度（--pane-bottom）不得变化',
+      longText.bottom === baseline.bottom, `${baseline.bottom} → ${longText.bottom}`)
+    check('模型信息长度变化不得改写 localStorage 里的布局（TASK-011 的核心缺陷）',
+      longText.savedBottom === baseline.savedBottom, `${baseline.savedBottom} → ${longText.savedBottom}`)
+    check('换回短文本后预览条/画布/日志高度必须与初始完全一致（不许有残留偏移）',
+      restored.bar === baseline.bar && restored.canvas === baseline.canvas && restored.bottom === baseline.bottom,
+      JSON.stringify({ baseline, restored }))
+    check('打开帮助面板不得改写日志高度与落盘布局（帮助是临时面板）',
+      helpOpen.bottom === helpBefore.bottom && helpOpen.savedBottom === helpBefore.savedBottom,
+      JSON.stringify({ helpBefore, helpOpen }))
+    check('收起帮助面板后日志高度与落盘布局保持不变',
+      helpClosed.bottom === helpBefore.bottom && helpClosed.savedBottom === helpBefore.savedBottom,
+      JSON.stringify({ helpBefore, helpClosed }))
   }
 
   // 种入一组**与默认值和 styles.css 初值都不同**的布局并重载：只有真的走了
