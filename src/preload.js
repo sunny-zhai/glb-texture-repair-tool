@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('repairApp', {
   pickOutputDir: () => ipcRenderer.invoke('pick-output-dir'),
   repairGlb: (payload) => ipcRenderer.invoke('repair-glb', payload),
   readGlbDataUrl: (filePath) => ipcRenderer.invoke('read-glb-data-url', filePath),
+  inspectGlb: (filePath) => ipcRenderer.invoke('inspect-glb', filePath),
   capabilities: () => ipcRenderer.invoke('app-capabilities'),
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),

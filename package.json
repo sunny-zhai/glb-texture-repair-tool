@@ -4,6 +4,9 @@
   "private": true,
   "description": "Electron desktop tool for repairing Cesium-incompatible GLB textures, materials, and skinned meshes",
   "main": "src/main.js",
+  "engines": {
+    "node": ">=21"
+  },
   "scripts": {
     "ensure:cesium": "node scripts/ensure-cesium.js",
     "build:ive2glb": "bash scripts/build-ive2glb.sh",
@@ -11,7 +14,7 @@
     "start": "npm run ensure:cesium && electron .",
     "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
     "lint": "for f in src/*.js; do node --check \"$f\" || exit 1; done",
-    "test": "node --test"
+    "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {
     "electron": "^32.0.0",

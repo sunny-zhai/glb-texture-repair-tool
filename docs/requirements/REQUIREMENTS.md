@@ -78,7 +78,7 @@
 - **确认**：平台采纳前交付，本次追溯登记（交付提交 `fd90022`、`1c266a4`）
 
 ### REQ-005 模型体检：把"摆进去到底什么样"变成可读报告
-- **状态**：进行中
+- **状态**：进行中（验收标准 1~5 均已实现并通过自动化验证；人工目视确认与 TASK-009 的缺陷修复待完成）
 - **优先级**：P1
 - **描述**：用户需要"详细梳理模型大小、点面数量、贴图、中心点位置、默认方向、比例尺"。目前这些信息只散落在转换日志的一行尺寸里，工具中**没有任何地方**能看出"accessor 盒与真实世界盒差 9 万倍""贴图是 1×1 占位""几何是三角汤""33 个材质却 0 张贴图被采样"这类问题——模型看着对、摆进 Cesium 却不对。本需求提供**只读体检**：对任意 GLB（含 IVE 转换产物）产出参数报告（体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴判定、比例尺、问题清单），并在界面上做成面板；预览侧同时提供方向/缩放即时修正。
 - **范围**：`src/inspect.js`（体检报告）、`src/transform.js`（世界盒与矩阵工具）、界面体检面板与预览控件、相应 IPC 通道。
@@ -87,10 +87,10 @@
   1. Given `o-model/运输车.glb` When `node -e "inspect('o-model/运输车.glb')"` Then 报告给出 `bounds.world ≈ 2.59 × 4.10 × 5.98`、`boundsDeviationFactor > 1000`，并列出荒谬的 `accessorUnion`（实测 `11,572 × 15,430 × 23,539`）。
   2. When 对样例集逐个体检 Then 零崩溃，单文件 ≤ 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb`：174,937 顶点 / 363 图元）。**样例集以本地实际存在为准**：样例模型不入库（`.gitignore`），个数随本地增减，用例**只要求 ≥1 个并随语料伸缩、不硬编码数量**；2026-09-18 首次实测时为 `o-model/*.glb` 18 个 + `model/*.glb` 3 个 = 21 个，语料裁剪后本地为 4 个（`docs/002-requirements.md` 早先写的「24 个」是估计值，已修正）。
   3. When 统计几何 Then 三角面统计可判定（`mode=4` 图元的索引数可被 3 整除；无此类索引图元时为 `null`）；`vertexReuseRatio` 对 person 参考件 = 0.61（定义为 **顶点数 ÷ 三角面数**：焊接后 11,516 ÷ 18,924）。（原判据 `triangles === Σ(indices.count)/3` 经冷上下文审查判定无效——无非索引图元时是恒等式、存在非索引图元时必然为假——已替换，见 TASK-007 返工记录。）
-  4. Given 预览视图 When 拖动方向/缩放 Then 人物与车辆能同框可见，日志记录最终 `modelMatrix`；且**预览修正不写入输出文件**（写回必须是显式操作）。
+  4. Given 预览视图 When 拖动方向/缩放（或在上轴三态里显式指定 `Z-up → Y-up`）Then 模型按设定旋转/缩放、日志记录最终 `modelMatrix` 并注明未写回；人工目视下人物与车辆能同框可见。且**预览修正不写入输出文件**（写回必须是显式操作）。
   5. When 体检遇到异常输入（缺 accessor `min`/`max`、外部 `uri` 缺失、非 GLB）Then 报告给出可读中文问题条目而不是抛异常。
-- **关联任务**：TASK-007、TASK-008
-- **关联代码/测试**：`src/inspect.js`、`src/transform.js`、`src/renderer.js`、`test/inspect.test.js`
+- **关联任务**：TASK-007、TASK-008、TASK-009（缺陷修复）
+- **关联代码/测试**：`src/inspect.js`、`src/transform.js`、`src/report-format.js`、`src/preview-transform.js`、`src/renderer.js`、`test/inspect.test.js`、`test/report-format.test.js`、`test/preview-transform.test.js`、`test/ui-smoke.cjs`
 - **确认**：待确认
 
 ## 变更记录

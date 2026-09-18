@@ -15,6 +15,28 @@ const capabilityHint = document.getElementById('capabilityHint')
 const minimizeWindow = document.getElementById('minimizeWindow')
 const maximizeWindow = document.getElementById('maximizeWindow')
 const closeWindow = document.getElementById('closeWindow')
+const inspectStatus = document.getElementById('inspectStatus')
+const inspectPanel = document.getElementById('inspectPanel')
+const inspectWorldBox = document.getElementById('inspectWorldBox')
+const inspectWorldCenter = document.getElementById('inspectWorldCenter')
+const inspectAccessorBox = document.getElementById('inspectAccessorBox')
+const inspectAccessorCenter = document.getElementById('inspectAccessorCenter')
+const inspectDeviation = document.getElementById('inspectDeviation')
+const inspectFacts = document.getElementById('inspectFacts')
+const inspectIssues = document.getElementById('inspectIssues')
+const previewYaw = document.getElementById('previewYaw')
+const previewYawValue = document.getElementById('previewYawValue')
+const previewScale = document.getElementById('previewScale')
+const previewScaleValue = document.getElementById('previewScaleValue')
+const previewAxis = document.getElementById('previewAxis')
+const resetPreviewButton = document.getElementById('resetPreview')
+
+// report-format.js / preview-transform.js 是纯 CommonJS 模块，在 index.html 里以普通
+// <script> 先于本文件加载，导出挂在 window 上（渲染进程没有 Node，无法 require）。
+const reportFormat = window.reportFormat
+const previewTools = window.previewTransform
+
+const ISSUE_LEVEL_LABELS = { error: '错误', warn: '警告', info: '提示' }
 
 const state = {
   inputMode: 'files',
@@ -24,6 +46,10 @@ const state = {
   model: null,
   validationBounds: null,
 }
+
+// 体检是异步的：快速连续切换模型时，旧请求的结果不能覆盖新模型的面板
+let inspectToken = 0
+
 
 function appendLog(message, className) {
   const line = document.createElement('div')
@@ -157,8 +183,214 @@ function setValidationModelSummary(filePath, bytes) {
     : '当前验证模型：未选择'
 }
 
+// ---------------------------------------------------------------- 模型体检面板
+
+function setInspectStatus(message, className = '') {
+  inspectStatus.textContent = message
+  inspectStatus.className = `status ${className}`.trim()
+}
+
+function resetInspectPanel() {
+  inspectPanel.hidden = true
+  inspectWorldBox.textContent = '—'
+  inspectWorldCenter.textContent = '—'
+  inspectAccessorBox.textContent = '—'
+  inspectAccessorCenter.textContent = '—'
+  inspectDeviation.textContent = ''
+  inspectDeviation.className = 'inspect-deviation'
+  inspectFacts.innerHTML = ''
+  inspectIssues.innerHTML = ''
+}
+
+function fillInspectBoxes(bounds) {
+  const world = bounds?.world ?? null
+  const accessor = bounds?.accessorUnion ?? null
+  inspectWorldBox.textContent = reportFormat.formatBox(world)
+  inspectWorldCenter.textContent = `中心 ${reportFormat.formatCenter(world)}`
+  inspectAccessorBox.textContent = reportFormat.formatBox(accessor)
+  inspectAccessorCenter.textContent = `中心 ${reportFormat.formatCenter(accessor)}`
+}
+
+function renderInspectFacts(report) {
+  inspectFacts.innerHTML = ''
+  for (const row of reportFormat.factRows(report)) {
+    const li = document.createElement('li')
+    const label = document.createElement('span')
+    label.className = 'fact-label'
+    label.textContent = row.label
+    const value = document.createElement('span')
+    value.className = 'fact-value'
+    value.textContent = row.value
+    li.append(label, value)
+    inspectFacts.appendChild(li)
+  }
+}
+
+function renderInspectIssues(report) {
+  inspectIssues.innerHTML = ''
+  const issues = reportFormat.sortIssues(report?.issues)
+  if (!issues.length) {
+    const li = document.createElement('li')
+    li.className = 'issue-info'
+    li.textContent = '未发现问题'
+    inspectIssues.appendChild(li)
+    return
+  }
+  for (const issue of issues) {
+    const level = issue?.level ?? 'info'
+    const li = document.createElement('li')
+    li.className = `issue-${level}`
+    const code = issue?.code ? `[${issue.code}] ` : ''
+    const detail = issue?.detail ? `—— ${issue.detail}` : ''
+    li.textContent = `${ISSUE_LEVEL_LABELS[level] ?? '提示'} ${code}${issue?.message ?? ''}${detail}`
+    inspectIssues.appendChild(li)
+  }
+}
+
+/** @description 体检失败：只更新状态与偏差行，**不抛出**，预览照常进行。 */
+function renderInspectFailure(message) {
+  inspectPanel.hidden = false
+  fillInspectBoxes(null)
+  inspectDeviation.textContent = message
+  inspectDeviation.className = 'inspect-deviation error'
+  inspectFacts.innerHTML = ''
+  inspectIssues.innerHTML = ''
+  setInspectStatus(`体检失败：${message}`, 'error')
+  appendLog(`模型体检失败：${message}`, 'error')
+}
+
+function renderInspectionResult(result) {
+  const report = result?.report
+  if (!result?.ok || !report) {
+    renderInspectFailure(result?.error || '体检没有返回报告。')
+    return
+  }
+  // 双保险：main.js 的 handler 已把 inspect() 的 ok:false 折成 { ok:false, error }，但报告本身
+  // 也可能来自别处（例如将来的 IPC 复用），这里再判一次，保证面板永远只显示中文原因。
+  if (report.ok !== true) {
+    const firstError = (Array.isArray(report.issues) ? report.issues : [])
+      .find((issue) => issue?.level === 'error')
+    renderInspectFailure(firstError?.message || '文件无法体检（报告不可用）。')
+    return
+  }
+
+  inspectPanel.hidden = false
+  fillInspectBoxes(report.bounds)
+
+  const level = reportFormat.deviationLevel(report.bounds?.deviationFactor)
+  inspectDeviation.textContent = reportFormat.deviationText(report)
+  inspectDeviation.className = `inspect-deviation${level === 'ok' ? '' : ` ${level}`}`
+
+  renderInspectFacts(report)
+  renderInspectIssues(report)
+
+  const counts = reportFormat.issueCounts(report.issues)
+  const issueSummary = counts.error || counts.warn || counts.info
+    ? `错误 ${counts.error} / 警告 ${counts.warn} / 提示 ${counts.info}`
+    : '未发现问题'
+  const partialNote = report.partial ? ' · 报告不完整（文件结构异常，问题清单已说明原因）' : ''
+  setInspectStatus(
+    `体检完成 · ${report.elapsedMs ?? 0} ms · ${issueSummary}${partialNote}`,
+    report.partial || counts.error > 0 ? 'warn' : 'ok',
+  )
+  appendLog(
+    `模型体检完成：${report.fileName || result.filePath} · ${((report.fileBytes ?? 0) / 1048576).toFixed(2)} MB`
+    + ` · ${issueSummary}${partialNote}`,
+    report.partial || counts.error > 0 ? 'warn' : 'ok',
+  )
+}
+
+async function loadInspection(filePath) {
+  const token = ++inspectToken
+  resetInspectPanel()
+  if (!reportFormat) {
+    setInspectStatus('体检面板模块未加载', 'error')
+    return
+  }
+  setInspectStatus('正在体检…')
+  try {
+    const result = await window.repairApp.inspectGlb(filePath)
+    if (token !== inspectToken) return
+    renderInspectionResult(result)
+  } catch (error) {
+    if (token !== inspectToken) return
+    renderInspectFailure(formatError(error))
+  }
+}
+
+// ---------------------------------------------------------------- 预览方向/缩放（仅预览）
+
+function readPreviewInput() {
+  return {
+    yawDeg: Number(previewYaw.value),
+    scale: Number(previewScale.value),
+    axis: previewAxis.value,
+  }
+}
+
+function previewYawLabel(yawDeg) {
+  return `${Number(yawDeg.toFixed(1))}°`
+}
+
+function previewScaleLabel(scale) {
+  return `${scale.toFixed(2)}×`
+}
+
+function updatePreviewLabels() {
+  if (!previewTools) return
+  const preview = previewTools.clampPreview(readPreviewInput())
+  previewYawValue.textContent = previewYawLabel(preview.yawDeg)
+  previewScaleValue.textContent = previewScaleLabel(preview.scale)
+}
+
+/**
+ * @description 只改 Cesium 预览的 modelMatrix（均匀缩放 × 绕 Y 轴旋转，可选的 Z-up→Y-up
+ *   绕 X 轴 −90°），并把最终矩阵写进日志。**绝不写回任何文件**（ADR-004：写回必须是另一个
+ *   显式操作，当前不存在）。
+ * @param {{log?: boolean, prefix?: string}} [options] 拖动过程中 `log:false`（只实时改矩阵，
+ *   不然一次拖动会刷出几十行日志，把"最终 modelMatrix"这条验收证据淹掉）；松手（`change`）
+ *   或重置时才记一行。
+ */
+function applyPreviewTransform(options = {}) {
+  const { log = true, prefix = '预览修正：' } = options
+  if (!previewTools) {
+    appendLog('预览修正模块未加载，无法应用方向/缩放。', 'error')
+    return
+  }
+  const preview = previewTools.clampPreview(readPreviewInput())
+  const summary = previewTools.describePreview(preview)
+  if (!state.model || !state.viewer) {
+    if (log) appendLog(`预览修正未生效：还没有加载预览模型。当前设置：${summary}（仅预览修正，未写入输出文件）`, 'warn')
+    return
+  }
+  const matrix = previewTools.previewMatrix(preview)
+  state.model.modelMatrix = Cesium.Matrix4.fromArray(matrix)
+  state.viewer.scene.requestRender()
+  if (log) {
+    appendLog(`${prefix}${summary} · modelMatrix=[${matrix.map((value) => value.toFixed(4)).join(', ')}]（仅预览修正，未写入输出文件）`)
+  }
+}
+
+function resetPreviewControls() {
+  if (!previewTools) return
+  if (!previewAxis.options.length) {
+    for (const option of previewTools.axisOptions()) {
+      const element = document.createElement('option')
+      element.value = option.value
+      element.textContent = option.label
+      previewAxis.appendChild(element)
+    }
+  }
+  previewYaw.value = String(previewTools.PREVIEW_DEFAULT.yawDeg)
+  previewScale.value = String(previewTools.PREVIEW_DEFAULT.scale)
+  previewAxis.value = previewTools.PREVIEW_DEFAULT.axis
+  updatePreviewLabels()
+}
+
 async function validateModel(filePath) {
   if (!filePath) return
+  // 体检与预览互不依赖：这里先并行发起，任何体检失败都只落到面板上，不会打断 Cesium 加载。
+  loadInspection(filePath)
   if (!window.Cesium) {
     setValidationStatus('CesiumJS 加载失败', 'error')
     appendLog('CesiumJS 未加载，请检查网络连接。', 'error')
@@ -215,6 +447,8 @@ async function validateModel(filePath) {
       throw new Error('Cesium 未返回模型对象。')
     }
     state.model = model
+    // 新模型一律回到默认预览修正（modelMatrix 本来就是单位矩阵，控件必须与之一致）
+    resetPreviewControls()
     model.backFaceCulling = false
     model.minimumPixelSize = 96
     model.debugShowBoundingVolume = false
@@ -431,6 +665,29 @@ document.getElementById('pickValidation').addEventListener('click', async () => 
 
 document.getElementById('resetView').addEventListener('click', resetModelView)
 
+// 预览修正控件：input 只实时改预览的 modelMatrix（不记日志，避免拖动刷屏），
+// change（松手/选完）才记一行最终矩阵；绝不落盘（ADR-004）
+const applyPreviewLive = () => {
+  updatePreviewLabels()
+  applyPreviewTransform({ log: false })
+}
+const applyPreviewAndLog = () => {
+  updatePreviewLabels()
+  applyPreviewTransform()
+}
+
+previewYaw.addEventListener('input', applyPreviewLive)
+previewYaw.addEventListener('change', applyPreviewAndLog)
+previewScale.addEventListener('input', applyPreviewLive)
+previewScale.addEventListener('change', applyPreviewAndLog)
+// 上轴三态（ADR-002）：由人显式指定，推断结果绝不自作主张；这里同样只影响预览
+previewAxis.addEventListener('change', applyPreviewAndLog)
+
+resetPreviewButton.addEventListener('click', () => {
+  resetPreviewControls()
+  applyPreviewTransform({ prefix: '已重置预览修正：' })
+})
+
 runRepairButton.addEventListener('click', async () => {
   resultList.innerHTML = ''
   showProgress(0, 0, '正在扫描输入，统计待修复模型数量…')
@@ -491,3 +748,4 @@ window.repairApp.capabilities().then((capabilities) => {
 
 renderInputs()
 renderOutput()
+resetPreviewControls()

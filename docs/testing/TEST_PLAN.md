@@ -120,6 +120,19 @@
 - **期望**：① 运输车世界盒 `2.59 × 4.10 × 5.98` m、`deviationFactor > 1000`、列出荒谬的 accessor 盒；② 样例集零崩溃且单文件 < 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb` 174,937 顶点；扫全语料的用例要求基数 ≥1 并随本地语料伸缩）；③ `mode=4` 图元的索引数可被 3 整除（无此类索引图元时为 `null`）、person 参考件 `vertexReuseRatio` = 0.61（定义为顶点数 ÷ 三角面数）；④ 非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失等异常都变成中文问题条目而非抛异常
 - **实际/证据**：`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**（跳过项依赖已删除的样例 `o-model/运输车.glb`）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉核对是本次按 `mode=4` + 索引数重算的
 
+### TC-014 界面体检面板与预览方向/缩放/上轴（REQ-005 验收标准 4）
+- **关联需求**：REQ-005（验收标准 4）；设计决策见 `docs/design/ADR.md` 的 ADR-002（上轴三态）与 ADR-004（预览修正不写回）
+- **层级**：单元（纯函数）+ 集成（Electron 渲染进程接线，CDP 驱动）+ 人工目视
+- **前置**：`npm run ensure:cesium` 已解包 `vendor/cesium/1.128`；集成部分需要手动启动带调试端口的实例：`npx electron . --remote-debugging-port=9333`
+- **步骤**：
+  1. `node --test test/report-format.test.js test/preview-transform.test.js`
+  2. `node test/ui-smoke.cjs model/蹲姿.glb --port 9333`（再用 `o-model/蹲姿.ive` 跑一遍，覆盖 IVE 的临时转换路径）
+  3. 人工：`npm run dev`，`选择预览模型（单个）` 分别取一个 GLB 与一个 IVE，看「模型体检」面板；拖动「预览方向」「预览缩放」、切换「上轴」；点「重置预览修正」
+- **期望**：① 面板双列给世界盒与 accessor 盒、偏差按 `deviationLevel` 上色（<10 正常 / 10~1000 告警 / ≥1000 错误）且**配色与文案同档**（ok 档不得出现"会错位"）、事实行含几何/结构/贴图/采样/上轴/比例尺、问题清单按 error→warn→info 排序，**任何字段缺失都不得出现 `undefined`/`NaN`**；② 拖动（`input`）只实时改预览矩阵**不记日志**，松手（`change`）与重置各记一行 `modelMatrix` 并注明「仅预览修正，未写入输出文件」；上轴三态只有显式选 `Z-up → Y-up` 才叠加 `Rx(−90°)`（ADR-002：推断绝不自动施加）；③ 体检失败（不可读/非 GLB/解析失败）只在面板上显示中文原因，**不打断 Cesium 预览**；④ 预览与体检前后输入文件哈希不变；⑤ 人工目视：模型直立、贴地、贴图正常，人物与车辆能同框
+- **实际/证据**：`node --test test/report-format.test.js test/preview-transform.test.js` → **24 通过 / 0 失败**（`npm test` → 104 通过 / 0 失败 / 4 跳过）。接线冒烟（`node test/ui-smoke.cjs model/蹲姿.glb --port 9333`，CDP 读渲染进程的真实 DOM）：`inspectStatus` 「体检完成 · 9 ms · 错误 0 / 警告 1 / 提示 1」、世界盒 `0.538 × 1.364 × 1.056 m`、世界盒中心 `0.032, 0.664, -0.052 m`、accessor 盒 `0.005 × 0.011 × 0.012 m`、偏差行原文「世界盒与 accessor 盒相差 129.211 倍：尺寸比 129.211 倍（中心偏移比 0.373），按 accessor 盒取景会错位。」且 `className` 为 `inspect-deviation warn`；6 条事实行为 几何 `顶点 11516 · 三角面 18924 · 顶点/面比 0.6085`、结构 `节点 70 · 网格 3 · 图元 3`、贴图 `贴图 3 个 · 内嵌图片 3 张 · 1×1 占位 0 张`、采样 `被采样贴图 3 张 · 材质 3 个`、上轴 `Y 轴（中等置信度）—— 生成器 "FBX2glTF v0.9.7" 属于标准 glTF 导出链，按 Y-up 约定输出`、比例尺 `中位节点缩放 100 · 3 个节点不是单位缩放`；问题清单 2 条按 warn→info 排序（`ACCESSOR_BOUNDS_UNRELIABLE` 与 `UNREFERENCED_MESHES`——后者是 TASK-009 要修的既有误报，见下）；面板文本无 `undefined`/`NaN`。拖动 5 次 `input` 新增 `modelMatrix=` 日志 **0 行**、标签跟到 `75°`；两次 `change` 各 1 行，矩阵与列主序手算一致（`方向 90°` → `[0.0000, 0.0000, -1.0000, 0, 0, 1.0000, 0, 0, 1.0000, 0, 0, 0, 0, 0, 0, 1.0000]`，再 `缩放 2×` → 非平移分量 ×2）；上轴选 `Z-up` 后为 `[0.0000, 0.0000, -2.0000, 0.0000, -2.0000, 0.0000, 0.0000, 0.0000, 0.0000, 2.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 1.0000]`（`Rx(−90°)∘Ry(90°)∘2`，与 `src/ive.js` 的 `(x,y,z)→(x,z,-y)` 同向）；重置回 `0°/1.00×/auto` 且只记 1 行；输入文件 `shasum -a 256` 前后一致；缺失文件走 `{ok:false,error:'无法读取文件：ENOENT…'}` 而非 reject。IVE（`o-model/蹲姿.ive`）：世界盒 `0.538 × 1.364 × 1.056 m`、中心 `0.000, 0.682, -0.000`、偏差档 `ok`（`尺寸比 1.165 倍，未到告警门槛（10 倍）`），`.ive` 哈希不变。
+  **已知未绿项**：冒烟的「加载预览模型」步骤超时（26/27 项断言通过）。机制经 CDP 探针确认**不是** ready 事件竞态，而是**窗口不可见**：`document.hidden === true` → `requestAnimationFrame` 被节流 → Cesium 一帧都没渲染（`frameNumber` 恒为 0、`resourcesLoaded` 仍为 false）→ 那句「置 `_ready` 并发 `readyEvent`」的 `afterRender` 回调从未执行，于是 `waitForModelReady` 挂起、`#validationStatus` 停在「正在加载…」（转前台后 rAF 恢复即会落定并补跑诊断/取景，不是永久卡死）。已登记 TASK-009：根因用 `backgroundThrottling: false`，另加超时兜底并把超时文案与「已加载」区分开。
+  人工目视（直立/贴地/贴图/人物与车辆同框）**待 sunny-zhai 确认**——自动化只覆盖接线与数值，覆盖不到"看起来对不对"。
+
 ## 必测维度勾选
 
 - [x] 成功路径（TC-001～TC-005、TC-008）
@@ -132,19 +145,21 @@
 
 ## 覆盖率
 
-`node --test --experimental-test-coverage` 实测（2026-09-18；样例集裁剪、`inspect.js`/`transform.js` 加入后复测）：
+`node --test --experimental-test-coverage "test/*.test.js"` 实测（2026-09-18；样例集裁剪、`inspect.js`/`transform.js`/`report-format.js`/`preview-transform.js` 加入后复测）：
 
 | 文件 | 行 % | 分支 % | 函数 % |
 | :-- | --: | --: | --: |
 | `src/ive.js` | 95.99 | 70.34 | 98.18 |
 | `src/repair.js` | 89.30 | 63.39 | 90.28 |
-| `src/inspect.js` | 93.57 | 81.99 | 94.87 |
-| `src/transform.js` | 100.00 | 92.97 | 100.00 |
-| **all files** | **92.97** | **73.76** | **94.82** |
+| `src/inspect.js` | 93.57 | 82.90 | 94.87 |
+| `src/transform.js` | 100.00 | 93.80 | 100.00 |
+| `src/report-format.js` | 97.63 | 95.06 | 100.00 |
+| `src/preview-transform.js` | 100.00 | 97.30 | 100.00 |
+| **all files** | **93.63** | **77.57** | **95.83** |
 
 说明：
 
-- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支、`ive.js` 的错误处理分支与 `inspect.js` 的少数异常分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE、畸形 GLB 的具体形态），当前夹具没有。
+- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支、`ive.js` 的错误处理分支与 `inspect.js`/`report-format.js` 的少数异常分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE、畸形 GLB 的具体形态），当前夹具没有。
 - **Electron 壳层（`src/main.js`、`src/preload.js`、`src/renderer.js`）不在插桩范围内**（测试不 require 它们），所以"UI ≥85%"这一项**没有测量**，不要按通过理解。
 - 因此本计划**不设覆盖率门槛**；把门槛写进 CI 需先补样本与插桩，属后续工作。
 
@@ -166,4 +181,6 @@
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
 | TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 35 通过 / 1 跳过（缺样例 `o-model/运输车.glb`）/ 0 失败；本地 4 个 GLB 0 崩溃、最慢 1ms、三角面数 4/4 全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 
-**总计**：`npm test` → 76 通过 / 0 失败 / 4 跳过（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例）。
+| TC-014 | REQ-005 | 通过（自动）/ 待人工 | 纯函数 24/24；接线冒烟 27 项断言中 26 项通过，1 项（`validateModel` 落定）为既有缺陷、已登记 TASK-009；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
+
+**总计**：`npm test` → 100 通过 / 0 失败 / 4 跳过（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例）。
