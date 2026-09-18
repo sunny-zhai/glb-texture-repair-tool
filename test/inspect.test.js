@@ -251,12 +251,15 @@ test('inspect: nodeMatrixStats 用与量纲无关的判据识别塌陷', () => {
   assert.equal(nodeMatrixStats(meshNode(squashed)).singular, 1)
   // 镜像
   assert.equal(nodeMatrixStats(meshNode([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])).mirrored, 1)
-  // 偶数个缩放取真中位数
-  const twoNodes = {
+  // 偶数个缩放要取真中位数：两个节点都必须**是网格节点**才会被记录（审查指出原用例
+  // 只让节点 0 可达，实际只统计到一个缩放，断言 1 是碰巧通过）
+  const twoMeshNodes = {
     nodes: [{ mesh: 0, matrix: uniform(1) }, { mesh: 0, matrix: uniform(4) }],
-    scenes: [{ nodes: [0] }],
+    scenes: [{ nodes: [0, 1] }],
   }
-  assert.equal(nodeMatrixStats(twoNodes).medianScale, 1)
+  const both = nodeMatrixStats(twoMeshNodes)
+  assert.equal(both.meshNodes, 2)
+  assert.equal(both.medianScale, 2.5)
 })
 
 // ---------------------------------------------------------------- 合成 GLB
@@ -311,6 +314,10 @@ test('inspect: 纯平移也能被偏差倍数发现', () => {
     assert.ok(report.bounds.deviationFactor > 1000, `实际 ${report.bounds.deviationFactor}`)
     assert.equal(report.bounds.deviationParts.sizeRatio, 1)
     assert.ok(report.bounds.deviationParts.centerOffsetRatio >= 1000, `实际 ${report.bounds.deviationParts.centerOffsetRatio}`)
+    // 文案不能自相矛盾：尺寸相同时必须说清"差在位置"（原实现会打印两个相同的盒说"≠"）
+    const detail = report.issues.find((item) => item.code === 'ACCESSOR_BOUNDS_UNRELIABLE').detail
+    assert.match(detail, /尺寸相同/)
+    assert.match(detail, /中心位置相差/)
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
   }
@@ -502,7 +509,7 @@ test('inspect: 非索引图元的三角面单独上报，且索引数整除不�
     assert.equal(report.geometry.trianglesNonIndexed, 1)
     assert.equal(report.geometry.triangles, 1)
     assert.equal(report.geometry.nonIndexedPrimitives, 1)
-    assert.equal(report.geometry.indexCountDivisibleBy3, true)
+    assert.equal(report.geometry.indexCountDivisibleBy3, null) // 非索引图元没有 mode=4 索引数可判
     assert.ok(report.issues.some((issue) => issue.code === 'NON_INDEXED_PRIMITIVES'))
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
@@ -550,10 +557,10 @@ test('inspect: 结构畸形的 GLB 不抛异常（BR-020 回归）', () => {
       let report
       assert.doesNotThrow(() => { report = inspect(file) }, `${name} 不应抛异常`)
       assert.equal(report.ok, true, `${name} 应给出报告`)
-      // 允许"报告不完整"，但必须说明原因，且渲染摘要不能抛
-      if (report.partial) {
-        assert.ok(report.issues.some((issue) => issue.code === 'INSPECT_FAILED'))
-      }
+      // 这些形状修复后**不应**再让分析段抛错，因此不应降级为 partial
+      // （审查指出原先的 `if (report.partial)` 对这 5 个形状恒不成立，是死代码；
+      //   analyze 的 catch 现在是纯安全网，由下面的非数组用例间接覆盖）
+      assert.notEqual(report.partial, true, `${name} 不应降级为 partial`)
       assert.doesNotThrow(() => formatReport(report))
     }
     // 不存在的路径同样只报错
@@ -592,6 +599,187 @@ test('transform: glbBounds 汇总两种盒、默认场景与偏差分解', () =>
   assert.equal(bounds.deviationParts.centerOffsetRatio, 0)
   assert.equal(bounds.sceneIndex, 0)
   assert.equal(bounds.sceneCount, 1)
+})
+
+test('inspect: 非数组的 scene.nodes / node.children 不再让报告降级（BR-020 回归）', () => {
+  const workDir = makeTempDir()
+  try {
+    // 审查用 400 次 fuzz 发现 66 次 partial 全由这类形状引起（"5 is not iterable"）
+    const cases = {
+      'scene-nodes-number.glb': glb({ nodes: [{ mesh: 0 }], scenes: [{ nodes: 5 }] }),
+      'children-number.glb': glb({
+        accessors: [triangleAccessor()],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+        nodes: [{ children: 5 }, { mesh: 0 }],
+        scenes: [{ nodes: [0] }],
+      }),
+      'children-object.glb': glb({
+        accessors: [triangleAccessor()],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+        nodes: [{ children: { 0: 1 }, mesh: 0 }],
+        scenes: [{ nodes: [0] }],
+      }),
+    }
+    for (const [name, json] of Object.entries(cases)) {
+      const file = writeTemp(workDir, name, json)
+      let report
+      assert.doesNotThrow(() => { report = inspect(file) })
+      assert.notEqual(report.partial, true, `${name} 不应 partial`)
+      assert.ok(report.bounds, `${name} 报告仍应有 bounds 段`)
+      assert.ok(report.geometry, `${name} 报告仍应有 geometry 段`)
+      assert.ok(report.axes, `${name} 报告仍应有 axes 段`)
+    }
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: scene 索引越界时给出 SCENE_INDEX_OUT_OF_RANGE', () => {
+  const workDir = makeTempDir()
+  try {
+    const file = writeTemp(workDir, 'scene-oor.glb', glb({
+      accessors: [triangleAccessor()],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }],
+      scene: 7,
+    }))
+    const report = inspect(file)
+    assert.equal(report.bounds.world, null)
+    // 不能只是"默默没有盒"：必须说明 scene 索引无效（与"没有 scene"是两种不同损坏）
+    assert.ok(report.issues.some((issue) => issue.code === 'SCENE_INDEX_OUT_OF_RANGE'))
+    assert.ok(!report.issues.some((issue) => issue.code === 'NO_DEFAULT_SCENE'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 三角面按 primitive.mode 统计，非三角形图元不计', () => {
+  const workDir = makeTempDir()
+  try {
+    const build = (mode, count, name) => writeTemp(workDir, name, glb({
+      accessors: [triangleAccessor([0, 0, 0], [1, 1, 1])],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, ...(mode === null ? {} : { mode }) }] }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }],
+    }))
+    // 用一个顶点数足够的 accessor 来区分各 mode 的公式
+    const withCount = (mode, count, name) => {
+      const json = glb({
+        accessors: [{ min: [0, 0, 0], max: [1, 1, 1], count, type: 'VEC3', componentType: 5126 }],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0 }, ...(mode === null ? {} : { mode }) }] }],
+        nodes: [{ mesh: 0 }],
+        scenes: [{ nodes: [0] }],
+      })
+      return inspect(writeTemp(workDir, name, json))
+    }
+
+    const triangles = withCount(4, 6, 'mode-triangles.glb')
+    assert.equal(triangles.geometry.trianglesNonIndexed, 2)
+    assert.equal(triangles.geometry.nonTrianglePrimitives, 0)
+
+    const strip = withCount(5, 6, 'mode-strip.glb')
+    assert.equal(strip.geometry.trianglesNonIndexed, 4, 'STRIP: n−2')
+
+    const fan = withCount(6, 5, 'mode-fan.glb')
+    assert.equal(fan.geometry.trianglesNonIndexed, 3, 'FAN: n−2')
+
+    const points = withCount(0, 7, 'mode-points.glb')
+    assert.equal(points.geometry.trianglesNonIndexed, 0, 'POINTS 没有三角面')
+    assert.equal(points.geometry.nonTrianglePrimitives, 1)
+    assert.equal(points.geometry.modeHistogram.POINTS, 1)
+
+    // 0 个索引时整除不变量必须为 null（`0 % 3 === 0` 恒真，不能当证据）
+    const zeroIndices = withCount(4, 0, 'mode-zero.glb')
+    assert.equal(zeroIndices.geometry.indexCountDivisibleBy3, null)
+    void build
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 图片头必须结构自洽，垃圾字节不给荒诞宽高', () => {
+  // 垃圾 JPEG 头
+  assert.equal(imageDimensions(Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(64, 7)]), 'image/jpeg'), null)
+  // SOF 段长与分量数不匹配（0x20 vs 3 分量应有的 17）
+  const badLength = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x20, 0x08, 0xab, 0xcd, 0xd1, 0xc2, 0x03, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+  assert.equal(imageDimensions(badLength, 'image/jpeg'), null)
+  // 非法分量数
+  const badComponents = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0xab, 0xcd, 0xd1, 0xc2, 0x09, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+  assert.equal(imageDimensions(badComponents, 'image/jpeg'), null)
+  // 自洽的头仍要能读出（不能因为校验过严而误杀）
+  const good = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x05, 0x00, 0x07, 0x03, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+  assert.deepEqual(imageDimensions(good, 'image/jpeg'), { width: 7, height: 5 })
+  // 标错 mimeType 的 PNG 不该被当成 PNG（只看魔数）
+  assert.equal(imageDimensions(Buffer.alloc(32, 3), 'image/png'), null)
+})
+
+test('inspect: 读不出宽高时给出可见条目，而不是静默', () => {
+  const workDir = makeTempDir()
+  try {
+    const junk = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(64, 7)])
+    const file = path.join(workDir, 'undimensioned.glb')
+    writeGlb(file, {
+      asset: { version: '2.0' },
+      accessors: [triangleAccessor()],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: junk.length }],
+      buffers: [{ byteLength: junk.length }],
+      images: [{ bufferView: 0, mimeType: 'image/jpeg' }],
+      textures: [{ source: 0 }],
+      materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }],
+    }, junk)
+
+    const report = inspect(file)
+    assert.equal(report.textures.dimensionsKnown, 0)
+    assert.equal(report.images.length, 1)
+    assert.ok(report.issues.some((issue) => issue.code === 'TEXTURE_DIMENSIONS_UNKNOWN'),
+      'BR-022 要治的是「静默失效」，读不出宽高必须有条目')
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 缺 POSITION min/max 时给出 POSITION_MINMAX_MISSING', () => {
+  const workDir = makeTempDir()
+  try {
+    const file = writeTemp(workDir, 'no-minmax.glb', glb({
+      accessors: [{ count: 3, type: 'VEC3', componentType: 5126 }], // 故意不给 min/max
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }],
+    }))
+    const report = inspect(file)
+    assert.equal(report.bounds.world, null)
+    assert.equal(report.geometry.missingPositionBounds, 1)
+    // 用户必须能看到"为什么没有盒"，而不是只有无关提示
+    assert.ok(report.issues.some((issue) => issue.code === 'POSITION_MINMAX_MISSING'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 采样统计只认被图元使用的材质', () => {
+  const workDir = makeTempDir()
+  try {
+    const file = writeTemp(workDir, 'unused-material.glb', glb({
+      accessors: [triangleAccessor()],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }], // 图元不引用任何材质
+      materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }], // 有材质但没人用
+      textures: [{ source: 0 }],
+      images: [{ uri: `data:image/png;base64,${TINY_PNG.toString('base64')}` }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }],
+    }))
+    const report = inspect(file)
+    // 若把"未使用材质的贴图"算作已采样，NO_SAMPLED_TEXTURE 会假阴性
+    assert.equal(report.textures.sampledImages, 0)
+    assert.ok(report.issues.some((issue) => issue.code === 'NO_SAMPLED_TEXTURE'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
 })
 
 // ---------------------------------------------------------------- 真实样本（缺样例时跳过）
@@ -634,7 +822,7 @@ test('inspect: 样例集全部体检通过、尺寸可读且远快于 2s 上限�
     const name = path.basename(file)
     if (!report.ok) { failures.push(`${name}: ${report.issues[0]?.code}`); continue }
     // 可判定的不变量：索引数必须是 3 的倍数
-    if (!report.geometry.indexCountDivisibleBy3) failures.push(`${name}: 索引数不是 3 的倍数`)
+    if (report.geometry.indexCountDivisibleBy3 === false) failures.push(`${name}: 索引数不是 3 的倍数`)
     if (report.partial) failures.push(`${name}: 报告不完整（${report.issues[0]?.code}）`)
     // 内嵌 PNG/JPEG 必须都能读出宽高（审查实测曾被 1KB 截断让 62% 静默失效）
     for (const image of report.images) {
