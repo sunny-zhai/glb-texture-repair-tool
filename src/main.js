@@ -15,6 +15,7 @@ const {
   missingIveHelperMessage,
   resolveIveHelper,
 } = require('./ive')
+const { inspect } = require('./inspect')
 
 let mainWindow
 const appIconPath = path.join(__dirname, '..', 'assets', 'app-icon.png')
@@ -196,6 +197,55 @@ ipcMain.handle('read-glb-data-url', async (_, filePath) => {
     }
   } finally {
     if (temporaryDir) fs.rmSync(temporaryDir, { recursive: true, force: true })
+  }
+})
+
+// 模型体检：只读，产出一份 JSON 报告供界面展示。**绝不 reject** —— 渲染进程要么拿到
+// { ok: true, report }，要么拿到 { ok: false, error: 中文原因 }，因此体检失败不会连带打断
+// Cesium 预览。
+ipcMain.handle('inspect-glb', async (_, filePath) => {
+  if (typeof filePath !== 'string') {
+    return { ok: false, error: '只能体检 GLB 或 IVE 文件。' }
+  }
+
+  // IVE 与预览同样先转成临时 GLB 再体检：报告里的盒/贴图规格必须是转换后的真实数据，
+  // 而 inspect() 只认 .glb。临时目录用完即删。
+  let targetPath = filePath
+  let temporaryDir = ''
+  try {
+    if (isIvePath(filePath)) {
+      if (!iveConversionAvailable()) throw new Error(missingIveHelperMessage())
+      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-ive-inspect-'))
+      targetPath = path.join(temporaryDir, path.basename(filePath).replace(/\.ive$/i, '.glb'))
+      const report = convertIveToGlb(filePath, targetPath, { keepJpeg: true })
+      if (report.status !== 'success') throw new Error(report.error)
+    }
+    if (!targetPath.toLowerCase().endsWith('.glb')) {
+      throw new Error('只能体检 GLB 或 IVE 文件。')
+    }
+    // inspect() 同步读完整份文件，因此必须在 finally 删除临时目录之前调用。
+    const report = inspect(targetPath)
+    // report.ok === false 表示连读取/解析都没成功（不可读、非 GLB、解析失败），此时报告里
+    // 没有可用数据：直接按 ok:false 上报第一条错误的中文 message，别让渲染进程去分辨
+    // "通道成功但报告失败"这层区别。report.ok === true 但 partial === true 时仍返回报告，
+    // 界面会显式标注"报告不完整"。
+    if (report.ok !== true) {
+      const firstError = (Array.isArray(report.issues) ? report.issues : [])
+        .find((issue) => issue?.level === 'error')
+      return { ok: false, filePath, sourcePath: targetPath, error: firstError?.message || '体检没有产出可用报告。' }
+    }
+    return { ok: true, filePath, sourcePath: targetPath, report }
+  } catch (error) {
+    return { ok: false, filePath, error: `体检失败：${error.message}` }
+  } finally {
+    // 临时目录清理自身也可能抛（权限/占用）：本 handler 承诺"绝不 reject"，所以单独兜一层
+    if (temporaryDir) {
+      try {
+        fs.rmSync(temporaryDir, { recursive: true, force: true })
+      } catch (error) {
+        console.error(`清理 IVE 体检临时目录失败：${error.message}`)
+      }
+    }
   }
 })
 

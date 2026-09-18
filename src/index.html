@@ -66,10 +66,41 @@
 
       <section>
         <div class="preview-heading">
+          <h2>模型体检</h2>
+          <span id="inspectStatus" class="status">未体检</span>
+        </div>
+        <div id="inspectPanel" class="inspect-panel" hidden>
+          <div class="inspect-boxes">
+            <div class="inspect-box">
+              <h3>世界盒（Cesium 取景口径）</h3>
+              <div id="inspectWorldBox" class="inspect-value">—</div>
+              <div id="inspectWorldCenter" class="inspect-sub">—</div>
+            </div>
+            <div class="inspect-box">
+              <h3>accessor 盒（顶点数据范围）</h3>
+              <div id="inspectAccessorBox" class="inspect-value">—</div>
+              <div id="inspectAccessorCenter" class="inspect-sub">—</div>
+            </div>
+          </div>
+          <div id="inspectDeviation" class="inspect-deviation"></div>
+          <ul id="inspectFacts" class="inspect-facts"></ul>
+          <ul id="inspectIssues" class="list inspect-issues"></ul>
+        </div>
+      </section>
+
+      <section>
+        <div class="preview-heading">
           <h2>Cesium 模型验证</h2>
           <span id="validationStatus" class="status">未加载模型</span>
         </div>
         <div id="validationModelSummary" class="validation-model-summary">当前验证模型：未选择</div>
+        <div class="preview-controls">
+          <label>预览方向 <input type="range" id="previewYaw" min="0" max="355" step="5" value="0" /> <span id="previewYawValue">0°</span></label>
+          <label>预览缩放 <input type="range" id="previewScale" min="0.1" max="5" step="0.1" value="1" /> <span id="previewScaleValue">1.00×</span></label>
+          <label>上轴 <select id="previewAxis"></select></label>
+          <button id="resetPreview">重置预览修正</button>
+          <span id="previewHint" class="hint-inline">仅影响预览，不写入输出文件</span>
+        </div>
         <div id="cesiumContainer" class="cesium-container"></div>
       </section>
 
@@ -80,6 +111,8 @@
     </section>
   </main>
   <script src="../vendor/cesium/1.128/Build/Cesium/Cesium.js"></script>
+  <script src="./report-format.js"></script>
+  <script src="./preview-transform.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

@@ -273,3 +273,168 @@ h2 {
 .warn {
   color: #fcd34d;
 }
+
+/* ---------------------------------------------------------------- 模型体检面板 */
+
+.inspect-panel {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.inspect-panel[hidden] {
+  display: none;
+}
+
+.inspect-boxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.inspect-box {
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+}
+
+.inspect-box h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.inspect-value {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.inspect-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.inspect-deviation {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+/* 比 .warn/.error 更高特异性，避免被文件末尾的同名工具类覆盖 */
+.inspect-deviation.warn {
+  color: #fcd34d;
+}
+
+.inspect-deviation.error {
+  color: #fca5a5;
+}
+
+.inspect-facts {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.inspect-facts li {
+  display: flex;
+  gap: 8px;
+}
+
+.inspect-facts .fact-label {
+  flex: none;
+  width: 3.5em;
+  color: #94a3b8;
+}
+
+.inspect-facts .fact-value {
+  overflow-wrap: anywhere;
+}
+
+.inspect-issues {
+  margin-top: 10px;
+  max-height: 200px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.issue-error {
+  color: #fca5a5;
+}
+
+.issue-warn {
+  color: #fcd34d;
+}
+
+.issue-info {
+  color: #93c5fd;
+}
+
+.status.warn {
+  color: #fcd34d;
+}
+
+/* ---------------------------------------------------------------- 预览修正控件（仅预览） */
+
+.preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.preview-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preview-controls input[type="range"] {
+  width: 140px;
+  accent-color: #3b82f6;
+}
+
+.preview-controls select {
+  max-width: 260px;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #e2e8f0;
+  background: #111827;
+  border: 1px solid #334155;
+  border-radius: 4px;
+}
+
+.preview-controls button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.hint-inline {
+  color: #64748b;
+}
+
+/* 窗口最小宽度 900px（src/main.js），所以断点取在 1024px——720px 永远触发不到，
+   等于没有降级。低于 1024px 时双列改成单列，数值行不至于被挤到换行错位。 */
+@media (max-width: 1024px) {
+  .inspect-boxes {
+    grid-template-columns: 1fr;
+  }
+}
