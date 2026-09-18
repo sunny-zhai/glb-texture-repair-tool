@@ -112,13 +112,13 @@
 ### TC-013 模型体检：世界盒 vs accessor 盒、点面统计、异常输入（REQ-005）
 - **关联需求**：REQ-005（对应其验收标准 1、2、3、5）；设计决策见 `docs/design/ADR.md` 的 ADR-001~003
 - **层级**：单元 + 集成（合成 GLB 与真实样本并用）
-- **前置**：`test/inspect.test.js` 自带合成 GLB，真值断言需要 `o-model/*.glb` 与 `model/*.glb`
+- **前置**：`test/inspect.test.js` 自带合成 GLB；真值断言需要 `o-model/*.glb` 与 `model/*.glb`。**样例模型不入库**（`.gitignore`），本地个数会变：缺夹具的用例走 `fixtureSkipReason()`，在用例名后打印缺失文件与找回提示并**跳过**，用例本身**不硬编码语料数量**
 - **步骤**：
   1. `node --test test/inspect.test.js`
   2. `node src/inspect.js o-model/运输车.glb`
-  3. 逐个体检样例集（`o-model/*.glb` 18 个 + `model/*.glb` 3 个）
-- **期望**：① 运输车世界盒 `2.59 × 4.10 × 5.98` m、`deviationFactor > 1000`、列出荒谬的 accessor 盒；② 21 个样本零崩溃且单文件 < 2s（上限样本 M1A2 174,937 顶点）；③ `triangles` 与 `Σ(indices.count)/3` 全等、person 参考件 `vertexReuseRatio` = 0.61（定义为顶点数 ÷ 三角面数）；④ 非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失等异常都变成中文问题条目而非抛异常
-- **实际/证据**：14 个用例通过；运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）；样例集 0 崩溃、最慢 **11 ms**；21/21 `trianglesMatch`；person 参考件 `0.6085`
+  3. 逐个体检样例集（`o-model/*.glb` + `model/*.glb`；本次实测 4 个：`o-model/蹲姿.glb` 与 `model/{person-move,person-stand,蹲姿}.glb`）
+- **期望**：① 运输车世界盒 `2.59 × 4.10 × 5.98` m、`deviationFactor > 1000`、列出荒谬的 accessor 盒；② 样例集零崩溃且单文件 < 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb` 174,937 顶点；扫全语料的用例要求基数 ≥1 并随本地语料伸缩）；③ `mode=4` 图元的索引数可被 3 整除（无此类索引图元时为 `null`）、person 参考件 `vertexReuseRatio` = 0.61（定义为顶点数 ÷ 三角面数）；④ 非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失等异常都变成中文问题条目而非抛异常
+- **实际/证据**：`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**（跳过项依赖已删除的样例 `o-model/运输车.glb`）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉核对是本次按 `mode=4` + 索引数重算的
 
 ## 必测维度勾选
 
@@ -132,17 +132,19 @@
 
 ## 覆盖率
 
-`node --test --experimental-test-coverage` 实测（2026-09-18）：
+`node --test --experimental-test-coverage` 实测（2026-09-18；样例集裁剪、`inspect.js`/`transform.js` 加入后复测）：
 
 | 文件 | 行 % | 分支 % | 函数 % |
 | :-- | --: | --: | --: |
-| `src/ive.js` | 96.44 | 70.32 | 98.21 |
-| `src/repair.js` | 89.46 | 62.99 | 90.14 |
-| **all files** | **92.29** | **66.25** | **93.70** |
+| `src/ive.js` | 95.99 | 70.34 | 98.18 |
+| `src/repair.js` | 89.30 | 63.39 | 90.28 |
+| `src/inspect.js` | 93.57 | 81.99 | 94.87 |
+| `src/transform.js` | 100.00 | 92.97 | 100.00 |
+| **all files** | **92.97** | **73.76** | **94.82** |
 
 说明：
 
-- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支与 `ive.js` 的错误处理分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE），当前夹具没有。
+- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支、`ive.js` 的错误处理分支与 `inspect.js` 的少数异常分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE、畸形 GLB 的具体形态），当前夹具没有。
 - **Electron 壳层（`src/main.js`、`src/preload.js`、`src/renderer.js`）不在插桩范围内**（测试不 require 它们），所以"UI ≥85%"这一项**没有测量**，不要按通过理解。
 - 因此本计划**不设覆盖率门槛**；把门槛写进 CI 需先补样本与插桩，属后续工作。
 
@@ -162,6 +164,6 @@
 | TC-010 | REQ-002 | 通过 | 异常路径全部有断言 |
 | TC-011 | REQ-002 | 通过 | 嵌套相对路径保留 |
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
-| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 14/14；运输车偏差 4461.888 倍；21 样本最慢 11ms；21/21 三角面数全等 |
+| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 35 通过 / 1 跳过（缺样例 `o-model/运输车.glb`）/ 0 失败；本地 4 个 GLB 0 崩溃、最慢 1ms、三角面数 4/4 全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 
-**总计**：`npm test` → 43 通过 / 0 失败 / 0 跳过（夹具在位）。
+**总计**：`npm test` → 76 通过 / 0 失败 / 4 跳过（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例）。

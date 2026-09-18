@@ -71,7 +71,7 @@
 - **做什么**：实现只读体检报告与它依赖的世界盒/矩阵工具：体积、节点/网格/图元/顶点/三角面、贴图规格与问题（NPOT+mipmap、1×1 占位、未被采样）、材质/采样器/扩展、`bounds.accessorUnion` 与 `bounds.world` 及其偏差倍数、中心点、上轴判定、比例尺；对异常输入产出可读问题条目而非抛异常。
 - **产出**：`src/inspect.js`、`src/transform.js`、`test/inspect.test.js`
 - **文件范围**：`src/inspect.js`, `src/transform.js`, `test/inspect.test.js`
-- **验证方式**：`node --test test/inspect.test.js`（36 用例）；外加 002 M1 的退出标准——`node src/inspect.js o-model/运输车.glb` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；21 个样例全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`mode=4` 的索引数可被 3 整除（无 mode=4 索引图元时为 null）；`vertexReuseRatio(person 参考件) === 0.61`；`node scripts/memory.mjs check` 通过。**注**：原先写的 `triangles === Σ(indices.count)/3` 在无非索引图元时是恒等式、有非索引时必然为 false，作为判据无效，已替换
+- **验证方式**：`node --test test/inspect.test.js`（36 用例）；外加 002 M1 的退出标准——`node src/inspect.js o-model/运输车.glb` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；样例集全部跑通、单文件 ≤ 2s（历史上限 M1A2 174,937 顶点）。**样例模型不入库，个数随本地增减**：扫全语料的用例只要求 ≥1 个并随语料伸缩、不硬编码数量，单个真值用例在夹具缺失时按 `fixtureSkipReason()` 跳过；`mode=4` 的索引数可被 3 整除（无 mode=4 索引图元时为 null）；`vertexReuseRatio(person 参考件) === 0.61`；`node scripts/memory.mjs check` 通过。**注**：原先写的 `triangles === Σ(indices.count)/3` 在无非索引图元时是恒等式、有非索引时必然为 false，作为判据无效，已替换
 - **状态**：已完成
 - **返工记录**（保留以下历史，不改写）：第一轮冷上下文复审判为「不通过」——BR-020「不抛异常」被实锤违反（5 类畸形 GLB 抛 TypeError、CLI 崩栈）、JPEG 头 1024 字节上限致 62% 内嵌贴图规格检测静默失效，另有 8 项重要问题；原证据③（21/21 `trianglesMatch`）因判据恒等而无效。第二轮复审判为「有条件通过」，残留缺陷已逐条修复
 - **验证结果**：两轮独立冷上下文复审后关闭，门禁 `task-flow finish --test "npm test"` → **79 通过 / 0 失败**，自动合并为 `6837856`（第一轮返工合并 `3095a70`、第二轮 `6837856`）。
@@ -82,6 +82,7 @@
   ⑤ **BR-022 贴图规格**：内嵌贴图读出宽高 **18/48 → 48/48**（复审用旧码并排实测），读不出时发 `TEXTURE_DIMENSIONS_UNKNOWN` ✅
   覆盖率：`inspect.js` 行 94.96% / 分支 81.48%，`transform.js` 100% / 89.26% ✅
 - **已知遗留**（不阻塞本任务，另立任务处理）：`KHR_texture_transform.texCoord` 覆盖被忽略（`collectTextureSlots` 与 `repair.js::collectMaterialTexCoords` 一致忽略）→ `MISSING_TEXCOORD` 可能漏报
+- **补充复测**（2026-09-18，样例集被裁剪之后；不改写上方历史结论）：本地样例变为 4 个 GLB（`o-model/蹲姿.glb` + `model/{person-move,person-stand,蹲姿}.glb`）→ 0 崩溃、最慢 **1 ms**、`triangles` 与 `Σ(mode=4 索引数)/3` 4/4 一致、内嵌贴图宽高 12/12 可读；`o-model/运输车.glb` 已不在本地，其真值用例按夹具缺失跳过，`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**。用例自身已改为随语料伸缩（曾硬编码 ≥20，语料一裁剪即失败）
 ### TASK-008 界面体检面板与预览方向/缩放控件
 - **关联需求**：REQ-005（验收标准 4）
 - **依赖**：TASK-007

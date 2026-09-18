@@ -37,8 +37,8 @@
   **不做**：不改动任何运行时代码或测试断言；不引入覆盖率门槛（仅如实记录实测值）；`docs/release/MERGE_REQUEST.md` 是 task-flow 生成的派生物、`docs/testing/PERF_BUDGET.md` 本轮不填，二者保持忽略。
 - **验收标准**（Given/When/Then）：
   1. Given 版本分支上的 `TEST_PLAN.md` When 通读 Then 元信息的执行命令为 `npm test`，用例清单每条都给出可执行命令与可判定期望，**不含任何 `{{}}` 占位符**。
-  2. When 按 `TEST_PLAN.md` 执行 `npm test` Then 结果与文档"结果汇总"一致：有夹具时 43 通过 / 0 失败 / 0 跳过；无夹具时 33 通过 / 11 跳过 / 0 失败。
-  3. Given `TEST_PLAN.md` 的覆盖率一节 When 与 `node --test --experimental-test-coverage` 实测比对 Then 数字一致（all files 行 92.29% / 分支 66.25% / 函数 93.70%；`ive.js` 96.44%、`repair.js` 89.46%），并写明 Electron 壳层（`main/preload/renderer`）未纳入插桩。
+  2. When 按 `TEST_PLAN.md` 执行 `npm test` Then 结果与文档"结果汇总"一致（**数字随用例集演进、以 `TEST_PLAN.md` 为准，需求正文不钉死快照**）。当时基线：有夹具时 43 通过 / 0 失败 / 0 跳过；无夹具时 33 通过 / 11 跳过 / 0 失败。当前基线：本地样例（已裁剪）76 通过 / 0 失败 / 4 跳过；全新克隆（无任何夹具）66 通过 / 14 跳过 / 0 失败。
+  3. Given `TEST_PLAN.md` 的覆盖率一节 When 与 `node --test --experimental-test-coverage` 实测比对 Then 数字一致（**以文档当次实测为准**；当前：all files 行 92.97% / 分支 73.76% / 函数 94.82%，`ive.js` 95.99%、`repair.js` 89.30%、`inspect.js` 93.57%、`transform.js` 100.00%），并写明 Electron 壳层（`main/preload/renderer`）未纳入插桩。
   4. Given `RELEASE_CHECKLIST.md` When 查看预检与回滚 Then 每条预检都能对应到具体命令（`npm run lint` / `npm test` / `npm run dist:win`），回滚预案给出可执行步骤与决策人，且如实记录"`npm audit` 在本机镜像源不可用、需换官方源或 CI 执行"。
   5. When 执行 `git ls-files docs/testing docs/release` Then 恰列出 `TEST_PLAN.md` 与 `RELEASE_CHECKLIST.md` 两份，`MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略。
 - **关联任务**：TASK-004
@@ -85,8 +85,8 @@
   **不做**：不改写模型文件；贴图降采样属 M3；FBX/OBJ 输入本期不做。
 - **验收标准**（Given/When/Then）：
   1. Given `o-model/运输车.glb` When `node -e "inspect('o-model/运输车.glb')"` Then 报告给出 `bounds.world ≈ 2.59 × 4.10 × 5.98`、`boundsDeviationFactor > 1000`，并列出荒谬的 `accessorUnion`（实测 `11,572 × 15,430 × 23,539`）。
-  2. When 对样例集逐个体检 Then 零崩溃，单文件 ≤ 2s（上限样本 `M1A2艾布拉姆斯坦克.glb`：174,937 顶点 / 363 图元）。样本集以实际存在为准：`o-model/*.glb` 18 个 + `model/*.glb` 3 个 = **21 个**（`docs/002-requirements.md` 早先写的「24 个」是估计值，本次实测修正）。
-  3. When 统计几何 Then `triangles` 与 `Σ(indices.count)/3` 全等；`vertexReuseRatio` 对 person 参考件 = 0.61（定义为 **顶点数 ÷ 三角面数**：焊接后 11,516 ÷ 18,924）。
+  2. When 对样例集逐个体检 Then 零崩溃，单文件 ≤ 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb`：174,937 顶点 / 363 图元）。**样例集以本地实际存在为准**：样例模型不入库（`.gitignore`），个数随本地增减，用例**只要求 ≥1 个并随语料伸缩、不硬编码数量**；2026-09-18 首次实测时为 `o-model/*.glb` 18 个 + `model/*.glb` 3 个 = 21 个，语料裁剪后本地为 4 个（`docs/002-requirements.md` 早先写的「24 个」是估计值，已修正）。
+  3. When 统计几何 Then 三角面统计可判定（`mode=4` 图元的索引数可被 3 整除；无此类索引图元时为 `null`）；`vertexReuseRatio` 对 person 参考件 = 0.61（定义为 **顶点数 ÷ 三角面数**：焊接后 11,516 ÷ 18,924）。（原判据 `triangles === Σ(indices.count)/3` 经冷上下文审查判定无效——无非索引图元时是恒等式、存在非索引图元时必然为假——已替换，见 TASK-007 返工记录。）
   4. Given 预览视图 When 拖动方向/缩放 Then 人物与车辆能同框可见，日志记录最终 `modelMatrix`；且**预览修正不写入输出文件**（写回必须是显式操作）。
   5. When 体检遇到异常输入（缺 accessor `min`/`max`、外部 `uri` 缺失、非 GLB）Then 报告给出可读中文问题条目而不是抛异常。
 - **关联任务**：TASK-007、TASK-008
@@ -101,3 +101,5 @@
 | 2026-09-18 | REQ-003/REQ-004 | 新增（追溯登记） | 平台采纳前已交付的功能在台账中无记录，无法反映真实完成度 |
 | 2026-09-18 | REQ-002 | 新增 | merge request 验收清单引用的两份基线是空模板，需落成可执行文档 |
 | 2026-09-18 | REQ-001 | 新增 | 采纳 Tenon 工作流时发现文档与实现偏离，先立此需求再做校正 |
+| 2026-09-18 | REQ-002 | 澄清验收标准 | 标准 2/3 原先把「通过数 / 跳过数 / 覆盖率」的快照钉进需求正文，用例集一增长即与 `TEST_PLAN.md` 不一致（REQ-002 的判据本是「文档与实测一致」）。改为以文档当次实测为准，并保留当时基线数字 |
+| 2026-09-18 | REQ-005 | 澄清验收标准 | ① 标准 2 的样例集数量改为「以本地实际存在为准、用例不硬编码」（样例不入库、随本地增减，曾因硬编码 ≥20 在语料裁剪后直接失败）；② 标准 3 的原判据 `triangles === Σ(indices.count)/3` 在无非索引图元时恒等、有非索引图元时必为假，冷上下文审查判定无效，已标注替换为 `mode=4` 索引数可判定的不变量 |
