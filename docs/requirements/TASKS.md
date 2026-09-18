@@ -71,15 +71,17 @@
 - **做什么**：实现只读体检报告与它依赖的世界盒/矩阵工具：体积、节点/网格/图元/顶点/三角面、贴图规格与问题（NPOT+mipmap、1×1 占位、未被采样）、材质/采样器/扩展、`bounds.accessorUnion` 与 `bounds.world` 及其偏差倍数、中心点、上轴判定、比例尺；对异常输入产出可读问题条目而非抛异常。
 - **产出**：`src/inspect.js`、`src/transform.js`、`test/inspect.test.js`
 - **文件范围**：`src/inspect.js`, `src/transform.js`, `test/inspect.test.js`
-- **验证方式**：`node --test test/inspect.test.js`；外加 002 M1 的退出标准——`node -e "inspect('o-model/运输车.glb')"` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；24 个 GLB 全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`triangles === Σ(indices.count)/3`；`vertexReuseRatio(person 参考件) === 0.61`
-- **状态**：进行中（返工）
-- **返工原因**：冷上下文审查不通过——BR-020「不抛异常」被实锤违反（5 类畸形 GLB 抛 TypeError、CLI 崩溃）、JPEG 头 1024 字节上限致 62% 内嵌贴图规格检测静默失效，另有 8 项重要问题；原证据③（21/21 `trianglesMatch`）因判据恒等而无效，一并重做
-- **验证结果**：`task-flow finish --test "npm test"` —— 门禁 **57 通过 / 0 失败**（原 43 + 新增 14），自动合并为 `767aa63`。M1 退出标准逐条实测：
-  ① `node src/inspect.js o-model/运输车.glb` → 世界盒 `2.59 × 4.10 × 5.98` m、偏差 **4461.888 倍**（>1000）、列出 accessor 盒 `11571.59 × 15430.28 × 23539.10` ✅
-  ② 21 个样例（`o-model/` 18 + `model/` 3）全部 `ok:true`、0 崩溃，最慢 **11 ms**（`M1A2艾布拉姆斯坦克.glb`，174,937 顶点）远低于 2s 上限 ✅
-  ③ `triangles` 与 `Σ(indices.count)/3` 全等（21/21）；person 参考件 `vertexReuseRatio = 0.6085 ≈ 0.61` ✅
-  ⑤ 异常输入（非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失）均转为中文问题条目，不抛异常 ✅
-
+- **验证方式**：`node --test test/inspect.test.js`（36 用例）；外加 002 M1 的退出标准——`node src/inspect.js o-model/运输车.glb` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；21 个样例全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`mode=4` 的索引数可被 3 整除（无 mode=4 索引图元时为 null）；`vertexReuseRatio(person 参考件) === 0.61`；`node scripts/memory.mjs check` 通过。**注**：原先写的 `triangles === Σ(indices.count)/3` 在无非索引图元时是恒等式、有非索引时必然为 false，作为判据无效，已替换
+- **状态**：已完成
+- **返工记录**（保留以下历史，不改写）：第一轮冷上下文复审判为「不通过」——BR-020「不抛异常」被实锤违反（5 类畸形 GLB 抛 TypeError、CLI 崩栈）、JPEG 头 1024 字节上限致 62% 内嵌贴图规格检测静默失效，另有 8 项重要问题；原证据③（21/21 `trianglesMatch`）因判据恒等而无效。第二轮复审判为「有条件通过」，残留缺陷已逐条修复
+- **验证结果**：两轮独立冷上下文复审后关闭，门禁 `task-flow finish --test "npm test"` → **79 通过 / 0 失败**，自动合并为 `6837856`（第一轮返工合并 `3095a70`、第二轮 `6837856`）。
+  ① `node src/inspect.js o-model/运输车.glb` → 世界盒 `2.59 × 4.10 × 5.98` m、偏差 **4461.888 倍**、accessor 盒 `11571.59 × 15430.28 × 23539.10` ✅
+  ② 21 个样例（`o-model/` 18 + `model/` 3）全部 `ok:true`、0 崩溃，最慢 **15 ms** ✅
+  ③ person 参考件 `vertexReuseRatio = 0.6085`；三角面按 `primitive.mode` 统计并上报 `modeHistogram` ✅
+  ④ **BR-020 抗畸形**：400 次随机结构破坏 fuzz → 抛异常 **0**、`partial` **0**（修 asArray 前为 66 次）；22 类畸形 + 8 类怪异输入同样 0 抛异常 ✅
+  ⑤ **BR-022 贴图规格**：内嵌贴图读出宽高 **18/48 → 48/48**（复审用旧码并排实测），读不出时发 `TEXTURE_DIMENSIONS_UNKNOWN` ✅
+  覆盖率：`inspect.js` 行 94.96% / 分支 81.48%，`transform.js` 100% / 89.26% ✅
+- **已知遗留**（不阻塞本任务，另立任务处理）：`KHR_texture_transform.texCoord` 覆盖被忽略（`collectTextureSlots` 与 `repair.js::collectMaterialTexCoords` 一致忽略）→ `MISSING_TEXCOORD` 可能漏报
 ### TASK-008 界面体检面板与预览方向/缩放控件
 - **关联需求**：REQ-005（验收标准 4）
 - **依赖**：TASK-007
