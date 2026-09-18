@@ -10,6 +10,8 @@ The app is split into two layers:
 
 - `src/repair.js` — the repair engine. Pure Node (CommonJS), no Electron or npm runtime deps, so it runs and tests under plain `node`.
 - `src/ive.js` — the IVE→GLB converter: drives the native `ive2glb` helper and assembles a self-contained GLB in Node. Also pure Node (uses only `jpeg-js`/`pngjs` plus `repair.js`'s `writeGlb`/`align4`/矩阵工具). It welds vertices, applies the Z-up→Y-up axis conversion and grounds/centers the model; conversion options are documented in its JSDoc.
+- `src/inspect.js` — read-only model 体检 (inspection) report: file bytes, node/mesh/primitive counts, vertices & triangles, texture specs (dims, NPOT, 1×1 placeholders, sampled-or-not), materials/samplers, `bounds.world` vs `bounds.accessorUnion` with a deviation factor, bounds center, conservative up-axis guess, scale hints, and a Chinese issue list. Also usable as a CLI: `node src/inspect.js <file.glb>`.
+- `src/transform.js` — world-bounds and matrix helpers (`worldBounds`, `accessorUnionBounds`, `deviationFactor`). The node-chain walk is **shared** by the GLB inspection path (local boxes from accessor `min`/`max`) and the IVE conversion path (local boxes measured from raw float ranges) — `src/ive.js` delegates to it.
 - `native/ive2glb/` — a small C++20 helper that reads IVE with OpenSceneGraph and dumps `scene.json` + `data.bin`; build and vendoring are covered by `npm run build:ive2glb` and `native/ive2glb/README.md`.
 - `src/main.js` + `src/preload.js` + `src/renderer.js`/`index.html` — the standard Electron main/preload/renderer shell over IPC.
 
@@ -21,7 +23,7 @@ The app is split into two layers:
 - `npm run build:ive2glb` — builds `native/ive2glb` and vendors a **self-contained** helper into `vendor/ive2glb/darwin-<arch>/` (executable + `lib/*.dylib` + `osgPlugins/`), rewriting deps to `@rpath` and ad-hoc re-signing. macOS only; the Windows steps are in `native/ive2glb/README.md`.
 - `npm run dev` / `npm start` — runs `ensure:cesium` then launches Electron (app entry is `src/main.js`).
 - `npm run ensure:cesium` — downloads the Cesium 1.128 release zip and unpacks it to `vendor/cesium/1.128/Build/Cesium/` only if `Cesium.js` + `Widgets/widgets.css` are missing. Needed before `dev`/`start` because `index.html` loads Cesium from that exact relative path as a plain global `<script>` (no bundler).
-- `npm run lint` — `node --check` (syntax check only) over the five `src/*.js` files (`main`, `preload`, `renderer`, `repair`, `ive`). Not a style linter.
+- `npm run lint` — `node --check` (syntax check only) over **every** `src/*.js` via a `for` loop, so a newly added module is covered automatically (an explicit file list silently skipped `src/ive.js` once). Not a style linter.
 - `npm test` — Node's built-in test runner (`node --test`), which discovers `test/*.test.js`. The suite is committed, the sample models are not: on a fresh checkout 11 tests skip and 0 fail (measured `pass 33 / skipped 11`) — 6 in `repair.test.js` needing `refs/models/*`, 5 in `ive.test.js` needing `o-model/*.ive`. Each prints the missing files and the recovery command after the `#`. Both files use the same `fixtureSkipReason()` pattern; keep it, because a committed suite that hard-fails on a clean clone is worse than one that skips.
 - Run one test file: `node --test test/repair.test.js`. Filter by name: `node --test --test-name-pattern='external PNG'`.
 - `npm run dist:win` — `electron-builder` Windows x64 NSIS + portable into `dist/`.
@@ -81,6 +83,16 @@ input.ive ──▶ ive2glb (C++/OSG) ──▶ <tmp>/scene.json + data.bin
 - **Vendoring** is `scripts/build-ive2glb.sh` (macOS): build, copy the executable plus the transitive closure of non-system dylibs into `lib/`, copy `osgdb_ive.so`/`osgdb_serializers_osg.so` into `osgPlugins/`, rewrite absolute Homebrew paths to `@rpath/...`, add `-rpath @executable_path/lib`, then **ad-hoc re-sign everything** (`install_name_tool` invalidates the signature and arm64 kills unsigned binaries). Verify isolation with `DYLD_PRINT_LIBRARIES=1 vendor/ive2glb/darwin-arm64/ive2glb o-model/person-move.ive /tmp/out` — the Homebrew load count must be 0.
 - `osgdb_ive.so` pulls in `libosgText/Sim/FX/Terrain/Volume/GA/Util` plus fontconfig/freetype (~11 MB vendored) — inherent to OSG's IVE plugin, not a packaging mistake.
 - Measured on `o-model/person-move.ive` (28.5 MB): helper 1.5 s, full JS conversion ~2.5 s, output 2.43 MB GLB (11,516 vertices after welding) with 3 embedded JPEGs (a geometry-only OBJ route via `osgconv` produces a 600 KB texture-less shell — do not use it).
+
+## Model inspection (`src/inspect.js` + `src/transform.js`)
+
+Answers "how big is this model, how many vertices/faces, what textures does it have, where is its center, which way is up, what scale is it" — and, more importantly, surfaces the defects you cannot see by looking at the model:
+
+- **The world box must be computed, never read.** glTF's accessor `min`/`max` describe vertex data only and ignore node transforms; tooling that unions them (the old `getPositionBounds` in `main.js`) produced boxes off by **229,713×** on `装甲救护车` and **4,461×** on `运输车`. `bounds.world` walks the node chain accumulating matrices and re-packs the 8 corners; `bounds.accessorUnion` is reported alongside it purely so `bounds.deviationFactor` can quantify the lie (warn above 10×).
+- **The up axis is only guessed, conservatively.** An exporter signature (FBX2glTF / assimp / Khronos / Blender) → `Y` at `medium` confidence. Bare bounding box → `unknown` at `low` with the extents as evidence, and an `UP_AXIS_UNCERTAIN` issue telling a human to decide. Never silently rewrite orientation.
+- **Read-only and never throws** (BR-020): unreadable file, non-`.glb`, parse failure, missing accessor `min`/`max`, missing external image — all become Chinese issue entries (`level`/`code`/`message`); only the CLI exit code reflects failure.
+- Issue codes worth knowing: `ACCESSOR_BOUNDS_UNRELIABLE`, `TRIANGLE_SOUP` (vertex/triangle ratio ≈ 3), `TEXTURE_1X1_PLACEHOLDER`, `NO_SAMPLED_TEXTURE` (materials exist but nothing samples a texture), `NPOT_WITH_REPEAT_MIPMAP`, `MISSING_TEXCOORD` (error level — stops Cesium rendering the whole scene), `MIRRORED_NODES`, `SINGULAR_NODES`, `UP_AXIS_UNCERTAIN`.
+- Measured on the sample corpus (18 files in `o-model/` + 3 in `model/`, one of which is literally named `装甲救护车 .glb` **with a trailing space**): 0 crashes, slowest 11 ms (`M1A2艾布拉姆斯坦克.glb`, 174,937 vertices) against a 2 s budget. `vertexReuseRatio` is defined as **vertices ÷ triangles** — 3.0 means unwelded triangle soup, 0.61 is the welded `model/蹲姿.glb` reference.
 
 ## Electron shell & IPC contract
 

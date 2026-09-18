@@ -201,7 +201,7 @@ src/repair.js ──(C1/C2/C6)─┴─→ 输出 GLB ─→ read-glb-data-url �
 交付：`src/inspect.js`、`src/transform.js::worldBounds`、UI 报告面板 + 实时控件。
 **退出标准**：
 1. `node -e "inspect('o-model/运输车.glb')"` 输出 `bounds.world ≈ 2.59×4.10×5.98`，`boundsDeviationFactor > 1000`，并列出荒谬的 `accessorUnion`。
-2. 24 个 GLB 体检全跑通（0 崩溃），单文件 ≤ 2s（以 M1A2 174,937 顶点为上限样本）。
+2. 样例集 GLB 体检全跑通（0 崩溃），单文件 ≤ 2s（以 M1A2 174,937 顶点为上限样本）。样本数为实测 **21 个**（`o-model/*.glb` 18 + `model/*.glb` 3；此前写的 24 是估计值）。
 3. `triangles` 与 `Σ(indices.count)/3` 全等；`vertexReuseRatio` 对 person 参考件 = 0.61。
 4. 预览拖方向/缩放，人物与车辆同框可见，日志记录最终 `modelMatrix`。
 

@@ -12,12 +12,11 @@ const jpeg = require('jpeg-js')
 const { PNG } = require('pngjs')
 const {
   align4,
-  getNodeLocalMatrix,
   identityMatrix,
-  multiplyMatrix,
   transformPoint,
   writeGlb,
 } = require('./repair')
+const { worldBounds: transformWorldBounds } = require('./transform')
 
 // ---------------------------------------------------------------- 常量
 
@@ -332,43 +331,14 @@ function meshLocalBounds(intermediate) {
 }
 
 /**
- * @description 沿节点链累乘矩阵求世界包围盒。
+ * @description 沿节点链累乘矩阵求世界包围盒（局部盒来自 IVE 中间产物的裸 float 区段）。
  *   工具里的 getPositionBounds 用的是 accessor 并集（不含节点矩阵），实测最大偏差可达
  *   9 万倍，所以贴地/归心必须自己走一遍场景图，不能复用那个结果。
+ *   遍历与矩阵累乘收敛在 src/transform.js —— GLB 路径（体检）用的是同一份实现，
+ *   只是局部盒来自 accessor min/max。两处各写一遍迟早漂移。
  */
 function worldBounds(intermediate, nodes, scenes) {
-  const boxes = meshLocalBounds(intermediate)
-  const min = [Infinity, Infinity, Infinity]
-  const max = [-Infinity, -Infinity, -Infinity]
-  const visiting = new Set()
-
-  const walk = (index, parent) => {
-    const node = nodes[index]
-    if (!node || visiting.has(index)) return
-    visiting.add(index)
-    const world = multiplyMatrix(parent, getNodeLocalMatrix(node))
-    const box = typeof node.mesh === 'number' ? boxes[node.mesh] : null
-    if (box) {
-      for (let corner = 0; corner < 8; corner += 1) {
-        const point = transformPoint(world, [
-          corner & 1 ? box.max[0] : box.min[0],
-          corner & 2 ? box.max[1] : box.min[1],
-          corner & 4 ? box.max[2] : box.min[2],
-        ])
-        for (let c = 0; c < 3; c += 1) {
-          if (!Number.isFinite(point[c])) continue
-          min[c] = Math.min(min[c], point[c])
-          max[c] = Math.max(max[c], point[c])
-        }
-      }
-    }
-    for (const child of node.children || []) walk(child, world)
-    visiting.delete(index)
-  }
-
-  for (const scene of scenes || []) for (const root of scene.nodes || []) walk(root, IDENTITY_MATRIX)
-  if (!Number.isFinite(min[0])) return null
-  return { min, max }
+  return transformWorldBounds(nodes, scenes, meshLocalBounds(intermediate))
 }
 
 /**

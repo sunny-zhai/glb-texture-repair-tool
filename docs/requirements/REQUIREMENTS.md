@@ -85,7 +85,7 @@
   **不做**：不改写模型文件；贴图降采样属 M3；FBX/OBJ 输入本期不做。
 - **验收标准**（Given/When/Then）：
   1. Given `o-model/运输车.glb` When `node -e "inspect('o-model/运输车.glb')"` Then 报告给出 `bounds.world ≈ 2.59 × 4.10 × 5.98`、`boundsDeviationFactor > 1000`，并列出荒谬的 `accessorUnion`（实测 `11,572 × 15,430 × 23,539`）。
-  2. When 对 24 个样例 GLB 逐个体检 Then 零崩溃，单文件 ≤ 2s（上限样本 `M1A2艾布拉姆斯坦克.glb`：174,937 顶点 / 363 图元）。
+  2. When 对样例集逐个体检 Then 零崩溃，单文件 ≤ 2s（上限样本 `M1A2艾布拉姆斯坦克.glb`：174,937 顶点 / 363 图元）。样本集以实际存在为准：`o-model/*.glb` 18 个 + `model/*.glb` 3 个 = **21 个**（`docs/002-requirements.md` 早先写的「24 个」是估计值，本次实测修正）。
   3. When 统计几何 Then `triangles` 与 `Σ(indices.count)/3` 全等；`vertexReuseRatio` 对 person 参考件 = 0.61（定义为 **顶点数 ÷ 三角面数**：焊接后 11,516 ÷ 18,924）。
   4. Given 预览视图 When 拖动方向/缩放 Then 人物与车辆能同框可见，日志记录最终 `modelMatrix`；且**预览修正不写入输出文件**（写回必须是显式操作）。
   5. When 体检遇到异常输入（缺 accessor `min`/`max`、外部 `uri` 缺失、非 GLB）Then 报告给出可读中文问题条目而不是抛异常。
