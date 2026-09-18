@@ -20,3 +20,10 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 
 闸门取值：`spec` | `architecture` | `delivery` | `gate-arbitration`
 决策取值：`approved` | `rejected` | `retry` | `abandon`
+## 记录
+
+> 由 `scripts/record-approval.mjs` 追加到文件末尾（不改历史）。
+
+| 时间 | 闸门 | 决策 | 确认人 | 关联需求/版本 | 证据 |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| 2026-09-18 06:01 | delivery | approved | sunny-zhai | v0.1.0 | PR #6 https://github.com/sunny-zhai/glb-texture-repair-tool/pull/6 merged into main as 3506327 (复核范围：release/v0.1.0 至 15c755c（版本状态/台账/CLAUDE.md 校正）；其后 TASK-003/TASK-004 批次尚待紧随的合并) |
