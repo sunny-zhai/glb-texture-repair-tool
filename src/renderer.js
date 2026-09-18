@@ -11,6 +11,7 @@ const progressFill = document.getElementById('progressFill')
 const progressText = document.getElementById('progressText')
 const progressCounter = document.getElementById('progressCounter')
 const runRepairButton = document.getElementById('runRepair')
+const capabilityHint = document.getElementById('capabilityHint')
 const minimizeWindow = document.getElementById('minimizeWindow')
 const maximizeWindow = document.getElementById('maximizeWindow')
 const closeWindow = document.getElementById('closeWindow')
@@ -101,6 +102,34 @@ function handleRepairProgress(progress) {
           : `已完成：${progress.relativePath}`,
         progress.completed === progress.total ? 'done' : '',
       )
+      break
+    case 'convert-start':
+      showProgress(progress.index, progress.total, `正在把 IVE 转换为 GLB：${progress.relativePath}`)
+      appendLog(`[IVE ${progress.index + 1}/${progress.total}] 转换中：${progress.relativePath}`)
+      break
+    case 'convert-done':
+      if (progress.status === 'error') {
+        showProgress(progress.index + 1, progress.total, `IVE 转换失败：${progress.relativePath}`, 'done')
+        appendLog(`IVE 转换失败：${progress.relativePath}：${progress.error}`, 'error')
+      } else {
+        showProgress(progress.index + 1, progress.total, `IVE 已转换为 GLB：${progress.relativePath}`)
+        // 尺寸是世界包围盒（宽 × 高 × 前后深，单位米），直接暴露"摆进去到底是多大"。
+        const size = Array.isArray(progress.worldSize) && progress.worldSize.length === 3
+          ? `，尺寸 ${progress.worldSize.map((value) => Number(value).toFixed(2)).join(' × ')} m`
+          : ''
+        // 焊接收益：IVE 原始几何是三角汤，这里显示的才是真正落盘的顶点数。
+        const geometry = Number.isFinite(progress.vertices) && progress.vertices > 0
+          ? `，顶点 ${progress.vertices}`
+            + (progress.verticesBefore > progress.vertices ? `（同类合并前 ${progress.verticesBefore}）` : '')
+            + `，三角面 ${progress.triangles}`
+          : ''
+        appendLog(
+          `IVE 转换完成：${progress.relativePath} → ${(progress.newBytes / 1024 / 1024).toFixed(2)} MB，`
+          + `贴图 ${progress.images} 张，网格 ${progress.meshes} 个，剪掉无网格节点 ${progress.prunedNodes} 个，`
+          + `坐标 ${progress.axis || '未转换'}${size}${geometry}`,
+          'ok',
+        )
+      }
       break
     case 'done':
       showProgress(
@@ -431,6 +460,20 @@ closeWindow.addEventListener('click', () => {
 window.repairApp.onWindowMaximizeState((maximized) => {
   maximizeWindow.textContent = maximized ? '❐' : '□'
   maximizeWindow.setAttribute('aria-label', maximized ? '还原' : '最大化')
+})
+
+// IVE 依赖随包分发的原生助手；缺失时明确告知而不是静默失败。
+window.repairApp.capabilities().then((capabilities) => {
+  if (!capabilities) return
+  capabilityHint.hidden = false
+  if (capabilities.ive) {
+    capabilityHint.textContent = '支持输入 GLB 与 IVE：IVE 会先由 ive2glb 转换为 GLB，再进入同一套修复与 Cesium 验证流程。'
+    return
+  }
+  capabilityHint.textContent = `当前平台（${capabilities.platform}）未提供 IVE 转换助手，.ive 文件无法转换。`
+  appendLog(`IVE 转换不可用：未找到 ive2glb。已查找：${(capabilities.iveHelperSearched || []).join('、')}`, 'error')
+}).catch(() => {
+  // 能力探测失败不影响主流程
 })
 
 renderInputs()

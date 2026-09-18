@@ -1343,12 +1343,18 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
   }
 }
 
-function collectGlbEntries(inputPaths) {
+/**
+ * @description 收集待处理模型条目。默认只认 GLB；调用方可传入更多扩展名（例如 .ive），
+ *   由调用方负责先把非 GLB 输入转换成 GLB 再交给 repairMany。
+ */
+function collectGlbEntries(inputPaths, extensions = ['.glb']) {
+  const allowed = extensions.map((extension) => extension.toLowerCase())
+  const matches = (name) => allowed.some((extension) => name.toLowerCase().endsWith(extension))
   const entries = []
   for (const inputPath of inputPaths) {
     if (!inputPath) continue
     const stat = fs.statSync(inputPath)
-    if (stat.isFile() && inputPath.toLowerCase().endsWith('.glb')) {
+    if (stat.isFile() && matches(inputPath)) {
       entries.push({
         inputPath,
         relativePath: path.basename(inputPath),
@@ -1368,7 +1374,7 @@ function collectGlbEntries(inputPaths) {
           stack.push({ current: full, relativeBase: relativePath })
           continue
         }
-        if (entry.isFile() && entry.name.toLowerCase().endsWith('.glb')) {
+        if (entry.isFile() && matches(entry.name)) {
           entries.push({ inputPath: full, relativePath })
         }
       }
@@ -1402,10 +1408,12 @@ function yieldToEventLoop() {
 //   { phase: 'done', total, completed, failed }
 // onProgress 是异步回调之外的旁路通道：它不会出现在传给 repairGlbFile 的 options 里。
 async function repairMany(inputPaths, outputDir, options = {}) {
-  const { onProgress = null, ...fileOptions } = options
+  // entries 允许调用方传入已经扫描（并可能做过扩展名转换）的条目，避免重复遍历目录，
+  // 同时保留目录扫描得到的 relativePath 子目录结构。
+  const { onProgress = null, entries = null, ...fileOptions } = options
   emitProgress(onProgress, { phase: 'scanning' })
 
-  const files = collectGlbEntries(inputPaths)
+  const files = entries || collectGlbEntries(inputPaths)
   emitProgress(onProgress, { phase: 'start', total: files.length })
 
   const reports = []
@@ -1451,13 +1459,18 @@ module.exports = {
   createGlbBuffer,
   encodePng,
   fillMissingTexCoords,
+  getNodeLocalMatrix,
+  identityMatrix,
   isJpeg,
   isPng,
   jpegComponentCount,
   mergePrimitivesByMaterial,
+  multiplyMatrix,
   readGlb,
   repairGlbFile,
   repairMany,
   stripSpecularExtensions,
+  transformPoint,
+  transformVector,
   writeGlb,
 }

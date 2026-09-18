@@ -6,10 +6,11 @@
   "main": "src/main.js",
   "scripts": {
     "ensure:cesium": "node scripts/ensure-cesium.js",
+    "build:ive2glb": "bash scripts/build-ive2glb.sh",
     "dev": "npm run ensure:cesium && electron .",
     "start": "npm run ensure:cesium && electron .",
     "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
-    "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/repair.js",
+    "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/repair.js && node --check src/ive.js",
     "test": "node --test"
   },
   "devDependencies": {
@@ -21,11 +22,15 @@
     "productName": "GLB Texture Repair Tool",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
+    "asarUnpack": [
+      "vendor/ive2glb/**"
+    ],
     "files": [
       "src/**/*",
       "scripts/**/*",
       "assets/**/*",
       "vendor/cesium/**/*",
+      "vendor/ive2glb/**/*",
       "package.json"
     ],
     "directories": {
