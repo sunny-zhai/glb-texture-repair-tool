@@ -810,8 +810,10 @@ test('inspect: person 参考件的顶点复用率为 0.61（M1 退出标准 3）
 })
 
 test('inspect: 样例集全部体检通过、尺寸可读且远快于 2s 上限（M1 退出标准 2）', { skip: corpusSkipReason() }, () => {
+  // 样例模型不入库（.gitignore），本地语料规模会变：断言只要求"至少有一个可体检的 GLB"，
+  // 覆盖面随本地样例增减，不硬编码数量（曾因硬编码 ≥20 在样例被清理后直接失败）
   const files = corpusFiles()
-  assert.ok(files.length >= 20, `样例集应有 20 个以上 GLB，实际 ${files.length}`)
+  assert.ok(files.length >= 1, `样例集应至少有 1 个 GLB，实际 ${files.length}`)
 
   const failures = []
   let slowest = { name: '', ms: 0 }
@@ -837,6 +839,7 @@ test('inspect: 样例集全部体检通过、尺寸可读且远快于 2s 上限�
   }
   assert.deepEqual(failures, [], `体检失败的文件：${failures.join('、')}`)
   assert.ok(slowest.ms < 2000, `最慢 ${slowest.name} 用了 ${slowest.ms}ms，应 < 2000ms`)
-  assert.ok(embeddedImages > 20, `应检出足够多的内嵌贴图，实际 ${embeddedImages}`)
+  // 只要内嵌 PNG/JPEG 存在，就必须全部读出宽高（BR-022 回归）；数量本身随语料规模变化
   assert.equal(unreadableEmbedded, 0, `${unreadableEmbedded}/${embeddedImages} 张内嵌贴图读不出宽高`)
+  console.log(`  [语料] ${files.length} 个 GLB、${embeddedImages} 张内嵌贴图，最慢 ${slowest.name} ${slowest.ms}ms`)
 })

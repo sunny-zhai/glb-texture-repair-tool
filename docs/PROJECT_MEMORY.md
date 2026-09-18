@@ -18,7 +18,7 @@
   - `dsh/` → `workflows`
   - `model/` → （无子目录）
   - `native/` → `ive2glb`
-  - `o-model/` → `person-move.fbm`, `person-stand.fbm`, `蹲姿.fbm`
+  - `o-model/` → （无子目录）
   - `refs/` → `models`
   - `scripts/` → （无子目录）
   - `src/` → （无子目录）
