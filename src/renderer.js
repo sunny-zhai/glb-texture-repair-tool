@@ -99,6 +99,11 @@ let layout = {
   rightCollapsed: false,
   drawerOpen: false,
 }
+// `layout` = 当前窗口下**实际生效**的尺寸（渲染用）；`layoutDesired` = 用户**真正设定**的尺寸
+// （落盘的只有它）。两者分开的理由（TASK-011）：窗口临时变小、跨到窄断点、或面板内容临时变高，
+// 都只该影响"这一次渲染"。过去把夹取结果直接 saveLayout() 落盘，导致用户的选择被永久改写
+// ——实测"日志 313px → 换成超长路径模型 → 重算把它夹到 295px 落盘 → 换回短路径也不恢复"。
+let layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
 // initLayout() 会挂一次性监听，用这个护栏保证它只生效一次
 let layoutInitialized = false
 
@@ -117,15 +122,21 @@ function layoutMetrics() {
   }
 }
 
-/** @description 把任意（可能来自旧屏幕的）布局值夹到当前窗口下的合法区间。 */
-function clampLayout(input) {
+/**
+ * @description 把任意（可能来自旧屏幕的）布局值夹到合法区间。
+ * @param {object} input 布局值
+ * @param {{fitWindow?: boolean}} [options] `fitWindow: false` 只按栏位自身的上下限规整
+ *   （用于保存用户意图），不套用当前窗口/内容的预算——否则窗口一小，用户设定的值就被吃掉。
+ */
+function clampLayout(input, options = {}) {
+  const { fitWindow = true } = options
   const candidate = input && typeof input === 'object' ? input : {}
   const { width, height, narrow } = layoutMetrics()
   let left = clampNumber(candidate.left, PANE_LIMITS.left.min, PANE_LIMITS.left.max, LAYOUT_DEFAULT.left)
   let right = clampNumber(candidate.right, PANE_LIMITS.right.min, PANE_LIMITS.right.max, LAYOUT_DEFAULT.right)
   let bottom = clampNumber(candidate.bottom, PANE_LIMITS.bottom.min, PANE_LIMITS.bottom.max, LAYOUT_DEFAULT.bottom)
 
-  if (width > 0) {
+  if (fitWindow && width > 0) {
     if (narrow) {
       // 窄窗口只有 左栏 + 4px + 中栏 三列，右栏是不占列宽的浮层抽屉
       const narrowMax = Math.max(PANE_LIMITS.left.min, Math.min(PANE_LIMITS.left.max, Math.round(width * 0.4)))
@@ -150,11 +161,14 @@ function clampLayout(input) {
     }
   }
 
-  if (height > 0) {
+  if (fitWindow && height > 0) {
+    // 只减**稳定**的 chrome：动作条 / 状态栏 / 中栏标题行 / 分隔条。**故意不含帮助面板**
+    // （TASK-011）：它是临时面板，一旦计入，打开帮助就会把用户的日志高度夹小。
+    // 预览控件条是唯一保留的实时读取——它只随**窗口宽度**换行（内容是静态控件），
+    // 而模型信息行已被 CSS 固定成单行省略号，数据不再能改变它。
     const chrome = (actionBar?.offsetHeight || 41)
       + (statusBar?.offsetHeight || 28)
       + (centerHeader?.offsetHeight || 34)
-      + (helpPanel && !helpPanel.hidden ? helpPanel.offsetHeight : 0)
       + 4
     // 中栏 = 标题行 + 预览控件条 + 3D 画布；只守 CENTER_MIN_HEIGHT 会让画布被挤到几十像素
     // （实测 1100×760 且存量 bottom=333 时画布只剩 93px），所以标题行与控件条高度都要扣掉
@@ -197,9 +211,10 @@ function saveLayout() {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify({
       version: LAYOUT_VERSION,
-      left: layout.left,
-      right: layout.right,
-      bottom: layout.bottom,
+      // 落盘的是**用户意图**，不是当前窗口夹取后的生效值（TASK-011）
+      left: layoutDesired.left,
+      right: layoutDesired.right,
+      bottom: layoutDesired.bottom,
       logCollapsed: layout.logCollapsed,
       rightCollapsed: layout.rightCollapsed,
       drawerOpen: layout.drawerOpen,
@@ -207,6 +222,43 @@ function saveLayout() {
   } catch (error) {
     // 配额/隐私模式：布局记不住不是功能故障
   }
+}
+
+/** @description **用户操作**改布局：按当前窗口预算夹取后，同时更新生效值与落盘意图。 */
+function commitLayout(next) {
+  layout = clampLayout(next)
+  layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
+  return layout
+}
+
+/**
+ * @description **只改折叠标志**的用户操作：不重写尺寸意图——小窗口下点一次折叠，
+ *   不该顺手把用户在大窗口里设定的宽高吃掉（TASK-011）。
+ */
+function commitFlags(flags) {
+  layout = clampLayout({ ...layout, ...flags })
+  return layout
+}
+
+/**
+ * @description **非用户事件**（窗口缩放、跨窄断点、内容变化）重算生效值：只改这一次渲染，
+ *   既不动 layoutDesired 也不落盘——这样窗口恢复或换回短内容后，用户的尺寸能自己回来。
+ */
+function refitLayout() {
+  layout = clampLayout({
+    ...layout,
+    left: layoutDesired.left,
+    right: layoutDesired.right,
+    bottom: layoutDesired.bottom,
+  })
+  return layout
+}
+
+/** @description 从存储/默认值建立初始布局（生效值与落盘意图一起定）。 */
+function adoptLayout(source) {
+  layout = clampLayout(source)
+  layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
+  return layout
 }
 
 // 3D 画布尺寸变化必须重算（Cesium 只监听 window resize，分隔条拖动它感知不到，不处理会被
@@ -289,11 +341,11 @@ function moveSplitterDrag(clientX, clientY) {
   const deltaX = clientX - splitterDrag.startX
   const deltaY = clientY - splitterDrag.startY
   if (splitterDrag.name === 'left') {
-    layout = clampLayout({ ...layout, left: splitterDrag.startLeft + deltaX })
+    commitLayout({ ...layout, left: splitterDrag.startLeft + deltaX })
   } else if (splitterDrag.name === 'right') {
-    layout = clampLayout({ ...layout, right: splitterDrag.startRight - deltaX })
+    commitLayout({ ...layout, right: splitterDrag.startRight - deltaX })
   } else {
-    layout = clampLayout({ ...layout, bottom: splitterDrag.startBottom - deltaY })
+    commitLayout({ ...layout, bottom: splitterDrag.startBottom - deltaY })
   }
   applyLayout()
 }
@@ -311,9 +363,9 @@ function endSplitterDrag() {
 function nudgeSplitter(name, delta) {
   if (name === 'bottom' && layout.logCollapsed) return
   if (name === 'right' && appShell.classList.contains('narrow')) return
-  if (name === 'left') layout = clampLayout({ ...layout, left: layout.left + delta })
-  else if (name === 'right') layout = clampLayout({ ...layout, right: layout.right - delta })
-  else layout = clampLayout({ ...layout, bottom: layout.bottom - delta })
+  if (name === 'left') commitLayout({ ...layout, left: layout.left + delta })
+  else if (name === 'right') commitLayout({ ...layout, right: layout.right - delta })
+  else commitLayout({ ...layout, bottom: layout.bottom - delta })
   applyLayout()
   saveLayout()
 }
@@ -339,7 +391,7 @@ function wireSplitter(element, name) {
 function toggleLogPane(force) {
   const next = force === undefined ? !layout.logCollapsed : Boolean(force)
   if (next === layout.logCollapsed) return
-  layout = clampLayout({ ...layout, logCollapsed: next })
+  commitFlags({ logCollapsed: next })
   applyLayout()
   saveLayout()
 }
@@ -353,7 +405,7 @@ function toggleRightPane(force) {
   } else {
     const next = force === undefined ? !layout.rightCollapsed : Boolean(force)
     if (next === layout.rightCollapsed) return
-    layout = clampLayout({ ...layout, rightCollapsed: next })
+    commitFlags({ rightCollapsed: next })
   }
   applyLayout()
   saveLayout()
@@ -363,19 +415,18 @@ function toggleHelpPane() {
   const open = Boolean(helpPanel.hidden)
   helpPanel.hidden = !open
   toggleHelpButton.setAttribute('aria-expanded', String(open))
-  // 帮助面板占一整行：底部日志上限随之变化，重新夹取一次
-  layout = clampLayout(layout)
-  applyLayout()
-  saveLayout()
+  // 帮助面板**不参与栏位预算**（TASK-011）：它打开只临时占用工作区高度（网格 1fr 行自己吸收），
+  // 既不改 --pane-bottom 也不落盘。这里只需要让 3D 画布按新容器尺寸重算。
+  scheduleViewerResize()
 }
 
-/** @description 窄窗口（<1100px）降级为两栏 + 右栏抽屉；窗口宽度跨过断点时重新夹取。 */
+/** @description 窄窗口（<1100px）降级为两栏 + 右栏抽屉；窗口宽度跨过断点时只重算生效值。 */
 function syncNarrowMode(isNarrow) {
   if (!appShell) return
   appShell.classList.toggle('narrow', isNarrow)
-  layout = clampLayout(layout)
+  // 断点变化属于非用户事件：绝不落盘（用户在大窗口下的尺寸必须留着）
+  refitLayout()
   applyLayout()
-  saveLayout()
 }
 
 function initLayout() {
@@ -383,7 +434,7 @@ function initLayout() {
   // 被调用两次会让每个处理器各跑一遍（实测再点一次折叠按钮，logCollapsed 翻转两次等于没翻）
   if (layoutInitialized) return
   layoutInitialized = true
-  layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)
+  adoptLayout(readStoredLayout() || LAYOUT_DEFAULT)
   const narrowQuery = typeof window.matchMedia === 'function'
     ? window.matchMedia('(max-width: 1099px)')
     : null
@@ -393,7 +444,7 @@ function initLayout() {
       narrowQuery.addEventListener('change', (event) => syncNarrowMode(event.matches))
     }
   }
-  layout = clampLayout(layout)
+  refitLayout()
   applyLayout()
   wireSplitter(splitterLeft, 'left')
   wireSplitter(splitterRight, 'right')
@@ -420,9 +471,9 @@ function initLayout() {
     if (windowResizeFrame) return
     windowResizeFrame = requestAnimationFrame(() => {
       windowResizeFrame = 0
-      layout = clampLayout(layout)
+      // 窗口缩放属于非用户事件：只重算生效值，**不落盘**（用户的选择要能随窗口恢复回来）
+      refitLayout()
       applyLayout()
-      saveLayout()
     })
   })
 }
@@ -435,7 +486,7 @@ window.__layout = {
   limits: { ...PANE_LIMITS, centerMinWidth: CENTER_MIN_WIDTH, centerMinHeight: CENTER_MIN_HEIGHT, canvasMinHeight: CANVAS_MIN_HEIGHT, logCollapsedHeight: LOG_COLLAPSED_HEIGHT },
   clamp: (input) => clampLayout(input),
   restore: () => {
-    layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)
+    adoptLayout(readStoredLayout() || LAYOUT_DEFAULT)
     applyLayout()
     return { ...layout }
   },
@@ -642,6 +693,10 @@ function setValidationModelSummary(filePath, bytes) {
   validationModelSummary.textContent = filePath
     ? `当前验证模型：${filePath} · ${bytes.toLocaleString()} 字节`
     : '当前验证模型：未选择'
+  // CSS 已把这一行固定成单行省略号（TASK-011）：完整路径挂 title，长路径hover 仍可读全
+  validationModelSummary.title = filePath
+    ? `${filePath} · ${bytes.toLocaleString()} 字节`
+    : ''
   statusState.model = { name: filePath || '', bytes: Number.isFinite(bytes) ? bytes : null }
   renderStatusBar()
 }
