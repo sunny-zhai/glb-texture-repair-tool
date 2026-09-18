@@ -9,8 +9,8 @@ An Electron + plain-Node desktop tool that repairs GLB (glTF 2.0 binary) models 
 The app is split into two layers:
 
 - `src/repair.js` — the repair engine. Pure Node (CommonJS), no Electron or npm runtime deps, so it runs and tests under plain `node`.
-- `src/ive.js` — the IVE→GLB converter: drives the native `ive2glb` helper and assembles a self-contained GLB in Node. Also pure Node (uses only `jpeg-js`/`pngjs` plus `repair.js`'s `writeGlb`/`align4`).
-- `native/ive2glb/` — a small C++20 helper that reads IVE with OpenSceneGraph and dumps `scene.json` + `data.bin`. See "IVE input pipeline" below.
+- `src/ive.js` — the IVE→GLB converter: drives the native `ive2glb` helper and assembles a self-contained GLB in Node. Also pure Node (uses only `jpeg-js`/`pngjs` plus `repair.js`'s `writeGlb`/`align4`/矩阵工具). It welds vertices, applies the Z-up→Y-up axis conversion and grounds/centers the model; conversion options are documented in its JSDoc.
+- `native/ive2glb/` — a small C++20 helper that reads IVE with OpenSceneGraph and dumps `scene.json` + `data.bin`; build and vendoring are covered by `npm run build:ive2glb` and `native/ive2glb/README.md`.
 - `src/main.js` + `src/preload.js` + `src/renderer.js`/`index.html` — the standard Electron main/preload/renderer shell over IPC.
 
 **All UI strings, log lines, and thrown error messages are Chinese (zh-CN);** keep new user-facing strings Chinese for consistency. The design doc (`docs/001-code-design.md`) and issue analysis (`docs/cesium-glb-load-issues.md`) are Chinese too.

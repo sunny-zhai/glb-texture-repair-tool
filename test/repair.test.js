@@ -4,7 +4,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { align4, collectGlbEntries, collectGlbFiles, encodePng, isJpeg, jpegComponentCount, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
+const { align4, collectGlbEntries, collectGlbFiles, encodePng, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -380,19 +380,8 @@ function writeJpegTextureFixture(input, jpegBytes) {
   }, bin)
 }
 
-test('jpegComponentCount reads the component count out of the SOF segment', () => {
-  assert.equal(isJpeg(TINY_JPEG), true)
-  // 真实的基线 JPEG 是 3 分量 YCbCr。
-  assert.equal(jpegComponentCount(TINY_JPEG), 3)
-  assert.equal(jpegComponentCount(makeSofHeader(1)), 1)
-  assert.equal(jpegComponentCount(makeSofHeader(4)), 4)
-  // 截断或非法数据返回 0，调用方据此退回转码路径而不是盲目原样保留。
-  assert.equal(jpegComponentCount(Buffer.from([0xff, 0xd8, 0xff])), 0)
-  assert.equal(jpegComponentCount(Buffer.alloc(0)), 0)
-})
-
-test('repairGlbFile keeps an embedded JPEG texture as JPEG by default', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-keep-jpeg-'))
+test('repairGlbFile converts an embedded JPEG texture to PNG', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-jpeg-to-png-'))
   const input = path.join(tempDir, 'input.glb')
   const output = path.join(tempDir, 'output.glb')
   writeJpegTextureFixture(input, TINY_JPEG)
@@ -400,27 +389,9 @@ test('repairGlbFile keeps an embedded JPEG texture as JPEG by default', () => {
   const report = repairGlbFile(input, output)
 
   assert.equal(report.status, 'success')
-  assert.equal(report.imagesKeptJpeg, 1)
-  assert.equal(report.imagesConverted, 0)
-
-  const { json, bin } = readGlb(output)
-  assert.equal(json.images[0].mimeType, 'image/jpeg')
-  // 字节必须原封不动：没有解码重编码，贴图体积才零膨胀。
-  const view = json.bufferViews[json.images[0].bufferView]
-  assert.equal(bin.subarray(view.byteOffset, view.byteOffset + view.byteLength).equals(TINY_JPEG), true)
-})
-
-test('repairGlbFile converts an embedded JPEG to PNG when keepJpeg is false', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-jpeg-to-png-'))
-  const input = path.join(tempDir, 'input.glb')
-  const output = path.join(tempDir, 'output.glb')
-  writeJpegTextureFixture(input, TINY_JPEG)
-
-  const report = repairGlbFile(input, output, { keepJpeg: false })
-
-  assert.equal(report.status, 'success')
-  assert.equal(report.imagesKeptJpeg, 0)
+  // 贴图统一转 PNG，不再有「原样保留 JPEG」的分支。
   assert.equal(report.imagesConverted, 1)
+  assert.equal(report.imagesKeptJpeg, undefined)
 
   const { json, bin } = readGlb(output)
   assert.equal(json.images[0].mimeType, 'image/png')
@@ -428,7 +399,22 @@ test('repairGlbFile converts an embedded JPEG to PNG when keepJpeg is false', ()
   assert.equal(bin.subarray(view.byteOffset, view.byteOffset + 8).equals(PNG_SIGNATURE), true)
 })
 
-test('repairGlbFile embeds an external JPEG without re-encoding it', () => {
+test('repairGlbFile always converts JPEG to PNG regardless of leftover keepJpeg option', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-keep-jpeg-noop-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeJpegTextureFixture(input, TINY_JPEG)
+
+  // keepJpeg 已从接口移除；万一调用方还传着旧参数，行为也必须一致（回退到统一转 PNG）。
+  const report = repairGlbFile(input, output, { keepJpeg: true })
+
+  assert.equal(report.status, 'success')
+  assert.equal(report.imagesConverted, 1)
+  const { json } = readGlb(output)
+  assert.equal(json.images[0].mimeType, 'image/png')
+})
+
+test('repairGlbFile embeds an external JPEG as PNG', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-external-jpeg-'))
   const input = path.join(tempDir, 'character.glb')
   const output = path.join(tempDir, 'output.glb')
@@ -442,26 +428,26 @@ test('repairGlbFile embeds an external JPEG without re-encoding it', () => {
   const report = repairGlbFile(input, output)
 
   assert.equal(report.status, 'success')
-  assert.equal(report.imagesKeptJpeg, 1)
   assert.equal(report.externalImagesEmbedded, 1)
 
   const repaired = readGlb(output)
-  assert.equal(repaired.json.images[0].mimeType, 'image/jpeg')
+  assert.equal(repaired.json.images[0].mimeType, 'image/png')
+  assert.equal(repaired.json.images[0].uri, undefined)
   const view = repaired.json.bufferViews[repaired.json.images[0].bufferView]
-  assert.ok(repaired.bin.subarray(view.byteOffset, view.byteOffset + view.byteLength).equals(TINY_JPEG))
+  assert.equal(repaired.bin.subarray(view.byteOffset, view.byteOffset + 8).equals(PNG_SIGNATURE), true)
 })
 
-test('repairGlbFile does not pass a four-component CMYK JPEG through untouched', () => {
+test('repairGlbFile reports a JPEG it cannot transcode instead of embedding a broken texture', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-cmyk-jpeg-'))
   const input = path.join(tempDir, 'input.glb')
   const output = path.join(tempDir, 'output.glb')
-  // 四分量 JPEG 浏览器解码支持很差，即使默认保留 JPEG 也必须退回转码路径。
-  // 这里只有文件头、没有可解码的扫描数据，因此会明确报错而不是静默产出坏贴图。
+  // 只有文件头、没有可解码的扫描数据（四分量 CMYK 也是这条路径），
+  // 必须明确报错，而不是静默产出一张坏贴图。
   writeJpegTextureFixture(input, makeSofHeader(4))
 
   const report = repairGlbFile(input, output)
 
   assert.equal(report.status, 'error')
-  assert.equal(report.imagesKeptJpeg, 0)
+  assert.equal(report.imagesConverted, 0)
   assert.match(report.error, /JPEG 转 PNG 失败/)
 })
