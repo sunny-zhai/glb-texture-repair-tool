@@ -109,7 +109,7 @@
   ① `node --test test/inspect.test.js` → **37 通过 / 1 跳过 / 0 失败**（新增 2 条回归用例全绿）；且**验证过这两条用例在旧代码上会红**——把 `inspect.js` 的调用临时改回 `reachableMeshIndexes(json)` 后，「全部被引用的文件不得出现该条目」用例 fail 1，恢复修复后 pass 1（回归网本身有效，不是永远为真的断言）。
   ② 本地 4 个样例逐个核对：修复前 4/4 都打印「N 个网格没有被**默认场景**引用」，修复后**0/4**；真实的 `ACCESSOR_BOUNDS_UNRELIABLE` 告警仍在（`model/person-stand.glb` 仍报 297.194 倍偏差）。旧代码可用 `reachableMeshIndexes(json)` → `0` vs 两参调用 → `3` 直接复现。
   ③ 冒烟 `node test/ui-smoke.cjs`：`model/蹲姿.glb` 与 `o-model/蹲姿.ive` **各 8 步、0 项失败（全绿）**——此前一直红的「加载预览模型」已转绿，且断言已加强为必须真出现「加载成功」而不是"落定即可"（防止被超时兜底假绿）。
-  ④ `npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**；`npm run lint` 通过。`node scripts/memory.mjs check` 在本任务分支上会因为「TASKS.md 已标完成、完成线还没有条目」而红——完成线按平台规则**只在串行合并点写入**（`.ai/AGENTS.md` §4，单写者），合并后由回填提交追加 `completed` 条目即转绿，不在此处预写。
+  ④ `npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**；`npm run lint` 通过。`node scripts/memory.mjs check` 在任务分支上会因「TASKS.md 已标完成、完成线还没有条目」而红——完成线按平台规则**只在串行合并点写入**（`.ai/AGENTS.md` §4，单写者）；合并为 `caa812e` 后已追加 `completed` 条目，`memory check` 转绿通过。
 
 ## 依赖 DAG
 
