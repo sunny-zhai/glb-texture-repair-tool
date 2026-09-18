@@ -37,4 +37,5 @@
 | 日期 | REQ | TASK | 事件 | 证据 | commit |
 |---|---|---|---|---|---|
 | 2026-09-18 | REQ-001 | TASK-001 | completed | bash -lc "npm test" → pass 43 / fail 0 / skipped 0；REQ-001 五条验收标准逐条判定通过；台账回填见 docs/requirements/TASKS.md | 7f7411a |
+| 2026-09-18 | REQ-001 | TASK-002 | completed | bash -lc "npm test" → pass 43 / fail 0；台账三份已入库，见 docs/requirements/TASKS.md | e26b1a1 |
 <!-- memory:completion:end -->

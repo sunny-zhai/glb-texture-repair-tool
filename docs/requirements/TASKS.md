@@ -22,8 +22,8 @@
 - **产出**：`.gitignore`、`docs/requirements/REQUIREMENTS.md`、`docs/requirements/TASKS.md`、`docs/PROJECT_MEMORY.md`
 - **文件范围**：`.gitignore`, `docs/requirements/`, `docs/PROJECT_MEMORY.md`
 - **验证方式**：`npm test`；三条断言——`git ls-files docs/requirements docs/PROJECT_MEMORY.md` 恰为三份、`git check-ignore` 对 `docs/coding-standard/web-vue3.md` 与 `docs/testing/TEST_PLAN.md` 仍返回忽略、`node scripts/memory.mjs check` 通过。
-- **状态**：进行中
-- **验证结果**：（合并回版本分支后回填）
+- **状态**：已完成
+- **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 `npm test` 43 通过 / 0 失败，自动合并为 `e26b1a1`。三条断言：① `git ls-files docs/requirements docs/PROJECT_MEMORY.md` = 3 份（REQUIREMENTS.md、TASKS.md、PROJECT_MEMORY.md）✅ ② `docs/coding-standard/web-vue3.md` 与 `docs/testing/TEST_PLAN.md` 仍被忽略 ✅ ③ `memory check` 通过 ✅
 
 ## 依赖 DAG
 
@@ -46,4 +46,4 @@ TASK-001 ──▶ TASK-002
 | 任务 | 关联 REQ | 状态 | 已验证 |
 | :-- | :-- | :-- | :-- |
 | TASK-001 | REQ-001 | 已完成 | ☑ |
-| TASK-002 | REQ-001 | 进行中 | ☐ |
+| TASK-002 | REQ-001 | 已完成 | ☑ |
