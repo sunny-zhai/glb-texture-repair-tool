@@ -47,6 +47,15 @@ docs/requirements/*
 !docs/requirements/REQUIREMENTS.md
 !docs/requirements/TASKS.md
 !docs/PROJECT_MEMORY.md
+!docs/approvals/
+docs/approvals/*
+!docs/approvals/APPROVALS.md
+!docs/testing/
+docs/testing/*
+!docs/testing/TEST_PLAN.md
+!docs/release/
+docs/release/*
+!docs/release/RELEASE_CHECKLIST.md
 AGENTS.md
 .worktrees/
 

@@ -25,10 +25,30 @@
 - **状态**：已完成
 - **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 `npm test` 43 通过 / 0 失败，自动合并为 `e26b1a1`。三条断言：① `git ls-files docs/requirements docs/PROJECT_MEMORY.md` = 3 份（REQUIREMENTS.md、TASKS.md、PROJECT_MEMORY.md）✅ ② `docs/coding-standard/web-vue3.md` 与 `docs/testing/TEST_PLAN.md` 仍被忽略 ✅ ③ `memory check` 通过 ✅
 
+### TASK-003 人工审批留痕纳入版本库
+- **关联需求**：REQ-001
+- **依赖**：TASK-002
+- **做什么**：把 `docs/approvals/APPROVALS.md` 纳入版本库。它是平台人工闸门（spec/architecture/delivery）的审计留痕，而 `docs/release/MERGE_REQUEST.md` 的验收清单里就要求"人工闸门已留痕"——不入库则该清单无法真正满足。
+- **产出**：`.gitignore`、`docs/approvals/APPROVALS.md`
+- **文件范围**：`.gitignore`, `docs/approvals/`
+- **验证方式**：`npm test`；断言 `git ls-files docs/approvals` 恰为 1 份、`docs/testing/TEST_PLAN.md` 与 `docs/coding-standard/web-vue3.md` 仍被忽略、`node scripts/memory.mjs check` 通过。
+- **状态**：已完成
+- **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 43 通过 / 0 失败后自动合并为版本分支提交 `626eafe`。断言：① `git ls-files docs/approvals` 恰 1 份 ✅ ② `docs/testing/TEST_PLAN.md`、`docs/coding-standard/web-vue3.md` 仍被忽略 ✅ ③ `memory check` 通过 ✅
+
+### TASK-004 补齐测试计划与发布检查清单并入库
+- **关联需求**：REQ-002
+- **依赖**：TASK-003
+- **做什么**：把 `docs/testing/TEST_PLAN.md` 与 `docs/release/RELEASE_CHECKLIST.md` 从空模板写成与本项目实际一致的文档并入库，使 merge request 验收清单里的「测试/门禁全绿」「回滚预案就绪」可核验。
+- **产出**：`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`.gitignore`
+- **文件范围**：`docs/testing/`, `docs/release/`, `.gitignore`
+- **验证方式**：`npm test`；断言——两份文档 `grep -c '{{'` 为 0、`git ls-files docs/testing docs/release` 恰 2 份、覆盖率数字与 `node --test --experimental-test-coverage` 实测一致、`MERGE_REQUEST.md`/`PERF_BUDGET.md` 仍被忽略。
+- **状态**：已完成
+- **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 43 通过 / 0 失败后自动合并为 `9b973c9`。断言：① 两份文档 `grep -c '{{'` = 0 ✅ ② `git ls-files docs/testing docs/release` 恰 2 份 ✅ ③ 覆盖率数字 92.29/96.44/89.46 与 `node --test --experimental-test-coverage` 实测一致 ✅ ④ `MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略 ✅ ⑤ `memory check` 通过 ✅
+
 ## 依赖 DAG
 
 ```text
-TASK-001 ──▶ TASK-002
+TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 ```
 
 ## 并行批次
@@ -40,6 +60,8 @@ TASK-001 ──▶ TASK-002
 | :-- | :-- | :-- |
 | 1 | TASK-001 | 无依赖 |
 | 2 | TASK-002 | 依赖 TASK-001 已完成 |
+| 3 | TASK-003 | 依赖 TASK-002 已完成 |
+| 4 | TASK-004 | 依赖 TASK-003 已完成 |
 
 ## 进度
 
@@ -47,3 +69,5 @@ TASK-001 ──▶ TASK-002
 | :-- | :-- | :-- | :-- |
 | TASK-001 | REQ-001 | 已完成 | ☑ |
 | TASK-002 | REQ-001 | 已完成 | ☑ |
+| TASK-003 | REQ-001 | 已完成 | ☑ |
+| TASK-004 | REQ-002 | 已完成 | ☑ |
