@@ -29,8 +29,25 @@
 - **关联代码/测试**：`CLAUDE.md`、`AGENTS.md`、`.gitignore`、`docs/001-code-design.md`、`docs/002-requirements.md`、`docs/cesium-glb-load-issues.md`
 - **确认**：待确认
 
+### REQ-002 测试与发布基线可执行、可核验
+- **状态**：进行中
+- **优先级**：P1
+- **描述**：merge request 的验收清单明确引用 `docs/testing/TEST_PLAN.md` 与 `docs/release/RELEASE_CHECKLIST.md`，但两份仍是空模板且未入库——清单条目因此无法真正满足：评审人不知道该跑什么命令、期望什么结果、出问题怎么回滚。本需求把这两份基线写成与本项目实际一致的、可执行的文档并入库，使「门禁全绿」「回滚预案就绪」变成可核验的陈述。面向后续所有评审者与发布责任人。
+- **范围**：填写 `TEST_PLAN.md`（用例清单、必测维度、结果汇总，含真实覆盖率与夹具缺失时的跳过语义）与 `RELEASE_CHECKLIST.md`（预检/迁移/发布/冒烟/回滚/发布说明）；`.gitignore` 放行这两份。
+  **不做**：不改动任何运行时代码或测试断言；不引入覆盖率门槛（仅如实记录实测值）；`docs/release/MERGE_REQUEST.md` 是 task-flow 生成的派生物、`docs/testing/PERF_BUDGET.md` 本轮不填，二者保持忽略。
+- **验收标准**（Given/When/Then）：
+  1. Given 版本分支上的 `TEST_PLAN.md` When 通读 Then 元信息的执行命令为 `npm test`，用例清单每条都给出可执行命令与可判定期望，**不含任何 `{{}}` 占位符**。
+  2. When 按 `TEST_PLAN.md` 执行 `npm test` Then 结果与文档"结果汇总"一致：有夹具时 43 通过 / 0 失败 / 0 跳过；无夹具时 33 通过 / 11 跳过 / 0 失败。
+  3. Given `TEST_PLAN.md` 的覆盖率一节 When 与 `node --test --experimental-test-coverage` 实测比对 Then 数字一致（all files 行 92.29% / 分支 66.25% / 函数 93.70%；`ive.js` 96.44%、`repair.js` 89.46%），并写明 Electron 壳层（`main/preload/renderer`）未纳入插桩。
+  4. Given `RELEASE_CHECKLIST.md` When 查看预检与回滚 Then 每条预检都能对应到具体命令（`npm run lint` / `npm test` / `npm run dist:win`），回滚预案给出可执行步骤与决策人，且如实记录"`npm audit` 在本机镜像源不可用、需换官方源或 CI 执行"。
+  5. When 执行 `git ls-files docs/testing docs/release` Then 恰列出 `TEST_PLAN.md` 与 `RELEASE_CHECKLIST.md` 两份，`MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略。
+- **关联任务**：TASK-004
+- **关联代码/测试**：`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`.gitignore`
+- **确认**：待确认
+
 ## 变更记录
 
 | 日期 | REQ | 变更 | 原因 |
 | :-- | :-- | :-- | :-- |
+| 2026-09-18 | REQ-002 | 新增 | merge request 验收清单引用的两份基线是空模板，需落成可执行文档 |
 | 2026-09-18 | REQ-001 | 新增 | 采纳 Tenon 工作流时发现文档与实现偏离，先立此需求再做校正 |
