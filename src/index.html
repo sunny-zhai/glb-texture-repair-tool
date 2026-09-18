@@ -25,11 +25,14 @@
       <div class="toolbar">
         <button id="pickFiles">选择文件</button>
         <button id="pickDir">选择目录</button>
+        <button id="clearInputs">清空选择</button>
         <button id="pickOutput">选择输出目录</button>
-        <button id="pickValidation">选择验证模型</button>
+        <button id="pickValidation">选择预览模型（单个）</button>
         <button id="resetView">重置视角</button>
         <button id="runRepair" class="primary">开始修复</button>
       </div>
+
+      <div class="hint">「选择目录」一次收录整个目录下的 GLB/IVE（推荐批量用）；「选择文件」支持多选（⌘/Shift 点选），多次选择会<strong>累加</strong>而不是替换；「选择预览模型」只取单个文件，用于右侧 Cesium 预览。</div>
 
       <div id="capabilityHint" class="hint" hidden></div>
 

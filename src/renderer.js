@@ -388,11 +388,16 @@ function resetModelView() {
 }
 
 document.getElementById('pickFiles').addEventListener('click', async () => {
-  const paths = await window.repairApp.pickInputs('files')
+  // 传当前选择：主进程做**累加去重**，逐个点选不会把之前选中的顶掉
+  const previous = state.inputMode === 'files' ? state.inputPaths : []
+  const paths = await window.repairApp.pickInputs('files', previous)
+  const added = paths.length - previous.length
   state.inputMode = 'files'
   state.inputPaths = paths
   renderInputs()
-  appendLog(`已选择 ${paths.length} 个文件`)
+  appendLog(added > 0
+    ? `已累加 ${added} 个文件，当前共 ${paths.length} 个输入`
+    : `已是当前选择（共 ${paths.length} 个输入）`)
 })
 
 document.getElementById('pickDir').addEventListener('click', async () => {
@@ -403,6 +408,13 @@ document.getElementById('pickDir').addEventListener('click', async () => {
   appendLog(`已选择目录 ${paths[0] || ''}`)
 })
 
+document.getElementById('clearInputs').addEventListener('click', () => {
+  state.inputMode = 'files'
+  state.inputPaths = []
+  renderInputs()
+  appendLog('已清空输入选择')
+})
+
 document.getElementById('pickOutput').addEventListener('click', async () => {
   const outputDir = await window.repairApp.pickOutputDir()
   state.outputDir = outputDir
@@ -411,7 +423,9 @@ document.getElementById('pickOutput').addEventListener('click', async () => {
 })
 
 document.getElementById('pickValidation').addEventListener('click', async () => {
-  const paths = await window.repairApp.pickInputs('files')
+  // 预览只取单个文件：这里**不**累加，避免与批量的输入列表互相污染
+  const paths = await window.repairApp.pickInputs('files', [])
+  if (paths.length > 1) appendLog(`预览只加载第一个：${paths[0]}`, 'warn')
   await validateModel(paths[0])
 })
 

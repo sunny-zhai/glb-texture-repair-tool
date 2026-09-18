@@ -2,7 +2,12 @@ const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } = require('electron')
-const { collectGlbEntries, readGlb, repairMany } = require('./repair')
+const {
+  collectGlbEntries,
+  mergeUniquePaths,
+  readGlb,
+  repairMany,
+} = require('./repair')
 const {
   convertIveToGlb,
   isIvePath,
@@ -48,7 +53,7 @@ function normalizeSelection(paths) {
   return Array.isArray(paths) ? paths.filter(Boolean) : []
 }
 
-ipcMain.handle('pick-inputs', async (_, mode) => {
+ipcMain.handle('pick-inputs', async (_, mode, current) => {
   const options = {
     properties: mode === 'directory'
       ? ['openDirectory']
@@ -56,8 +61,11 @@ ipcMain.handle('pick-inputs', async (_, mode) => {
     filters: [{ name: '三维模型（GLB / IVE）', extensions: ['glb', 'ive'] }],
   }
   const result = await dialog.showOpenDialog(mainWindow, options)
-  if (result.canceled) return []
-  return normalizeSelection(result.filePaths)
+  if (result.canceled) return normalizeSelection(current)
+  // 「选择文件」累加去重（逐个点选不会顶掉之前的）；「选择目录」是替换语义（新目录取代旧选择）
+  return mode === 'directory'
+    ? normalizeSelection(result.filePaths)
+    : mergeUniquePaths(normalizeSelection(current), result.filePaths)
 })
 
 ipcMain.handle('app-capabilities', () => ({

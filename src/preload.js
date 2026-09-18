@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('repairApp', {
-  pickInputs: (mode) => ipcRenderer.invoke('pick-inputs', mode),
+  pickInputs: (mode, current) => ipcRenderer.invoke('pick-inputs', mode, current),
   pickOutputDir: () => ipcRenderer.invoke('pick-output-dir'),
   repairGlb: (payload) => ipcRenderer.invoke('repair-glb', payload),
   readGlbDataUrl: (filePath) => ipcRenderer.invoke('read-glb-data-url', filePath),
