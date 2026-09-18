@@ -32,14 +32,21 @@ vendor/cesium/
 # native/ive2glb 的源码入库，编译输出不入库（vendor/ive2glb/ 是另行裁决的发行件）
 native/ive2glb/build/
 
-# ---------------------------------------------------------------- 设计文档
-# 只入库项目自己的三份设计文档；docs/ 下其余内容由开发流程工具生成
+# ---------------------------------------------------------------- 设计文档与平台台账
+# 只入库这些；docs/ 下其余内容由开发流程工具生成
 # （coding-standard 里甚至有与本项目无关的 Spring Boot/Vue3/React Native 模板），继续忽略。
 # 注意必须写 docs/* 而不是 docs/：一旦整个目录被排除，后面的 ! 否定规则无法把文件捞回来。
+# 同理，要放行子目录里的文件，必须先 ! 回复该目录、再排除其内容、最后放行具体文件——
+# 只写 !docs/requirements/TASKS.md 是无效的，因为父目录 docs/requirements/ 仍被排除。
 docs/*
 !docs/001-code-design.md
 !docs/002-requirements.md
 !docs/cesium-glb-load-issues.md
+!docs/requirements/
+docs/requirements/*
+!docs/requirements/REQUIREMENTS.md
+!docs/requirements/TASKS.md
+!docs/PROJECT_MEMORY.md
 AGENTS.md
 .worktrees/
 
