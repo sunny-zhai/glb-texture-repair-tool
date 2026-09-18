@@ -27,3 +27,4 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 时间 | 闸门 | 决策 | 确认人 | 关联需求/版本 | 证据 |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | 2026-09-18 06:01 | delivery | approved | sunny-zhai | v0.1.0 | PR #6 https://github.com/sunny-zhai/glb-texture-repair-tool/pull/6 merged into main as 3506327 (复核范围：release/v0.1.0 至 15c755c（版本状态/台账/CLAUDE.md 校正）；其后 TASK-003/TASK-004 批次尚待紧随的合并) |
+| 2026-09-18 06:03 | delivery | approved | sunny-zhai | v0.1.0 | PR #7 https://github.com/sunny-zhai/glb-texture-repair-tool/pull/7 merged into main as 0063590 (本批为完整交付：TEST_PLAN/RELEASE_CHECKLIST/APPROVALS/台账增量/.gitignore 共 7 文件；合并后与 main 内容差异为空) |
