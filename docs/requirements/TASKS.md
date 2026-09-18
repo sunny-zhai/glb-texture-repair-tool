@@ -65,6 +65,26 @@
 - **状态**：已完成
 - **验证结果**：平台采纳前交付（`fd90022` 建立工作流、`1c266a4` 修复加载挂死与贴图不显示）。回归证据 `pass 19 / fail 0`
 
+### TASK-007 体检核心：src/inspect.js + src/transform.js
+- **关联需求**：REQ-005（验收标准 1、2、3、5）
+- **依赖**：无
+- **做什么**：实现只读体检报告与它依赖的世界盒/矩阵工具：体积、节点/网格/图元/顶点/三角面、贴图规格与问题（NPOT+mipmap、1×1 占位、未被采样）、材质/采样器/扩展、`bounds.accessorUnion` 与 `bounds.world` 及其偏差倍数、中心点、上轴判定、比例尺；对异常输入产出可读问题条目而非抛异常。
+- **产出**：`src/inspect.js`、`src/transform.js`、`test/inspect.test.js`
+- **文件范围**：`src/inspect.js`, `src/transform.js`, `test/inspect.test.js`
+- **验证方式**：`node --test test/inspect.test.js`；外加 002 M1 的退出标准——`node -e "inspect('o-model/运输车.glb')"` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；24 个 GLB 全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`triangles === Σ(indices.count)/3`；`vertexReuseRatio(person 参考件) === 0.61`
+- **状态**：进行中
+- **验证结果**：（合并回版本分支后回填）
+
+### TASK-008 界面体检面板与预览方向/缩放控件
+- **关联需求**：REQ-005（验收标准 4）
+- **依赖**：TASK-007
+- **做什么**：把体检报告做成界面面板（世界盒/accessor 盒双列 + 偏差告警 + 问题清单），并在 Cesium 预览上提供方向/缩放即时修正控件（只影响预览，写回需显式操作），日志记录最终 `modelMatrix`。
+- **产出**：`src/renderer.js`、`src/index.html`、`src/styles.css`、`src/main.js`（IPC）、`src/preload.js`
+- **文件范围**：`src/renderer.js`, `src/index.html`, `src/styles.css`, `src/main.js`, `src/preload.js`
+- **验证方式**：手工冒烟——打开一个体积正常的与一个 accessor 盒失真的模型，面板双列数值与告警可见；拖动方向/缩放使人物与车辆同框，日志出现最终 `modelMatrix`；确认输出文件未被改写（对比 `mtime` 与哈希）
+- **状态**：待开始
+- **验证结果**：（待 TASK-007 完成后开始）
+
 ## 依赖 DAG
 
 ```text
@@ -72,6 +92,8 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 
 TASK-005（追溯登记，独立）
 TASK-006（追溯登记，独立）
+
+TASK-007 ──▶ TASK-008
 ```
 
 ## 并行批次
@@ -86,6 +108,8 @@ TASK-006（追溯登记，独立）
 | 3 | TASK-003 | 依赖 TASK-002 已完成 |
 | 4 | TASK-004 | 依赖 TASK-003 已完成 |
 | 5 | TASK-005, TASK-006 | 追溯登记，无依赖 |
+| 6 | TASK-007 | 无依赖（REQ-005 核心） |
+| 7 | TASK-008 | 依赖 TASK-007，且与其文件范围不重叠 |
 
 ## 进度
 
@@ -97,3 +121,5 @@ TASK-006（追溯登记，独立）
 | TASK-004 | REQ-002 | 已完成 | ☑ |
 | TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
+| TASK-007 | REQ-005 | 进行中 | ☐ |
+| TASK-008 | REQ-005 | 待开始 | ☐ |
