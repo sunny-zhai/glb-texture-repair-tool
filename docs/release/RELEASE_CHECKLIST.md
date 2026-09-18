@@ -29,9 +29,10 @@
 ## 3. 发布（Release）
 
 - [ ] 目标环境：最终用户 **Windows x64**（NSIS 安装包 + 便携版）；开发/自用 **macOS arm64**（`npm run dev`）
+- [ ] **版本号对齐（打包前必做）**：`package.json` 的 `version` 目前仍是 `0.1.0`，而当前版本分支是 `release/v0.1.1`。产物名取自 `package.json`，不改就会出现「v0.1.1 的交付产出 0.1.0 的安装包」（并可能覆盖 v0.1.0 的产物）。打包前必须把 `package.json` 的 `version` 升到 `0.1.1`（`version.mjs bump` 只管版本分支，不会动 `package.json`）
 - [ ] 发布产物（`electron-builder` 按 `artifactName` 模板生成，输出目录 `dist/`）：
-  - `GLB Texture Repair Tool-Setup-0.1.0.exe`（NSIS，可选安装目录、桌面/开始菜单快捷方式）
-  - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
+  - `GLB Texture Repair Tool-Setup-0.1.1.exe`（NSIS，可选安装目录、桌面/开始菜单快捷方式）
+  - `GLB Texture Repair Tool-0.1.1-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
 - [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
