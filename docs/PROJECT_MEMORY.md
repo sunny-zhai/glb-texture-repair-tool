@@ -39,4 +39,5 @@
 | 2026-09-18 | REQ-001 | TASK-001 | completed | bash -lc "npm test" → pass 43 / fail 0 / skipped 0；REQ-001 五条验收标准逐条判定通过；台账回填见 docs/requirements/TASKS.md | 7f7411a |
 | 2026-09-18 | REQ-001 | TASK-002 | completed | bash -lc "npm test" → pass 43 / fail 0；台账三份已入库，见 docs/requirements/TASKS.md | e26b1a1 |
 | 2026-09-18 | REQ-001 | TASK-003 | completed | bash -lc "npm test" → pass 43 / fail 0；审批留痕已入库，见 docs/approvals/APPROVALS.md | 626eafe |
+| 2026-09-18 | REQ-002 | TASK-004 | completed | bash -lc "npm test" → pass 43 / fail 0；基线与覆盖率见 docs/testing/TEST_PLAN.md 与 docs/release/RELEASE_CHECKLIST.md | 9b973c9 |
 <!-- memory:completion:end -->

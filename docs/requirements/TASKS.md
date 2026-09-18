@@ -42,8 +42,8 @@
 - **产出**：`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`.gitignore`
 - **文件范围**：`docs/testing/`, `docs/release/`, `.gitignore`
 - **验证方式**：`npm test`；断言——两份文档 `grep -c '{{'` 为 0、`git ls-files docs/testing docs/release` 恰 2 份、覆盖率数字与 `node --test --experimental-test-coverage` 实测一致、`MERGE_REQUEST.md`/`PERF_BUDGET.md` 仍被忽略。
-- **状态**：进行中
-- **验证结果**：（合并回版本分支后回填）
+- **状态**：已完成
+- **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 43 通过 / 0 失败后自动合并为 `9b973c9`。断言：① 两份文档 `grep -c '{{'` = 0 ✅ ② `git ls-files docs/testing docs/release` 恰 2 份 ✅ ③ 覆盖率数字 92.29/96.44/89.46 与 `node --test --experimental-test-coverage` 实测一致 ✅ ④ `MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略 ✅ ⑤ `memory check` 通过 ✅
 
 ## 依赖 DAG
 
@@ -70,4 +70,4 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 | TASK-001 | REQ-001 | 已完成 | ☑ |
 | TASK-002 | REQ-001 | 已完成 | ☑ |
 | TASK-003 | REQ-001 | 已完成 | ☑ |
-| TASK-004 | REQ-002 | 进行中 | ☐ |
+| TASK-004 | REQ-002 | 已完成 | ☑ |
