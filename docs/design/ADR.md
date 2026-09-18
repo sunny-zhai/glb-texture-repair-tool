@@ -70,3 +70,16 @@
 - **替代方案**：① 保持纯尺寸比（否决：纯平移漏检）；② 只报两个指标不合并（部分采纳：作为 `deviationParts` 一并给出，但仍需一个标量做告警门槛）；③ accessor 盒继续并集所有网格（否决：产生假偏差）。
 - **影响面**：`src/transform.js`（`deviationFactor`/`deviationParts`/`accessorUnionBounds`/`worldBounds`/`glbBounds`/`defaultSceneOf`/`reachableMeshIndexes`）、`src/inspect.js`（节点统计改用默认场景、`NO_DEFAULT_SCENE`/`UNREFERENCED_MESHES`）、`docs/001-code-design.md` BR-018、`test/inspect.test.js`。
 - **验证方式**：`node --test test/inspect.test.js` ——「纯平移也能被偏差倍数发现」（factor 1001、尺寸比 1、偏移比 1000）、「未被场景引用的网格不制造假偏差」（factor 恒为 1）、「没有 scene 的文件给出 null 盒」、「多场景只按默认场景统计」、「`deviationFactor` 同时覆盖尺寸与位置」。
+
+## ADR-006 编辑器式布局用 CSS Grid + 自绘分隔条，不引入前端框架
+
+- **日期**：2026-09-18
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-18；实现待 TASK-010）
+- **关联需求**：REQ-006
+- **背景/问题**：界面是单列流式布局 + 整页滚动，3D 视口固定 360px 高，主次不分。要重排成"左队列 / 中视口 / 右体检器 / 底部日志"，需要能拖拽调宽调高、能折叠、能记忆，并且 3D 画布必须跟着容器尺寸变化重算——Cesium 只监听 **window** resize，分隔条拖动它感知不到，不处理会被拉伸。
+- **决策**：(a) 布局用 **CSS Grid + CSS 变量**表达（`grid-template-columns: var(--pane-left) 4px minmax(0,1fr) 4px var(--pane-right)`），分隔条是 4px 的 `<div>`，用 `pointerdown/pointermove/pointerup`（含 `setPointerCapture`）改 CSS 变量；(b) 分栏尺寸、折叠状态写 `localStorage`（键 `glb-repair.layout`），启动时恢复；(c) 3D 容器挂 `ResizeObserver`，尺寸变化时调 `viewer.resize()`（节流到下一帧）；(d) **不引入任何前端框架/构建步骤**，保持现有"无 bundler、纯 DOM、CSP 不放宽"的约定；(e) 窄窗口（<1100px）降级为两栏 + 右栏抽屉，保证不出现横向滚动。
+- **理由**：现有仓库约定是 CommonJS + 纯 DOM + 无构建；Grid 足以表达编辑器式布局，且能用现有 `test/ui-smoke.cjs`（CDP 读 DOM/CSS）直接验证，不需要新测试基建。引入框架会同时带来打包、CSP、`contextIsolation` 三项成本，收益仅为"写起来方便"。
+- **后果**：正面——一屏呈现主次关系、面板可调可折叠、零新依赖、可用现有冒烟验证。**代价与风险**：自绘分隔条要自己处理指针捕获、最小尺寸与触控板体验；`ResizeObserver` + `viewer.resize()` 若忘记节流会在拖动时掉帧；`localStorage` 里存的是像素值，换到更小的屏幕要夹到合法区间（读取时 clamp）。
+- **替代方案**：① 引入 Vue/React（否决：违反仓库约定，打包与 CSP 成本）；② Electron 多窗口/`<webview>`（否决：跨窗口状态同步成本高）；③ 只做 CSS 美化不换结构（否决：用户明确要求"像编辑器"）；④ 用现成的 split-pane 库（否决：为一个分隔条引入依赖不划算）。
+- **影响面**：`src/index.html`（结构重排、保留既有 id）、`src/styles.css`（Grid/分隔条/抽屉/状态栏/焦点样式）、`src/renderer.js`（分栏拖拽与记忆、`ResizeObserver` → `viewer.resize()`、状态栏更新、抽屉切换）；`docs/001-code-design.md` 新增 BR-027；`test/ui-smoke.cjs` 增加布局断言。
+- **验证方式**：`node test/ui-smoke.cjs model/蹲姿.glb --port <调试端口>` 的布局断言——无整页滚动（`scrollHeight <= innerHeight + 1`）、三栏与底部日志同时存在且 3D 容器宽度大于两侧栏、拖动分隔条后 CSS 变量与容器宽度变化且触发 `viewer.resize()`、折叠日志后 3D 高度增加、`localStorage['glb-repair.layout']` 存在；外加人工目视（直立/贴地/同框、拖拽手感）。

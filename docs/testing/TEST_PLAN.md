@@ -133,6 +133,16 @@
   **该未绿项已由 TASK-009 修复并转绿**：机制经 CDP 探针确认**不是** ready 事件竞态，而是**窗口不可见**（`document.hidden === true` → `requestAnimationFrame` 被节流 → Cesium 一帧都没渲染：渲染帧计数 `scene.frameState.frameNumber` 停在 0、`resourcesLoaded` 仍为 false → 「置 `_ready` 并发 `readyEvent`」的 `afterRender` 回调从未执行）。根因用 `webPreferences.backgroundThrottling: false` 修掉，另加超时兜底并把超时文案与「加载成功」区分开；冒烟的加载步骤断言也加强为**必须真出现「加载成功」**（防止被超时兜底假绿）。修复后 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 各 8 步、**0 项失败（全绿）**；同一批次里 `UNREFERENCED_MESHES` 的误报也已修掉（`model/person-stand.glb` 等本地 4 个样例修复前 4/4 误报、修复后 0/4，真实的 `ACCESSOR_BOUNDS_UNRELIABLE` 告警仍在）。
   人工目视（直立/贴地/贴图/人物与车辆同框）**待 sunny-zhai 确认**——自动化只覆盖接线与数值，覆盖不到"看起来对不对"。
 
+### TC-015 编辑器式布局：一屏三栏 + 可拖拽分隔条 + 布局记忆（REQ-006）
+- **关联需求**：REQ-006（验收标准 1~7）；设计决策见 `docs/design/ADR.md` 的 ADR-006 与 `docs/001-code-design.md` 的 BR-027
+- **层级**：集成（CDP 驱动真实渲染进程，含分隔条指针拖拽与窄窗视口覆写）+ 人工目视
+- **前置**：手动起实例 `npx electron . --remote-debugging-port=9333`（冒烟脚本会自己 `Page.reload`，可重复跑）；沙箱/无 GPU 环境用 `--no-sandbox --disable-gpu-sandbox --user-data-dir=/tmp/glb-smoke` 起实例。渲染进程暴露 `window.__layout`（`key` / `get()` / `limits` / `clamp()` / `restore()` / `resizeCount()`）**仅供本冒烟断言复用内部函数**，是只读调试入口，不参与产品逻辑
+- **步骤**：
+  1. `node test/ui-smoke.cjs model/蹲姿.glb --port 9333`，再用 `o-model/蹲姿.ive` 跑一遍
+  2. 人工：1280×800 与把窗口缩到 900px 各看一遍（拖三根分隔条、折叠日志、开关抽屉、Tab 走一遍工具栏与预览控件）
+- **期望**：① 页面本身不滚动（`scrollHeight <= innerHeight + 1`，横向同理），三栏 + 底部日志 + 状态栏同屏且**3D 视口最宽**；② 三根分隔条各自能拖动、有最小尺寸、中栏恒为最宽，且**每次拖拽都真实调用 `viewer.resize()`**（Cesium 只监听 window resize），画布绘图缓冲随容器变化；③ 折叠日志后 3D 画布变高、展开精确复原；④ 900px 宽降级两栏 + 右栏抽屉，抽屉开关皆无横向滚动；⑤ 布局写 `localStorage['glb-repair.layout']` 并在重载后恢复（种入非默认值必须真的生效），垃圾/越界/未知版本载荷不得让应用异常或滚出屏外；⑥ 状态栏四项（模型/大小/体检计数/批量进度）齐全；⑦ 既有冒烟断言（体检数值与配色、拖动不刷日志而 `change` 记矩阵、上轴复合矩阵、体检失败不打断预览、输入文件哈希不变）一条不落
+- **实际/证据**：`node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 32 步 / 99 条断言 / 0 项失败**（既有 36 条 check 一条未删）。默认 1100×760 实测：左 260 / **中 492（最宽）** / 右 340，底部 200，3D 画布 492×274，`scrollWidth=1100=clientWidth`、`scrollHeight=760=innerHeight`。独立冷审复核：1280×800 下 360/473/439（中栏最宽）；拖左分隔条 `--pane-left` 349→389（中栏 578→538）、拖右 312→352、拖底 230→270（画布 226→186），**每次真实 `state.viewer.resize()` 被包裹计数 +2**，画布绘图缓冲 639→719；折叠日志画布 204→440、展开精确回到 204；注入破坏性 CSS 后 `scrollHeight` 760→1026，证明"不整页滚动"断言非空；11 组垃圾 `localStorage` 载荷（`not json`/`{}`/越界/`version:99`/`null`/`[]`/布尔串…）与把 `localStorage` 存取改成 throw 后，页面异常 0、布局一律落回合法区间；50 次 `pointermove` 爆发期间 0 次 resize、下一帧 2 次（`applyLayout` 的 rAF 与 `ResizeObserver` 回调各 1，仍在同一帧内合并，非缺陷）；900×700 下 `scrollWidth==clientWidth`（抽屉开/关皆然）、抽屉可键盘开关。**第二轮冷审（交付前）**把"画布最小高度"从写死的 `>120` 改成引用模块常量 `window.__layout.limits.canvasMinHeight`，并新增"日志拖到上限后画布仍 ≥ 常量"的断言；种入 `bottom:99999` 重载后实测 **画布 161px ≥ 160、中栏标题行 34px**（旧代码漏算这 34px，同口径只有 127，故该断言在旧代码上为红）。同轮加**假绿防线**：任一步骤超时/未返回即红 + 已执行断言数下限（99）+ 真正安装页面错误采集（`window.__smokeErrors` 此前是死字段）。`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。人工目视（拖拽手感、配色层级）**待 sunny-zhai 确认**。
+
 ## 必测维度勾选
 
 - [x] 成功路径（TC-001～TC-005、TC-008）
@@ -181,6 +191,7 @@
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
 | TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 35 通过 / 1 跳过（缺样例 `o-model/运输车.glb`）/ 0 失败；本地 4 个 GLB 0 崩溃、最慢 1ms、三角面数 4/4 全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 
+| TC-015 | REQ-006 | 通过（自动）/ 待人工 | 冒烟 32 步 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
 | TC-014 | REQ-005 | 通过（自动）/ 待人工 | 纯函数 24/24；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
 
 **总计**：`npm test` → **102 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；共 106 个用例）。全新克隆无任何夹具时为 **92 通过 / 14 跳过 / 0 失败**（14 = 6 个 `refs/models/*` + 5 个 `o-model/*.ive` + 3 个样例语料门控用例）。
