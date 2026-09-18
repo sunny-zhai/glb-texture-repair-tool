@@ -72,8 +72,12 @@
 - **产出**：`src/inspect.js`、`src/transform.js`、`test/inspect.test.js`
 - **文件范围**：`src/inspect.js`, `src/transform.js`, `test/inspect.test.js`
 - **验证方式**：`node --test test/inspect.test.js`；外加 002 M1 的退出标准——`node -e "inspect('o-model/运输车.glb')"` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；24 个 GLB 全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`triangles === Σ(indices.count)/3`；`vertexReuseRatio(person 参考件) === 0.61`
-- **状态**：进行中
-- **验证结果**：（合并回版本分支后回填）
+- **状态**：已完成
+- **验证结果**：`task-flow finish --test "npm test"` —— 门禁 **57 通过 / 0 失败**（原 43 + 新增 14），自动合并为 `767aa63`。M1 退出标准逐条实测：
+  ① `node src/inspect.js o-model/运输车.glb` → 世界盒 `2.59 × 4.10 × 5.98` m、偏差 **4461.888 倍**（>1000）、列出 accessor 盒 `11571.59 × 15430.28 × 23539.10` ✅
+  ② 21 个样例（`o-model/` 18 + `model/` 3）全部 `ok:true`、0 崩溃，最慢 **11 ms**（`M1A2艾布拉姆斯坦克.glb`，174,937 顶点）远低于 2s 上限 ✅
+  ③ `triangles` 与 `Σ(indices.count)/3` 全等（21/21）；person 参考件 `vertexReuseRatio = 0.6085 ≈ 0.61` ✅
+  ⑤ 异常输入（非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失）均转为中文问题条目，不抛异常 ✅
 
 ### TASK-008 界面体检面板与预览方向/缩放控件
 - **关联需求**：REQ-005（验收标准 4）
@@ -121,5 +125,5 @@ TASK-007 ──▶ TASK-008
 | TASK-004 | REQ-002 | 已完成 | ☑ |
 | TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
-| TASK-007 | REQ-005 | 进行中 | ☐ |
+| TASK-007 | REQ-005 | 已完成 | ☑ |
 | TASK-008 | REQ-005 | 待开始 | ☐ |
