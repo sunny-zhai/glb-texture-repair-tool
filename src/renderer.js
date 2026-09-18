@@ -30,6 +30,25 @@ const previewScale = document.getElementById('previewScale')
 const previewScaleValue = document.getElementById('previewScaleValue')
 const previewAxis = document.getElementById('previewAxis')
 const resetPreviewButton = document.getElementById('resetPreview')
+// 编辑器式外壳（BR-027）：栏位、分隔条、折叠按钮、状态栏
+const appShell = document.getElementById('appShell')
+const helpPanel = document.getElementById('helpPanel')
+const toggleHelpButton = document.getElementById('toggleHelp')
+const toggleDrawerButton = document.getElementById('toggleDrawer')
+const closeDrawerButton = document.getElementById('closeDrawer')
+const toggleLogButton = document.getElementById('toggleLog')
+const splitterLeft = document.getElementById('splitterLeft')
+const splitterRight = document.getElementById('splitterRight')
+const splitterBottom = document.getElementById('splitterBottom')
+const inputBadge = document.getElementById('inputBadge')
+const inspectEmpty = document.getElementById('inspectEmpty')
+const actionBar = document.querySelector('.action-bar')
+const previewBar = document.querySelector('.preview-bar')
+const statusBar = document.getElementById('statusBar')
+const statusModel = document.getElementById('statusModel')
+const statusModelSize = document.getElementById('statusModelSize')
+const statusInspect = document.getElementById('statusInspect')
+const statusProgress = document.getElementById('statusProgress')
 
 // report-format.js / preview-transform.js 是纯 CommonJS 模块，在 index.html 里以普通
 // <script> 先于本文件加载，导出挂在 window 上（渲染进程没有 Node，无法 require）。
@@ -50,6 +69,414 @@ const state = {
 // 体检是异步的：快速连续切换模型时，旧请求的结果不能覆盖新模型的面板
 let inspectToken = 0
 
+// ================================================================ 编辑器式布局（BR-027 / ADR-006）
+// 布局状态：三栏像素宽 + 日志高度 + 三个折叠标志。写 localStorage（键 glb-repair.layout），
+// 读取时一律 clamp —— 在 1280 宽屏幕上存的 460px 左栏被搬到 900 宽窗口时必须先夹到合法区间，
+// 否则中栏被挤到 0、页面出现横向滚动。
+const LAYOUT_KEY = 'glb-repair.layout'
+const LAYOUT_VERSION = 1
+// 折叠后日志只剩标题行
+const LOG_COLLAPSED_HEIGHT = 34
+const PANE_LIMITS = {
+  left: { min: 180, max: 480 },
+  right: { min: 220, max: 560 },
+  bottom: { min: 90, max: 560 },
+}
+// 中栏（3D 主视口）的最小宽高：夹取左/右/底栏时始终为它留出空间，保证它是最宽的一栏
+const CENTER_MIN_WIDTH = 420
+const CENTER_MIN_HEIGHT = 240
+// 3D 画布本身的最小高度（中栏减去预览控件条后仍要留出的高度）
+const CANVAS_MIN_HEIGHT = 160
+const LAYOUT_DEFAULT = { left: 260, right: 340, bottom: 200 }
+const SPLITTER_KEY_STEP = 16
+
+let layout = {
+  ...LAYOUT_DEFAULT,
+  logCollapsed: false,
+  rightCollapsed: false,
+  drawerOpen: false,
+}
+
+function clampNumber(value, min, max, fallback) {
+  // 只认真正的有限数值：Number(null)/Number([])/Number('') 都会得到 0（有限），
+  // 于是坏值会退化成"下限"而不是"默认值"（实测 {"bottom":null} 会变成日志几乎折叠）
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(Math.max(value, min), max)
+}
+
+function layoutMetrics() {
+  return {
+    width: appShell?.clientWidth || window.innerWidth || 0,
+    height: appShell?.clientHeight || window.innerHeight || 0,
+    narrow: Boolean(appShell?.classList.contains('narrow')),
+  }
+}
+
+/** @description 把任意（可能来自旧屏幕的）布局值夹到当前窗口下的合法区间。 */
+function clampLayout(input) {
+  const candidate = input && typeof input === 'object' ? input : {}
+  const { width, height, narrow } = layoutMetrics()
+  let left = clampNumber(candidate.left, PANE_LIMITS.left.min, PANE_LIMITS.left.max, LAYOUT_DEFAULT.left)
+  let right = clampNumber(candidate.right, PANE_LIMITS.right.min, PANE_LIMITS.right.max, LAYOUT_DEFAULT.right)
+  let bottom = clampNumber(candidate.bottom, PANE_LIMITS.bottom.min, PANE_LIMITS.bottom.max, LAYOUT_DEFAULT.bottom)
+
+  if (width > 0) {
+    if (narrow) {
+      // 窄窗口只有 左栏 + 4px + 中栏 三列，右栏是不占列宽的浮层抽屉
+      const narrowMax = Math.max(PANE_LIMITS.left.min, Math.min(PANE_LIMITS.left.max, Math.round(width * 0.4)))
+      left = Math.min(left, narrowMax, Math.max(PANE_LIMITS.left.min, width - 4 - CENTER_MIN_WIDTH),
+        Math.floor((width - 4 - 1) / 2))
+    } else {
+      // 8px 是两个分隔条；中栏宽度 = 剩余部分
+      const total = width - 8
+      // ① 中栏至少要有 CENTER_MIN_WIDTH：优先削较宽的一侧
+      const overflow = left + right - (total - CENTER_MIN_WIDTH)
+      if (overflow > 0) {
+        const cutRight = Math.min(overflow, Math.max(0, right - PANE_LIMITS.right.min))
+        right -= cutRight
+        left = Math.max(PANE_LIMITS.left.min, left - (overflow - cutRight))
+      }
+      // ② 中栏必须始终是**最宽**的一栏（严格大于两侧）：否则把左栏拖到上限后，
+      //    3D 主视口就不再是最大面积，验收标准 2 直接不成立
+      left = Math.min(left, Math.floor((total - right - 1) / 2))
+      right = Math.min(right, Math.floor((total - left - 1) / 2))
+      left = Math.max(left, PANE_LIMITS.left.min)
+      right = Math.max(right, PANE_LIMITS.right.min)
+    }
+  }
+
+  if (height > 0) {
+    const chrome = (actionBar?.offsetHeight || 41)
+      + (statusBar?.offsetHeight || 28)
+      + (helpPanel && !helpPanel.hidden ? helpPanel.offsetHeight : 0)
+      + 4
+    // 中栏 = 预览控件条 + 3D 画布；只守 CENTER_MIN_HEIGHT 会让画布被挤到几十像素
+    // （实测 1100×760 且存量 bottom=333 时画布只剩 93px），所以再扣掉控件条高度
+    const previewBarHeight = previewBar?.offsetHeight || 0
+    const maxBottom = Math.max(
+      PANE_LIMITS.bottom.min,
+      height - chrome - previewBarHeight - CANVAS_MIN_HEIGHT,
+    )
+    bottom = Math.min(bottom, maxBottom)
+  }
+
+  return {
+    left: Math.round(left),
+    right: Math.round(right),
+    bottom: Math.round(bottom),
+    logCollapsed: Boolean(candidate.logCollapsed),
+    rightCollapsed: Boolean(candidate.rightCollapsed),
+    drawerOpen: Boolean(candidate.drawerOpen),
+  }
+}
+
+function readStoredLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    // 版本不认识就整份丢弃：前向兼容不能靠 clamp 硬吃未知结构
+    if (parsed.version !== LAYOUT_VERSION) return null
+    return parsed
+  } catch (error) {
+    // 隐私模式 / 坏 JSON 都不该影响使用，回落到默认布局
+    return null
+  }
+}
+
+function saveLayout() {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({
+      version: LAYOUT_VERSION,
+      left: layout.left,
+      right: layout.right,
+      bottom: layout.bottom,
+      logCollapsed: layout.logCollapsed,
+      rightCollapsed: layout.rightCollapsed,
+      drawerOpen: layout.drawerOpen,
+    }))
+  } catch (error) {
+    // 配额/隐私模式：布局记不住不是功能故障
+  }
+}
+
+// 3D 画布尺寸变化必须重算（Cesium 只监听 window resize，分隔条拖动它感知不到，不处理会被
+// 拉伸/裁剪）。节流到下一帧，拖动时不掉帧。
+let viewerResizeFrame = 0
+let viewerResizeCount = 0
+function scheduleViewerResize() {
+  const resizeNow = () => {
+    if (!state.viewer?.resize) return
+    state.viewer.resize()
+    viewerResizeCount += 1
+  }
+  if (typeof requestAnimationFrame !== 'function') {
+    resizeNow()
+    return
+  }
+  if (viewerResizeFrame) return
+  viewerResizeFrame = requestAnimationFrame(() => {
+    viewerResizeFrame = 0
+    resizeNow()
+  })
+}
+
+function applyLayout() {
+  const narrow = Boolean(appShell.classList.contains('narrow'))
+  appShell.style.setProperty('--pane-left', `${layout.left}px`)
+  appShell.style.setProperty('--pane-right', `${layout.right}px`)
+  appShell.style.setProperty('--pane-bottom', `${layout.logCollapsed ? LOG_COLLAPSED_HEIGHT : layout.bottom}px`)
+  appShell.classList.toggle('log-collapsed', layout.logCollapsed)
+  appShell.classList.toggle('right-collapsed', !narrow && layout.rightCollapsed)
+  appShell.classList.toggle('drawer-open', narrow && layout.drawerOpen)
+
+  toggleLogButton.textContent = layout.logCollapsed ? '展开' : '折叠'
+  toggleLogButton.setAttribute('aria-expanded', String(!layout.logCollapsed))
+  if (narrow) {
+    toggleDrawerButton.textContent = layout.drawerOpen ? '收起体检' : '体检 / 选项'
+    toggleDrawerButton.setAttribute('aria-expanded', String(layout.drawerOpen))
+  } else {
+    toggleDrawerButton.textContent = layout.rightCollapsed ? '显示体检' : '隐藏体检'
+    toggleDrawerButton.setAttribute('aria-expanded', String(!layout.rightCollapsed))
+  }
+  scheduleViewerResize()
+}
+
+// ---------------------------------------------------------------- 分隔条拖拽
+
+const splitterDrag = {
+  name: '',
+  startX: 0,
+  startY: 0,
+  startLeft: 0,
+  startRight: 0,
+  startBottom: 0,
+  element: null,
+}
+
+function beginSplitterDrag(name, clientX, clientY, element, pointerId) {
+  if (name === 'bottom' && layout.logCollapsed) return false
+  if (name === 'right' && appShell.classList.contains('narrow')) return false
+  splitterDrag.name = name
+  splitterDrag.startX = clientX
+  splitterDrag.startY = clientY
+  splitterDrag.startLeft = layout.left
+  splitterDrag.startRight = layout.right
+  splitterDrag.startBottom = layout.bottom
+  splitterDrag.element = element || null
+  splitterDrag.element?.classList.add('dragging')
+  // 指针捕获让拖动离开 4px 细条也继续；合成事件（冒烟测试）没有活动指针，捕获会抛，
+  // 忽略即可 —— 那种情况下 pointermove 直接派发到 window，同样能驱动。
+  try {
+    element?.setPointerCapture?.(pointerId)
+  } catch (error) {
+    // 合成 PointerEvent：没有可捕获的活动指针
+  }
+  return true
+}
+
+function moveSplitterDrag(clientX, clientY) {
+  if (!splitterDrag.name) return
+  const deltaX = clientX - splitterDrag.startX
+  const deltaY = clientY - splitterDrag.startY
+  if (splitterDrag.name === 'left') {
+    layout = clampLayout({ ...layout, left: splitterDrag.startLeft + deltaX })
+  } else if (splitterDrag.name === 'right') {
+    layout = clampLayout({ ...layout, right: splitterDrag.startRight - deltaX })
+  } else {
+    layout = clampLayout({ ...layout, bottom: splitterDrag.startBottom - deltaY })
+  }
+  applyLayout()
+}
+
+function endSplitterDrag() {
+  if (!splitterDrag.name) return
+  splitterDrag.name = ''
+  splitterDrag.element?.classList.remove('dragging')
+  splitterDrag.element = null
+  saveLayout()
+  // 拖动结束后再补一次，避免最后一帧被 rAF 合并掉
+  scheduleViewerResize()
+}
+
+function nudgeSplitter(name, delta) {
+  if (name === 'bottom' && layout.logCollapsed) return
+  if (name === 'right' && appShell.classList.contains('narrow')) return
+  if (name === 'left') layout = clampLayout({ ...layout, left: layout.left + delta })
+  else if (name === 'right') layout = clampLayout({ ...layout, right: layout.right - delta })
+  else layout = clampLayout({ ...layout, bottom: layout.bottom - delta })
+  applyLayout()
+  saveLayout()
+}
+
+function wireSplitter(element, name) {
+  if (!element) return
+  element.addEventListener('pointerdown', (event) => {
+    if (typeof event.button === 'number' && event.button !== 0) return
+    if (!beginSplitterDrag(name, event.clientX, event.clientY, element, event.pointerId)) return
+    event.preventDefault()
+  })
+  element.addEventListener('keydown', (event) => {
+    const back = name === 'bottom' ? 'ArrowUp' : 'ArrowLeft'
+    const forward = name === 'bottom' ? 'ArrowDown' : 'ArrowRight'
+    if (event.key !== back && event.key !== forward) return
+    event.preventDefault()
+    nudgeSplitter(name, event.key === forward ? SPLITTER_KEY_STEP : -SPLITTER_KEY_STEP)
+  })
+}
+
+// ---------------------------------------------------------------- 折叠 / 抽屉
+
+function toggleLogPane(force) {
+  const next = force === undefined ? !layout.logCollapsed : Boolean(force)
+  if (next === layout.logCollapsed) return
+  layout = clampLayout({ ...layout, logCollapsed: next })
+  applyLayout()
+  saveLayout()
+}
+
+function toggleRightPane(force) {
+  const narrow = Boolean(appShell.classList.contains('narrow'))
+  if (narrow) {
+    const next = force === undefined ? !layout.drawerOpen : Boolean(force)
+    if (next === layout.drawerOpen) return
+    layout = { ...layout, drawerOpen: next }
+  } else {
+    const next = force === undefined ? !layout.rightCollapsed : Boolean(force)
+    if (next === layout.rightCollapsed) return
+    layout = clampLayout({ ...layout, rightCollapsed: next })
+  }
+  applyLayout()
+  saveLayout()
+}
+
+function toggleHelpPane() {
+  const open = Boolean(helpPanel.hidden)
+  helpPanel.hidden = !open
+  toggleHelpButton.setAttribute('aria-expanded', String(open))
+  // 帮助面板占一整行：底部日志上限随之变化，重新夹取一次
+  layout = clampLayout(layout)
+  applyLayout()
+  saveLayout()
+}
+
+/** @description 窄窗口（<1100px）降级为两栏 + 右栏抽屉；窗口宽度跨过断点时重新夹取。 */
+function syncNarrowMode(isNarrow) {
+  if (!appShell) return
+  appShell.classList.toggle('narrow', isNarrow)
+  layout = clampLayout(layout)
+  applyLayout()
+  saveLayout()
+}
+
+function initLayout() {
+  layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)
+  const narrowQuery = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(max-width: 1099px)')
+    : null
+  if (narrowQuery) {
+    appShell.classList.toggle('narrow', narrowQuery.matches)
+    if (typeof narrowQuery.addEventListener === 'function') {
+      narrowQuery.addEventListener('change', (event) => syncNarrowMode(event.matches))
+    }
+  }
+  layout = clampLayout(layout)
+  applyLayout()
+  wireSplitter(splitterLeft, 'left')
+  wireSplitter(splitterRight, 'right')
+  wireSplitter(splitterBottom, 'bottom')
+  toggleLogButton.addEventListener('click', () => toggleLogPane())
+  toggleDrawerButton.addEventListener('click', () => toggleRightPane())
+  closeDrawerButton.addEventListener('click', () => toggleRightPane(false))
+  toggleHelpButton.addEventListener('click', toggleHelpPane)
+  window.addEventListener('pointermove', (event) => {
+    if (!splitterDrag.name) return
+    event.preventDefault()
+    moveSplitterDrag(event.clientX, event.clientY)
+  })
+  window.addEventListener('pointerup', () => endSplitterDrag())
+  window.addEventListener('pointercancel', () => endSplitterDrag())
+
+  // Cesium 只监听 window resize，容器自身的变化它感知不到 —— 这里补上。
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(() => scheduleViewerResize())
+    observer.observe(cesiumContainer)
+  }
+  let windowResizeFrame = 0
+  window.addEventListener('resize', () => {
+    if (windowResizeFrame) return
+    windowResizeFrame = requestAnimationFrame(() => {
+      windowResizeFrame = 0
+      layout = clampLayout(layout)
+      applyLayout()
+      saveLayout()
+    })
+  })
+}
+
+// 冒烟测试（test/ui-smoke.cjs）用真实 PointerEvent 驱动分隔条；这里另外暴露只读的布局
+// 快照与"从 localStorage 恢复"入口，供恢复/夹取断言复用同一套内部函数（不另写一份逻辑）。
+window.__layout = {
+  key: LAYOUT_KEY,
+  get: () => ({ ...layout }),
+  limits: { ...PANE_LIMITS, centerMinWidth: CENTER_MIN_WIDTH, centerMinHeight: CENTER_MIN_HEIGHT, logCollapsedHeight: LOG_COLLAPSED_HEIGHT },
+  clamp: (input) => clampLayout(input),
+  restore: () => {
+    layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)
+    applyLayout()
+    return { ...layout }
+  },
+  resizeCount: () => viewerResizeCount,
+}
+
+// ================================================================ 状态栏
+
+const statusState = {
+  model: { name: '', bytes: null },
+  inspect: null,
+  batch: null,
+}
+
+function formatBytesShort(bytes) {
+  // null/undefined 不能被 Number() 折成 0 —— "0 B" 会被误读成"有个 0 字节的模型"
+  if (bytes === null || bytes === undefined || bytes === '') return '—'
+  const number = Number(bytes)
+  if (!Number.isFinite(number) || number < 0) return '—'
+  if (number < 1024) return `${number} B`
+  if (number < 1048576) return `${(number / 1024).toFixed(1)} KB`
+  return `${(number / 1048576).toFixed(2)} MB`
+}
+
+function baseName(filePath) {
+  if (!filePath) return ''
+  const parts = String(filePath).split(/[\\/]/)
+  return parts[parts.length - 1] || String(filePath)
+}
+
+function renderStatusBar() {
+  const model = statusState.model
+  statusModel.textContent = model.name ? baseName(model.name) : '未选择'
+  statusModel.title = model.name || ''
+  statusModelSize.textContent = formatBytesShort(model.bytes)
+
+  const inspect = statusState.inspect
+  if (!inspect) {
+    statusInspect.textContent = '未体检'
+  } else if (inspect.failed) {
+    statusInspect.textContent = '体检失败'
+  } else {
+    statusInspect.textContent = `耗时 ${inspect.elapsedMs ?? 0} ms · 错误 ${inspect.error} / 警告 ${inspect.warn} / 提示 ${inspect.info}`
+  }
+  // 窄布局会把 #inspectStatus 收进抽屉并隐藏，配色线索不能一起丢——这里带同样的档位类
+  statusInspect.className = `status-inspect${inspect ? ` ${inspect.failed ? 'error' : (inspect.level || 'ok')}` : ''}`.trim()
+
+  const batch = statusState.batch
+  statusProgress.textContent = batch
+    ? `成功 ${batch.success} / 失败 ${batch.failed} / 共 ${batch.total}`
+    : '未开始'
+}
+
 
 function appendLog(message, className) {
   const line = document.createElement('div')
@@ -61,6 +488,7 @@ function appendLog(message, className) {
 
 function renderInputs() {
   inputSummary.textContent = state.inputPaths.length ? `${state.inputPaths.length} 个输入` : '未选择'
+  inputBadge.textContent = String(state.inputPaths.length)
   inputList.innerHTML = ''
   for (const item of state.inputPaths) {
     const li = document.createElement('li')
@@ -85,6 +513,13 @@ function renderResults(reports) {
     }
     resultList.appendChild(li)
   }
+  // 批量结果就是权威进度：成功/失败/总数直接由报告统计，状态栏与之保持一致
+  statusState.batch = {
+    success: reports.filter((report) => report.status !== 'error').length,
+    failed: reports.filter((report) => report.status === 'error').length,
+    total: reports.length,
+  }
+  renderStatusBar()
 }
 
 function showProgress(done, total, message, className = '') {
@@ -107,6 +542,8 @@ function handleRepairProgress(progress) {
       showProgress(0, 0, '正在扫描输入，统计待修复模型数量…')
       break
     case 'start':
+      statusState.batch = { success: 0, failed: 0, total: progress.total }
+      renderStatusBar()
       if (progress.total === 0) {
         showProgress(0, 0, '未在所选输入中找到 GLB 文件。', 'done')
         appendLog('未在所选输入中找到 GLB 文件。', 'error')
@@ -120,6 +557,12 @@ function handleRepairProgress(progress) {
       appendLog(`[${progress.index + 1}/${progress.total}] 修复中：${progress.relativePath}`)
       break
     case 'file-done':
+      if (statusState.batch) {
+        statusState.batch.failed += progress.status === 'error' ? 1 : 0
+        statusState.batch.success = Math.max(0, progress.completed - statusState.batch.failed)
+        statusState.batch.total = progress.total
+        renderStatusBar()
+      }
       showProgress(
         progress.completed,
         progress.total,
@@ -158,6 +601,12 @@ function handleRepairProgress(progress) {
       }
       break
     case 'done':
+      statusState.batch = {
+        success: Math.max(0, progress.completed - progress.failed),
+        failed: progress.failed,
+        total: progress.total,
+      }
+      renderStatusBar()
       showProgress(
         progress.completed,
         progress.total,
@@ -181,6 +630,8 @@ function setValidationModelSummary(filePath, bytes) {
   validationModelSummary.textContent = filePath
     ? `当前验证模型：${filePath} · ${bytes.toLocaleString()} 字节`
     : '当前验证模型：未选择'
+  statusState.model = { name: filePath || '', bytes: Number.isFinite(bytes) ? bytes : null }
+  renderStatusBar()
 }
 
 // ---------------------------------------------------------------- 模型体检面板
@@ -257,6 +708,8 @@ function renderInspectFailure(message) {
   inspectIssues.innerHTML = ''
   setInspectStatus(`体检失败：${message}`, 'error')
   appendLog(`模型体检失败：${message}`, 'error')
+  statusState.inspect = { failed: true }
+  renderStatusBar()
 }
 
 function renderInspectionResult(result) {
@@ -289,9 +742,19 @@ function renderInspectionResult(result) {
     ? `错误 ${counts.error} / 警告 ${counts.warn} / 提示 ${counts.info}`
     : '未发现问题'
   const partialNote = report.partial ? ' · 报告不完整（文件结构异常，问题清单已说明原因）' : ''
+  const statusLevel = report.partial || counts.error > 0 ? 'warn' : 'ok'
+  statusState.inspect = {
+    elapsedMs: Number.isFinite(report.elapsedMs) ? report.elapsedMs : 0,
+    error: counts.error,
+    warn: counts.warn,
+    info: counts.info,
+    partial: Boolean(report.partial),
+    level: statusLevel,
+  }
+  renderStatusBar()
   setInspectStatus(
     `体检完成 · ${report.elapsedMs ?? 0} ms · ${issueSummary}${partialNote}`,
-    report.partial || counts.error > 0 ? 'warn' : 'ok',
+    statusLevel,
   )
   appendLog(
     `模型体检完成：${report.fileName || result.filePath} · ${((report.fileBytes ?? 0) / 1048576).toFixed(2)} MB`
@@ -303,6 +766,7 @@ function renderInspectionResult(result) {
 async function loadInspection(filePath) {
   const token = ++inspectToken
   resetInspectPanel()
+  if (inspectEmpty) inspectEmpty.hidden = true
   if (!reportFormat) {
     setInspectStatus('体检面板模块未加载', 'error')
     return
@@ -801,3 +1265,5 @@ window.repairApp.capabilities().then((capabilities) => {
 renderInputs()
 renderOutput()
 resetPreviewControls()
+initLayout()
+renderStatusBar()
