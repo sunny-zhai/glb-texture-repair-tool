@@ -1,9 +1,38 @@
+# ---------------------------------------------------------------- 系统 / 开发环境
 .DS_Store
+*.swp
+.idea/
+.vscode/
 node_modules/
-model/
-vendor/cesium/
-docs/
-refs/
-AGENTS.md
-test/
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# ---------------------------------------------------------------- 打包产物
+# electron-builder 的输出目录，见 package.json 的 build.directories.output
 dist/
+release/
+out/
+
+# ---------------------------------------------------------------- 仅本机保留的样例与临时目录
+# o-model/ 是约 174MB 的样例模型（.ive 输入 + 各条转换链路的参考 .glb），只在开发机保留；
+# 测试 fixture 也从这里恢复（见 CLAUDE.md）。model/ 是修复产物的临时落地目录。
+o-model/
+model/
+refs/
+.workbuddy/
+.workBuddy/
+
+# ---------------------------------------------------------------- 运行时资产
+# Cesium 由 npm run ensure:cesium 下载解包，不入库
+vendor/cesium/
+
+# ---------------------------------------------------------------- 构建中间产物
+# native/ive2glb 的源码入库，编译输出不入库（vendor/ive2glb/ 是另行裁决的发行件）
+native/ive2glb/build/
+
+# ---------------------------------------------------------------- 设计与测试文档（本仓库约定不入库）
+docs/
+test/
+AGENTS.md
