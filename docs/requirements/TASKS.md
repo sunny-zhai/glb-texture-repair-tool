@@ -25,10 +25,20 @@
 - **状态**：已完成
 - **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 `npm test` 43 通过 / 0 失败，自动合并为 `e26b1a1`。三条断言：① `git ls-files docs/requirements docs/PROJECT_MEMORY.md` = 3 份（REQUIREMENTS.md、TASKS.md、PROJECT_MEMORY.md）✅ ② `docs/coding-standard/web-vue3.md` 与 `docs/testing/TEST_PLAN.md` 仍被忽略 ✅ ③ `memory check` 通过 ✅
 
+### TASK-003 人工审批留痕纳入版本库
+- **关联需求**：REQ-001
+- **依赖**：TASK-002
+- **做什么**：把 `docs/approvals/APPROVALS.md` 纳入版本库。它是平台人工闸门（spec/architecture/delivery）的审计留痕，而 `docs/release/MERGE_REQUEST.md` 的验收清单里就要求"人工闸门已留痕"——不入库则该清单无法真正满足。
+- **产出**：`.gitignore`、`docs/approvals/APPROVALS.md`
+- **文件范围**：`.gitignore`, `docs/approvals/`
+- **验证方式**：`npm test`；断言 `git ls-files docs/approvals` 恰为 1 份、`docs/testing/TEST_PLAN.md` 与 `docs/coding-standard/web-vue3.md` 仍被忽略、`node scripts/memory.mjs check` 通过。
+- **状态**：进行中
+- **验证结果**：（合并回版本分支后回填）
+
 ## 依赖 DAG
 
 ```text
-TASK-001 ──▶ TASK-002
+TASK-001 ──▶ TASK-002 ──▶ TASK-003
 ```
 
 ## 并行批次
@@ -40,6 +50,7 @@ TASK-001 ──▶ TASK-002
 | :-- | :-- | :-- |
 | 1 | TASK-001 | 无依赖 |
 | 2 | TASK-002 | 依赖 TASK-001 已完成 |
+| 3 | TASK-003 | 依赖 TASK-002 已完成 |
 
 ## 进度
 
@@ -47,3 +58,4 @@ TASK-001 ──▶ TASK-002
 | :-- | :-- | :-- | :-- |
 | TASK-001 | REQ-001 | 已完成 | ☑ |
 | TASK-002 | REQ-001 | 已完成 | ☑ |
+| TASK-003 | REQ-001 | 进行中 | ☐ |
