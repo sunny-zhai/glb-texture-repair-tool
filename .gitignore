@@ -47,6 +47,9 @@ docs/requirements/*
 !docs/requirements/REQUIREMENTS.md
 !docs/requirements/TASKS.md
 !docs/PROJECT_MEMORY.md
+!docs/approvals/
+docs/approvals/*
+!docs/approvals/APPROVALS.md
 AGENTS.md
 .worktrees/
 
