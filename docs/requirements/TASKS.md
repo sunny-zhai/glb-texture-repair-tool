@@ -32,8 +32,8 @@
 - **产出**：`.gitignore`、`docs/approvals/APPROVALS.md`
 - **文件范围**：`.gitignore`, `docs/approvals/`
 - **验证方式**：`npm test`；断言 `git ls-files docs/approvals` 恰为 1 份、`docs/testing/TEST_PLAN.md` 与 `docs/coding-standard/web-vue3.md` 仍被忽略、`node scripts/memory.mjs check` 通过。
-- **状态**：进行中
-- **验证结果**：（合并回版本分支后回填）
+- **状态**：已完成
+- **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 43 通过 / 0 失败后自动合并为版本分支提交 `626eafe`。断言：① `git ls-files docs/approvals` 恰 1 份 ✅ ② `docs/testing/TEST_PLAN.md`、`docs/coding-standard/web-vue3.md` 仍被忽略 ✅ ③ `memory check` 通过 ✅
 
 ## 依赖 DAG
 
@@ -58,4 +58,4 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003
 | :-- | :-- | :-- | :-- |
 | TASK-001 | REQ-001 | 已完成 | ☑ |
 | TASK-002 | REQ-001 | 已完成 | ☑ |
-| TASK-003 | REQ-001 | 进行中 | ☐ |
+| TASK-003 | REQ-001 | 已完成 | ☑ |
