@@ -23,6 +23,7 @@ const {
 } = require('./repair')
 const {
   boundsSize,
+  defaultSceneOf,
   defaultSceneStatus,
   glbBounds,
   reachableMeshIndexes,
@@ -318,7 +319,10 @@ function analyze(report, json, bin, filePath) {
   // ---- 数量与几何 ----
   const meshes = asArray(json?.meshes)
   const primitives = meshes.flatMap((mesh) => asArray(mesh?.primitives))
-  const meshIndexes = reachableMeshIndexes(json)
+  // 必须传**默认场景**：`reachableMeshIndexes(nodes, scene)` 少了第二个参数就恒为空集，
+  // 于是任何含网格的文件都会误报 `UNREFERENCED_MESHES`（且同一份报告照样算得出世界盒，
+  // 自相矛盾）。这一处曾经漏传，靠"全部被引用的文件不得出现该条目"的用例兜住。
+  const meshIndexes = reachableMeshIndexes(json?.nodes, defaultSceneOf(json))
   let vertices = 0
   let trianglesIndexed = 0
   let trianglesNonIndexed = 0

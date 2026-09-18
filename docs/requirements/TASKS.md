@@ -95,17 +95,21 @@
   ① 纯函数：`node --test test/report-format.test.js test/preview-transform.test.js` → **24 通过 / 0 失败**（`npm test` 104 通过 / 0 失败 / 4 跳过）。
   ② 接线冒烟（`node test/ui-smoke.cjs model/蹲姿.glb --port 9333`，CDP 读真实 DOM）：面板 `hidden=false`、`inspectStatus`「体检完成 · 9 ms · 错误 0 / 警告 1 / 提示 1」、世界盒 `0.538 × 1.364 × 1.056 m`（中心 `0.032, 0.664, -0.052 m`）、accessor 盒 `0.005 × 0.011 × 0.012 m`、偏差档位 `inspect-deviation warn`、偏差原文「世界盒与 accessor 盒相差 129.211 倍：尺寸比 129.211 倍（中心偏移比 0.373），按 accessor 盒取景会错位。」、6 条事实行（几何/结构/贴图/采样/上轴/**比例尺 `中位节点缩放 100 · 3 个节点不是单位缩放`**）、问题按 warn→info 排序、面板文本无 `undefined`/`NaN`；拖动 5 次 `input` 新增日志 **0 行**，`change` 各记 1 行；方向 90°+缩放 2× 的 `modelMatrix` 与列主序手算一致；上轴选 `Z-up` 后矩阵为 `Rx(−90°)∘Ry(90°)∘2` 的复合；重置回 `0°/1.00×/auto` 且只记 1 行；输入文件 `shasum -a 256` 前后一致；缺失文件走 `{ ok:false, error:'无法读取文件：ENOENT…' }` 而不是 reject。IVE（`o-model/蹲姿.ive`）同样跑通，世界盒 `0.538 × 1.364 × 1.056 m`、中心 `0.000, 0.682, -0.000`，`.ive` 哈希不变。
   ③ 人工目视：**待 sunny-zhai 确认**（自动化只覆盖接线与数值，覆盖不到"看起来对不对"）。
-  ④ 冒烟中暴露的**两处既有缺陷**（不在本任务范围，另立 TASK-009）：`inspect.js` 漏传默认场景导致 `UNREFERENCED_MESHES` 对任何含网格的文件都误报；「加载预览模型」步骤超时——经 CDP 探针确认是**窗口不可见时页面被节流**（`document.hidden === true` → rAF 不跑 → Cesium 从未渲染，`frameNumber` 恒为 0、`resourcesLoaded=false` → `waitForModelReady` 挂起、`#validationStatus` 停在「正在加载…」），不是 ready 事件竞态。
+  ④ 冒烟中暴露的**两处既有缺陷**（不在本任务范围，另立 TASK-009）：`inspect.js` 漏传默认场景导致 `UNREFERENCED_MESHES` 对任何含网格的文件都误报；「加载预览模型」步骤超时——经 CDP 探针确认是**窗口不可见时页面被节流**（`document.hidden === true` → rAF 不跑 → Cesium 从未渲染，渲染帧计数 `scene.frameState.frameNumber` 停在 0、`resourcesLoaded=false` → `waitForModelReady` 挂起、`#validationStatus` 停在「正在加载…」），不是 ready 事件竞态。
 
 ### TASK-009 修掉 TASK-008 冒烟暴露的两处既有缺陷
 - **关联需求**：REQ-005（缺陷修复，不改写 TASK-007 的历史结论）
 - **依赖**：TASK-008
-- **做什么**：① `src/inspect.js` 调用 `reachableMeshIndexes(json)` 时漏了第二个参数（`scene`），于是"默认场景可达网格"恒为空集，**任何含网格的文件都会误报 `UNREFERENCED_MESHES`**（且同一份报告照样算得出世界盒，自相矛盾）；该集合全文件只用在这一条 issue 上，盒/计数/几何统计不受影响。补上 `defaultSceneOf(json)`，并同时把 `inspect.js` 的缩放异常门槛与文案对齐（`>100` 严格比较使 100 与"未见异常缩放"并排，读着别扭）。② **窗口不可见时预览永远不落定**：页面 `hidden` → `requestAnimationFrame` 被节流 → Cesium 一帧都没渲染（`frameNumber` 恒为 0、`resourcesLoaded` 仍为 false）→ 那句「置 `_ready` 并发 `readyEvent`」的 `afterRender` 回调从未执行 → `waitForModelReady` 挂起、`#validationStatus` 停在「正在加载…」、包围盒诊断与默认取景都不执行（转前台后 rAF 恢复即会补跑，所以不是永久卡死，但被遮挡期间一直卡着）。根因修法是 `webPreferences.backgroundThrottling: false`（应用与冒烟都不再依赖"窗口在最前面"），另加超时兜底且**超时文案必须与「已加载」区分**（例如「模型对象已创建，但当前未渲染（窗口不可见时会暂停渲染），请切到前台确认」），避免窗口仍不可见时 `#validationStatus` 被假绿。
+- **做什么**：① `src/inspect.js` 调用 `reachableMeshIndexes(json)` 时漏了第二个参数（`scene`），于是"默认场景可达网格"恒为空集，**任何含网格的文件都会误报 `UNREFERENCED_MESHES`**（且同一份报告照样算得出世界盒，自相矛盾）；该集合全文件只用在这一条 issue 上，盒/计数/几何统计不受影响。补上 `defaultSceneOf(json)`（面板侧那句"未见异常缩放"的别扭措辞已在 TASK-008 改掉，`inspect.js` 的 `>100` 门槛保持不动）。② **窗口不可见时预览永远不落定**：页面 `hidden` → `requestAnimationFrame` 被节流 → Cesium 一帧都没渲染（渲染帧计数 `scene.frameState.frameNumber` 停在 0、`resourcesLoaded` 仍为 false）→ 那句「置 `_ready` 并发 `readyEvent`」的 `afterRender` 回调从未执行 → `waitForModelReady` 挂起、`#validationStatus` 停在「正在加载…」、包围盒诊断与默认取景都不执行（转前台后 rAF 恢复即会补跑，所以不是永久卡死，但被遮挡期间一直卡着）。根因修法是 `webPreferences.backgroundThrottling: false`（应用与冒烟都不再依赖"窗口在最前面"），另加超时兜底且**超时文案必须与「已加载」区分**（例如「模型对象已创建，但当前未渲染（窗口不可见时会暂停渲染），请切到前台确认」），避免窗口仍不可见时 `#validationStatus` 被假绿。
 - **产出**：`src/inspect.js`、`src/renderer.js`、`src/main.js`、`test/inspect.test.js`、`test/ui-smoke.cjs`
 - **文件范围**：`src/inspect.js`, `src/renderer.js`, `src/main.js`, `test/inspect.test.js`, `test/ui-smoke.cjs`
 - **验证方式**：① `node --test test/inspect.test.js` 新增回归用例——"全部被引用的文件不得出现 `UNREFERENCED_MESHES`"（可直接用 `test/report-format.test.js` 里那份合成三角形 GLB 的夹具）＋"只在非默认场景里的网格必须出现"；② 本地 4 个样例逐个 `node src/inspect.js` 核对不再出现该条目，真实未引用的文件仍照报；③ 冒烟 `node test/ui-smoke.cjs model/蹲姿.glb --port 9333` **全部断言通过**，且其中「预览加载必须返回」为真通过（不能靠超时兜底蒙过：窗口不可见时超时文案必须是"未渲染"，断言要同时检查 `#validationStatus` 是否真的是「加载成功」）；④ `npm test` + `npm run lint` + `node scripts/memory.mjs check` 通过
-- **状态**：待开始
-- **验证结果**：（待开始）
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/inspect.test.js` → **37 通过 / 1 跳过 / 0 失败**（新增 2 条回归用例全绿）；且**验证过这两条用例在旧代码上会红**——把 `inspect.js` 的调用临时改回 `reachableMeshIndexes(json)` 后，「全部被引用的文件不得出现该条目」用例 fail 1，恢复修复后 pass 1（回归网本身有效，不是永远为真的断言）。
+  ② 本地 4 个样例逐个核对：修复前 4/4 都打印「N 个网格没有被**默认场景**引用」，修复后**0/4**；真实的 `ACCESSOR_BOUNDS_UNRELIABLE` 告警仍在（`model/person-stand.glb` 仍报 297.194 倍偏差）。旧代码可用 `reachableMeshIndexes(json)` → `0` vs 两参调用 → `3` 直接复现。
+  ③ 冒烟 `node test/ui-smoke.cjs`：`model/蹲姿.glb` 与 `o-model/蹲姿.ive` **各 8 步、0 项失败（全绿）**——此前一直红的「加载预览模型」已转绿，且断言已加强为必须真出现「加载成功」而不是"落定即可"（防止被超时兜底假绿）。
+  ④ `npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**；`npm run lint` 通过。`node scripts/memory.mjs check` 在本任务分支上会因为「TASKS.md 已标完成、完成线还没有条目」而红——完成线按平台规则**只在串行合并点写入**（`.ai/AGENTS.md` §4，单写者），合并后由回填提交追加 `completed` 条目即转绿，不在此处预写。
 
 ## 依赖 DAG
 
@@ -146,4 +150,4 @@ TASK-007 ──▶ TASK-008 ──▶ TASK-009（缺陷修复，依赖 TASK-008 
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
 | TASK-007 | REQ-005 | 已完成（经两轮冷上下文复审） | ☑ |
 | TASK-008 | REQ-005 | 已完成（待人工目视确认） | ☑ 自动 / ☐ 人工 |
-| TASK-009 | REQ-005 | 待开始 | ☐ |
+| TASK-009 | REQ-005 | 已完成（待冷审查与人工目视） | ☑ |

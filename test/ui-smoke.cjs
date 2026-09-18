@@ -120,8 +120,10 @@ async function main() {
   }
 
   const loaded = await run('加载预览模型（体检 + Cesium）',
-    `(async () => { await validateModel(${JSON.stringify(modelPath)}); return 'ok' })()`, true, 45000)
-  check('预览加载必须返回', loaded === 'ok', String(loaded))
+    `(async () => { await validateModel(${JSON.stringify(modelPath)}); return document.getElementById('validationStatus').textContent })()`, true, 45000)
+  check('预览加载必须落定', typeof loaded === 'string', String(loaded))
+  // 只断言"落定"不够：窗口不可见时超时兜底也会让它落定，但状态文案是"未渲染"——必须真加载成功
+  check('预览必须真的加载成功（不能被"未渲染"的超时兜底蒙过）', /加载成功/.test(loaded || ''), String(loaded))
   await new Promise((resolve) => setTimeout(resolve, 3000))
 
   const inspect = await run('读体检面板', `(() => {
@@ -232,6 +234,58 @@ async function main() {
     check('重置必须回到 0° / 1.00× / auto', reset.yaw === '0°' && reset.scale === '1.00×' && reset.axis === 'auto',
       `${reset.yaw} / ${reset.scale} / ${reset.axis}`)
     check('重置必须写日志', reset.logged === true)
+  }
+
+  // 超时兜底与"晚到就绪"路径：用假 Model 直接调渲染进程里真实的 waitForModelReady
+  const readyPaths = await run('waitForModelReady 的 ready/error/timeout/晚到就绪', `(async () => {
+    const fake = (options) => {
+      const readyListeners = [];
+      const errorListeners = [];
+      const model = {
+        ready: Boolean(options && options.ready),
+        readyEvent: { addEventListener: (cb) => { readyListeners.push(cb); return () => { const i = readyListeners.indexOf(cb); if (i >= 0) readyListeners.splice(i, 1); }; } },
+        errorEvent: { addEventListener: (cb) => { errorListeners.push(cb); return () => { const i = errorListeners.indexOf(cb); if (i >= 0) errorListeners.splice(i, 1); }; } },
+        fireReady: () => readyListeners.slice().forEach((cb) => cb()),
+        fireError: (e) => errorListeners.slice().forEach((cb) => cb(e)),
+        listeners: () => readyListeners.length + errorListeners.length,
+      };
+      return model;
+    };
+    const out = {};
+    const already = fake({ ready: true });
+    out.alreadyReady = await waitForModelReady(already, 50);
+    const ok = fake({});
+    const readyPromise = waitForModelReady(ok, 500);
+    ok.fireReady();
+    out.ready = await readyPromise;
+    out.readyListenersLeft = ok.listeners();
+    const failing = fake({});
+    const errorPromise = waitForModelReady(failing, 500).then(() => 'resolved', (e) => 'rejected:' + (e && e.message));
+    failing.fireError(new Error('坏模型'));
+    out.error = await errorPromise;
+    out.errorListenersLeft = failing.listeners();
+    const slow = fake({});
+    let lateCalls = 0;
+    out.timeout = await waitForModelReady(slow, 50, () => { lateCalls += 1; });
+    out.lateCallsBeforeReady = lateCalls;
+    out.listenersKeptAfterTimeout = slow.listeners();
+    slow.fireReady();
+    await new Promise((r) => setTimeout(r, 50));
+    out.lateCallsAfterReady = lateCalls;
+    out.listenersAfterLateReady = slow.listeners();
+    return out;
+  })()`, true)
+  if (readyPaths) {
+    check('已就绪的模型直接返回 ready', readyPaths.alreadyReady === 'ready', String(readyPaths.alreadyReady))
+    check('ready 事件路径必须清理监听', readyPaths.ready === 'ready' && readyPaths.readyListenersLeft === 0,
+      `${readyPaths.ready} / 剩 ${readyPaths.readyListenersLeft}`)
+    check('error 事件仍必须 reject', String(readyPaths.error).startsWith('rejected:坏模型'), String(readyPaths.error))
+    check('error 路径必须清理监听', readyPaths.errorListenersLeft === 0, String(readyPaths.errorListenersLeft))
+    check('等不到渲染时返回 timeout 且保留 ready 监听', readyPaths.timeout === 'timeout' && readyPaths.listenersKeptAfterTimeout > 0,
+      `${readyPaths.timeout} / 剩 ${readyPaths.listenersKeptAfterTimeout}`)
+    check('晚到的 ready 必须触发补跑回调', readyPaths.lateCallsBeforeReady === 0 && readyPaths.lateCallsAfterReady === 1,
+      `${readyPaths.lateCallsBeforeReady} → ${readyPaths.lateCallsAfterReady}`)
+    check('补跑后必须清理监听', readyPaths.listenersAfterLateReady === 0, String(readyPaths.listenersAfterLateReady))
   }
 
   const missing = await run('体检失败路径（不存在的文件）',

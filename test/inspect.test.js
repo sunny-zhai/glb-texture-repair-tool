@@ -323,6 +323,57 @@ test('inspect: 纯平移也能被偏差倍数发现', () => {
   }
 })
 
+test('inspect: 全部被引用的文件不得报 UNREFERENCED_MESHES（调用点漏传 scene 的回归）', () => {
+  // 这条用例是冲着调用点来的：`reachableMeshIndexes(nodes, scene)` 少传第二个参数就恒为空集，
+  // 于是**任何**含网格的文件都会误报；上面那条用例直接按两参数测函数本身，抓不到调用点。
+  const workDir = makeTempDir()
+  try {
+    const file = writeTemp(workDir, 'all-referenced.glb', glb({
+      accessors: [triangleAccessor(), triangleAccessor()],
+      meshes: [
+        { primitives: [{ attributes: { POSITION: 0 } }] },
+        { primitives: [{ attributes: { POSITION: 1 } }] },
+      ],
+      nodes: [{ mesh: 0 }, { mesh: 1 }],
+      scenes: [{ nodes: [0, 1] }],
+    }))
+    const report = inspect(file)
+    assert.equal(report.ok, true, JSON.stringify(report.issues))
+    assert.equal(report.bounds.deviationFactor, 1)
+    assert.deepEqual(
+      report.issues.filter((issue) => issue.code === 'UNREFERENCED_MESHES'),
+      [],
+      `两个网格都被默认场景引用，不该报未引用：${JSON.stringify(report.issues)}`,
+    )
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 只在非默认场景里的网格仍要报 UNREFERENCED_MESHES（修调用点后不得漏报）', () => {
+  const workDir = makeTempDir()
+  try {
+    const file = writeTemp(workDir, 'other-scene-only.glb', glb({
+      scene: 0,
+      accessors: [triangleAccessor(), triangleAccessor()],
+      meshes: [
+        { primitives: [{ attributes: { POSITION: 0 } }] },
+        { primitives: [{ attributes: { POSITION: 1 } }] },
+      ],
+      nodes: [{ mesh: 0 }, { mesh: 1 }],
+      scenes: [{ nodes: [0] }, { nodes: [1] }],
+    }))
+    const report = inspect(file)
+    const issue = report.issues.find((entry) => entry.code === 'UNREFERENCED_MESHES')
+    assert.ok(issue, `只在非默认场景里的网格必须被提示：${JSON.stringify(report.issues)}`)
+    assert.match(issue.message, /1 个网格/)
+    // 只有默认场景可达的网格进盒：两个三角形都是 1³，这里主要锁"数量对得上"而不是偏差
+    assert.equal(report.counts.meshes, 2)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
 test('inspect: 未被场景引用的网格不制造假偏差，且被单独提示', () => {
   const workDir = makeTempDir()
   try {

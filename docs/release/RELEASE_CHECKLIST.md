@@ -83,7 +83,7 @@
 - **已知问题**：
   - Windows 安装包不含 IVE 助手（见 §3），Windows 用户只能使用 GLB 修复能力
   - 渲染结果的人眼确认仅覆盖「能否渲染」这一路径（TC-012 已由 sunny-zhai 于 2026-09-18 人工验收通过）；朝向/落地/贴图方向由自动化世界盒断言兜底，未经人眼逐项确认
-  - 模型体检：`src/inspect.js` 报告 + 界面体检面板（世界盒/accessor 盒双列、偏差告警、事实行、问题清单）与预览方向/缩放/上轴控件均已实现（TASK-008 已完成并合入）；**TASK-009（修 `UNREFERENCED_MESHES` 误报与窗口不可见时预览不落定）尚未开始**
+  - 模型体检：`src/inspect.js` 报告 + 界面体检面板（世界盒/accessor 盒双列、偏差告警、事实行、问题清单）与预览方向/缩放/上轴控件均已实现（TASK-008 已完成并合入）；TASK-009 已修掉 `UNREFERENCED_MESHES` 误报与"窗口不可见时预览不落定"（后者根因是后台节流导致 Cesium 一帧未渲染）
   - `KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报（TASK-007 已知遗留）
   - 无 CI：门禁（lint/test/memory check）依赖本地手工执行
   - 覆盖率未设门槛，Electron 壳层未纳入插桩
