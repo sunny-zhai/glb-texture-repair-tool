@@ -43,4 +43,5 @@
 | 2026-09-18 | REQ-003 | TASK-005 | completed | node --test test/ive.test.js → pass 24 / fail 0；世界盒 0.538 × 1.364 × 1.056、顶点 56,772→11,516；规则见 docs/001-code-design.md（备注：平台采纳前交付，本次追溯登记） | 5b5b495 |
 | 2026-09-18 | REQ-004 | TASK-006 | completed | node --test test/repair.test.js → pass 19 / fail 0；规则见 docs/001-code-design.md（备注：平台采纳前交付，本次追溯登记） | 1c266a4 |
 | 2026-09-18 | REQ-005 | TASK-007 | completed | bash -lc "npm test" → pass 57 / fail 0；M1 判据：运输车世界盒 2.59×4.10×5.98 偏差 4461.9 倍、21 样本 0 崩溃最慢 11ms、person 比值 0.6085；实现见 src/inspect.js 与 src/transform.js | 767aa63 |
+| 2026-09-18 | REQ-005 | TASK-007 | reopened | 冷上下文审查（独立 reviewer）结论不通过：BR-020「不抛异常」被实锤违反（meshes:[null] 等 5 类畸形 GLB 令 inspect 抛 TypeError、CLI 崩溃）；JPEG 头扫描 1024 字节上限致样例集 48 张内嵌贴图中 30 张读不到宽高，贴图规格检测静默失效；另有 deviationFactor 对纯平移失明、accessorUnionBounds 并入非场景网格等 8 项（备注：审查由独立上下文 subagent 执行；结论同时指出 TASK-007 原证据③（21/21 trianglesMatch）因判据恒等而无效） | bddd6b8 |
 <!-- memory:completion:end -->

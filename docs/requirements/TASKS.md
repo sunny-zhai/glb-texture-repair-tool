@@ -72,7 +72,8 @@
 - **产出**：`src/inspect.js`、`src/transform.js`、`test/inspect.test.js`
 - **文件范围**：`src/inspect.js`, `src/transform.js`, `test/inspect.test.js`
 - **验证方式**：`node --test test/inspect.test.js`；外加 002 M1 的退出标准——`node -e "inspect('o-model/运输车.glb')"` 给出 world ≈ 2.59×4.10×5.98 且 deviationFactor > 1000；24 个 GLB 全跑通、单文件 ≤ 2s（上限 M1A2 174,937 顶点）；`triangles === Σ(indices.count)/3`；`vertexReuseRatio(person 参考件) === 0.61`
-- **状态**：已完成
+- **状态**：进行中（返工）
+- **返工原因**：冷上下文审查不通过——BR-020「不抛异常」被实锤违反（5 类畸形 GLB 抛 TypeError、CLI 崩溃）、JPEG 头 1024 字节上限致 62% 内嵌贴图规格检测静默失效，另有 8 项重要问题；原证据③（21/21 `trianglesMatch`）因判据恒等而无效，一并重做
 - **验证结果**：`task-flow finish --test "npm test"` —— 门禁 **57 通过 / 0 失败**（原 43 + 新增 14），自动合并为 `767aa63`。M1 退出标准逐条实测：
   ① `node src/inspect.js o-model/运输车.glb` → 世界盒 `2.59 × 4.10 × 5.98` m、偏差 **4461.888 倍**（>1000）、列出 accessor 盒 `11571.59 × 15430.28 × 23539.10` ✅
   ② 21 个样例（`o-model/` 18 + `model/` 3）全部 `ok:true`、0 崩溃，最慢 **11 ms**（`M1A2艾布拉姆斯坦克.glb`，174,937 顶点）远低于 2s 上限 ✅
@@ -125,5 +126,5 @@ TASK-007 ──▶ TASK-008
 | TASK-004 | REQ-002 | 已完成 | ☑ |
 | TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
-| TASK-007 | REQ-005 | 已完成 | ☑ |
+| TASK-007 | REQ-005 | 进行中（冷上下文审查不通过，返工中） | ☐ |
 | TASK-008 | REQ-005 | 待开始 | ☐ |
