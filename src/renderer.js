@@ -44,6 +44,9 @@ const inputBadge = document.getElementById('inputBadge')
 const inspectEmpty = document.getElementById('inspectEmpty')
 const actionBar = document.querySelector('.action-bar')
 const previewBar = document.querySelector('.preview-bar')
+// 中栏自己的标题行（34px）：它和预览控件条一起吃掉中栏高度，算底部上限时必须计入，
+// 否则 CANVAS_MIN_HEIGHT 会被这 34px 悄悄抵消（冷审实测：声明 160 实际只剩 126）
+const centerHeader = document.querySelector('.pane-center .pane-header')
 const statusBar = document.getElementById('statusBar')
 const statusModel = document.getElementById('statusModel')
 const statusModelSize = document.getElementById('statusModelSize')
@@ -96,6 +99,8 @@ let layout = {
   rightCollapsed: false,
   drawerOpen: false,
 }
+// initLayout() 会挂一次性监听，用这个护栏保证它只生效一次
+let layoutInitialized = false
 
 function clampNumber(value, min, max, fallback) {
   // 只认真正的有限数值：Number(null)/Number([])/Number('') 都会得到 0（有限），
@@ -148,10 +153,11 @@ function clampLayout(input) {
   if (height > 0) {
     const chrome = (actionBar?.offsetHeight || 41)
       + (statusBar?.offsetHeight || 28)
+      + (centerHeader?.offsetHeight || 34)
       + (helpPanel && !helpPanel.hidden ? helpPanel.offsetHeight : 0)
       + 4
-    // 中栏 = 预览控件条 + 3D 画布；只守 CENTER_MIN_HEIGHT 会让画布被挤到几十像素
-    // （实测 1100×760 且存量 bottom=333 时画布只剩 93px），所以再扣掉控件条高度
+    // 中栏 = 标题行 + 预览控件条 + 3D 画布；只守 CENTER_MIN_HEIGHT 会让画布被挤到几十像素
+    // （实测 1100×760 且存量 bottom=333 时画布只剩 93px），所以标题行与控件条高度都要扣掉
     const previewBarHeight = previewBar?.offsetHeight || 0
     const maxBottom = Math.max(
       PANE_LIMITS.bottom.min,
@@ -164,9 +170,11 @@ function clampLayout(input) {
     left: Math.round(left),
     right: Math.round(right),
     bottom: Math.round(bottom),
-    logCollapsed: Boolean(candidate.logCollapsed),
-    rightCollapsed: Boolean(candidate.rightCollapsed),
-    drawerOpen: Boolean(candidate.drawerOpen),
+    // 布尔字段只认真正的布尔：真值垃圾串（"no"）会把日志静默折叠，虽然在合法区间内，
+    // 却与"字段类型错误也必须鲁棒"的意图不符（冷审实测 {"logCollapsed":"no"} 折叠了日志）
+    logCollapsed: candidate.logCollapsed === true,
+    rightCollapsed: candidate.rightCollapsed === true,
+    drawerOpen: candidate.drawerOpen === true,
   }
 }
 
@@ -371,6 +379,10 @@ function syncNarrowMode(isNarrow) {
 }
 
 function initLayout() {
+  // 幂等护栏：这里挂的是 matchMedia / ResizeObserver / 窗口与分隔条等**一次性**监听，
+  // 被调用两次会让每个处理器各跑一遍（实测再点一次折叠按钮，logCollapsed 翻转两次等于没翻）
+  if (layoutInitialized) return
+  layoutInitialized = true
   layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)
   const narrowQuery = typeof window.matchMedia === 'function'
     ? window.matchMedia('(max-width: 1099px)')
@@ -420,7 +432,7 @@ function initLayout() {
 window.__layout = {
   key: LAYOUT_KEY,
   get: () => ({ ...layout }),
-  limits: { ...PANE_LIMITS, centerMinWidth: CENTER_MIN_WIDTH, centerMinHeight: CENTER_MIN_HEIGHT, logCollapsedHeight: LOG_COLLAPSED_HEIGHT },
+  limits: { ...PANE_LIMITS, centerMinWidth: CENTER_MIN_WIDTH, centerMinHeight: CENTER_MIN_HEIGHT, canvasMinHeight: CANVAS_MIN_HEIGHT, logCollapsedHeight: LOG_COLLAPSED_HEIGHT },
   clamp: (input) => clampLayout(input),
   restore: () => {
     layout = clampLayout(readStoredLayout() || LAYOUT_DEFAULT)

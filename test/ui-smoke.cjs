@@ -37,7 +37,13 @@ const port = portIndex >= 0 && argv[portIndex + 1] ? argv[portIndex + 1] : '9333
 const modelPath = path.resolve(modelArg)
 
 const failures = []
+// 已执行的断言数：脚本里有 25 处 `if (step) { check(...) }`，某一步 Runtime.evaluate 超时
+// 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
+let checksRun = 0
+// 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
+const EXPECTED_CHECK_COUNT = 99
 const check = (label, condition, detail) => {
+  checksRun += 1
   if (condition) return
   failures.push(detail === undefined ? label : `${label}（实际：${detail}）`)
 }
@@ -139,6 +145,15 @@ async function main() {
     const result = await send('Runtime.evaluate', { expression, returnByValue: true })
     return result?.result?.value
   }
+  // 页面错误采集：`window.__smokeErrors` 以前从未被赋值（死字段），于是"页面异常 0 条"这句
+  // 结论其实没有数据来源。这里真正装上监听，并在**每次重载后**重装（重载会清掉 window）。
+  const installErrorCollector = () => rawEval(`(() => {
+    if (window.__smokeErrors) return window.__smokeErrors.length;
+    window.__smokeErrors = [];
+    window.addEventListener('error', (e) => window.__smokeErrors.push('error: ' + String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__smokeErrors.push('unhandledrejection: ' + String(e.reason)));
+    return 0;
+  })()`)
   // 重载页面：既让同一实例可以重复跑（状态栏/模型/布局都是上一轮遗留的），也让
   // "启动时从 localStorage 恢复布局"变成真实路径而不是事后调用。
   const reloadPage = async (label) => {
@@ -147,6 +162,7 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, 250))
       const probe = await rawEval(`({ ready: document.readyState, fn: typeof validateModel, layout: typeof window.__layout })`)
       if (probe && probe.ready === 'complete' && probe.fn === 'function' && probe.layout === 'object') {
+        await installErrorCollector()
         client.steps.push(label)
         return true
       }
@@ -165,6 +181,7 @@ async function main() {
 
   // ---------------------------------------------------------------- 启动恢复 + 读取时夹取（REQ-006 标准 5）
   // 先切到 1280×800：Emulation 的视口覆写在 Page.reload 之后依然生效
+  await installErrorCollector()
   await setViewport(1280, 800)
   await seedLayout(LAYOUT_SEED(), '种入布局并重载页面')
   const startRestore = await run('启动时从 localStorage 恢复布局', `(() => {
@@ -276,6 +293,15 @@ async function main() {
         inspect: document.getElementById('statusInspect').textContent,
         progress: document.getElementById('statusProgress').textContent,
       },
+      // 四个槽位是否真的渲染出来（有 rect）：本步只看"槽位存在且可见"，接线真值由
+      // 加载模型后的状态栏断言负责——否则这里读到的只是 index.html 里的静态初值，
+      // 删掉整个 renderStatusBar() 也照样通过（冷审指出这是自我满足的断言）
+      statusSlots: ['statusModel', 'statusModelSize', 'statusInspect', 'statusProgress'].reduce((acc, id) => {
+        const el = document.getElementById(id);
+        acc[id] = { text: el.textContent, rects: el.getClientRects().length };
+        return acc;
+      }, {}),
+      limits: window.__layout.limits,
     };
   })()`)
   if (wide) {
@@ -293,11 +319,11 @@ async function main() {
     check('3D 视口必须是三栏里最宽的一栏',
       wide.center.w > wide.left.w && wide.center.w > wide.right.w,
       JSON.stringify({ left: wide.left.w, center: wide.center.w, right: wide.right.w }))
-    check('3D 容器必须有实际高度（不能沿用旧的固定 360px 之外的 0 高度）', wide.cesium.h > 120, String(wide.cesium.h))
-    check('状态栏四项占位必须齐全（模型/大小/体检/修复）',
-      wide.statusText.model === '未选择' && wide.statusText.size === '—'
-        && wide.statusText.inspect === '未体检' && wide.statusText.progress === '未开始',
-      JSON.stringify(wide.statusText))
+    check('3D 容器高度必须真的兑现 CANVAS_MIN_HEIGHT（阈值与模块常量同源，不能用 120 掩盖）',
+      wide.cesium.h >= wide.limits.canvasMinHeight, `${wide.cesium.h} < ${wide.limits.canvasMinHeight}`)
+    check('状态栏四个槽位必须存在且首屏可见（接线真值由加载模型后的断言负责，这里不再读静态初值）',
+      Object.values(wide.statusSlots).every((slot) => slot.rects > 0 && slot.text.length > 0),
+      JSON.stringify(wide.statusSlots))
     check('右栏没有体检结果时必须给出中文空态提示（不能是一片空白）',
       wide.inspectEmpty.hidden === false && wide.inspectEmpty.visible === true && /选择预览模型/.test(wide.inspectEmpty.text),
       JSON.stringify(wide.inspectEmpty))
@@ -584,6 +610,7 @@ async function main() {
       center: Math.round(document.getElementById('cesiumContainer').getBoundingClientRect().width),
       right: Math.round(document.getElementById('paneRight').getBoundingClientRect().width),
       bottom: Math.round(document.getElementById('paneBottom').getBoundingClientRect().height),
+      canvas: Math.round(document.getElementById('cesiumContainer').getBoundingClientRect().height),
       varLeft: getComputedStyle(shell).getPropertyValue('--pane-left').trim(),
       scrollWidth: document.scrollingElement.scrollWidth,
       clientWidth: document.scrollingElement.clientWidth,
@@ -613,6 +640,9 @@ async function main() {
     check('日志不能被拖到 0，也不能吃满整屏',
       dragToZero.bottomMin.bottom === limits.bottom.min && dragToZero.bottomMax.bottom <= limits.bottom.max,
       JSON.stringify({ min: dragToZero.bottomMin.bottom, max: dragToZero.bottomMax.bottom, limits }))
+    check('把日志拖到上限后 3D 画布仍必须 ≥ CANVAS_MIN_HEIGHT（中栏标题行与预览控件条都要算进高度预算）',
+      dragToZero.bottomMax.canvas >= limits.canvasMinHeight,
+      JSON.stringify({ canvas: dragToZero.bottomMax.canvas, min: limits.canvasMinHeight, bottom: dragToZero.bottomMax.bottom }))
     check('任何一次极限拖拽后 3D 视口都必须仍是最宽的一栏且不出现横向滚动',
       [dragToZero.leftMin, dragToZero.leftMax, dragToZero.rightMin, dragToZero.rightMax].every((state) => state.center >= limits.centerMinWidth && state.center > state.left && state.center > state.right && state.scrollWidth <= state.clientWidth + 1),
       JSON.stringify(dragToZero))
@@ -629,16 +659,20 @@ async function main() {
     }
     const height = () => Math.round(container.getBoundingClientRect().height);
     const before = height();
+    const callsBefore = resizeCalls;
     document.getElementById('toggleLog').click();
     await new Promise((r) => setTimeout(r, 400));
+    const callsAfterCollapse = resizeCalls;
     const collapsed = { height: height(), classes: shell.className, varBottom: getComputedStyle(shell).getPropertyValue('--pane-bottom').trim(),
       stored: localStorage.getItem(window.__layout.key), expanded: document.getElementById('toggleLog').getAttribute('aria-expanded') };
     document.getElementById('toggleLog').click();
     await new Promise((r) => setTimeout(r, 400));
+    const callsAfterExpand = resizeCalls;
     const expanded = { height: height(), classes: shell.className, varBottom: getComputedStyle(shell).getPropertyValue('--pane-bottom').trim(),
       stored: localStorage.getItem(window.__layout.key), expanded: document.getElementById('toggleLog').getAttribute('aria-expanded') };
     if (state.viewer && originalResize) state.viewer.resize = originalResize;
-    return { before, collapsed, expanded, viewerResizeCalls: resizeCalls };
+    return { before, collapsed, expanded, viewerResizeCalls: resizeCalls,
+      resizeOnCollapse: callsAfterCollapse - callsBefore, resizeOnExpand: callsAfterExpand - callsAfterCollapse };
   })()`, true)
   if (logCollapse) {
     check('折叠日志后 3D 视口必须变高', logCollapse.collapsed.height > logCollapse.before + 40,
@@ -648,7 +682,9 @@ async function main() {
     check('折叠状态必须写入 localStorage', /"logCollapsed":true/.test(logCollapse.collapsed.stored || ''), String(logCollapse.collapsed.stored))
     check('展开后必须恢复原来的高度', Math.abs(logCollapse.expanded.height - logCollapse.before) <= 2,
       `${logCollapse.before} → ${logCollapse.expanded.height}`)
-    check('折叠/展开都必须重算 3D 画布', logCollapse.viewerResizeCalls > 0, String(logCollapse.viewerResizeCalls))
+    check('折叠日志必须自己重算 3D 画布（前后计数，不能靠 ResizeObserver 顺带触发蒙过）',
+      logCollapse.resizeOnCollapse > 0, String(logCollapse.resizeOnCollapse))
+    check('展开日志必须自己重算 3D 画布', logCollapse.resizeOnExpand > 0, String(logCollapse.resizeOnExpand))
   }
 
   // ---------------------------------------------------------------- localStorage 记忆 + 夹取（REQ-006 标准 5）
@@ -859,13 +895,23 @@ async function main() {
   const after = sha256(modelPath)
   check('预览与体检不得写回输入文件', before === after, `${before} → ${after}`)
 
-  console.log(JSON.stringify({ modelPath, port, steps: client.steps, failures }, null, 2))
+  // 假绿防线（冷审指出）：某一步 Runtime.evaluate 超时 → undefined → 其 `if (step)` 内的
+  // 整块断言被静默跳过，脚本照样 exit 0。这两条把"步骤没返回"和"断言没跑够"变成红。
+  // 注意 detail 参数在 check() 自增之前求值，所以这里要 +1 把本条自身算进去。
+  const timedOutSteps = client.steps.filter((step) => /超时/.test(step))
+  check('所有步骤都必须真实返回结果（任何一步超时都不得静默跳过其断言）',
+    timedOutSteps.length === 0, JSON.stringify(timedOutSteps))
+  const executedChecks = checksRun + 1
+  check('已执行断言数必须达到下限（新增断言后要同步抬高 EXPECTED_CHECK_COUNT）',
+    executedChecks >= EXPECTED_CHECK_COUNT, `${executedChecks} < ${EXPECTED_CHECK_COUNT}`)
+
+  console.log(JSON.stringify({ modelPath, port, checksRun, steps: client.steps, failures }, null, 2))
   if (failures.length) {
     console.error(`\n界面接线冒烟失败 ${failures.length} 项：`)
     for (const failure of failures) console.error(`  - ${failure}`)
     process.exit(1)
   }
-  console.log(`\n界面接线冒烟通过：${modelPath}（${client.steps.length} 步）`)
+  console.log(`\n界面接线冒烟通过：${modelPath}（${client.steps.length} 步 / ${checksRun} 条断言）`)
 }
 
 main().catch((error) => {
