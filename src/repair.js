@@ -1343,6 +1343,8 @@ module.exports = {
   createGlbBuffer,
   encodePng,
   fillMissingTexCoords,
+  getNodeLocalMatrix,
+  identityMatrix,
   mergePrimitivesByMaterial,
   multiplyMatrix,
   readGlb,

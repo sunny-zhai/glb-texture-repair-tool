@@ -36,3 +36,13 @@ native/ive2glb/build/
 # test/ 是源码，已入库；不要把它加回来
 docs/
 AGENTS.md
+.worktrees/
+
+# ---------------------------------------------------------------- 项目开发流程配置（本机工具生成，不入库）
+# .ai/ 是开发流程配置（agents/skills/workflows/platform-lock.json），
+# scripts/*.mjs 是该流程生成的脚本。注意只忽略 .mjs：
+# scripts/ensure-cesium.js 与 scripts/build-ive2glb.sh 是产品脚本，必须继续入库
+# （后者是重建 vendor/ive2glb 助手的唯一途径），所以绝不能写成整个 scripts/。
+.ai/
+dsh/
+scripts/*.mjs
