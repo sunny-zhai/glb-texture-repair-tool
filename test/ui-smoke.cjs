@@ -120,8 +120,10 @@ async function main() {
   }
 
   const loaded = await run('加载预览模型（体检 + Cesium）',
-    `(async () => { await validateModel(${JSON.stringify(modelPath)}); return 'ok' })()`, true, 45000)
-  check('预览加载必须返回', loaded === 'ok', String(loaded))
+    `(async () => { await validateModel(${JSON.stringify(modelPath)}); return document.getElementById('validationStatus').textContent })()`, true, 45000)
+  check('预览加载必须落定', typeof loaded === 'string', String(loaded))
+  // 只断言"落定"不够：窗口不可见时超时兜底也会让它落定，但状态文案是"未渲染"——必须真加载成功
+  check('预览必须真的加载成功（不能被"未渲染"的超时兜底蒙过）', /加载成功/.test(loaded || ''), String(loaded))
   await new Promise((resolve) => setTimeout(resolve, 3000))
 
   const inspect = await run('读体检面板', `(() => {

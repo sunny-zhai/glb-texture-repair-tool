@@ -33,6 +33,11 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 关掉后台节流：窗口被遮挡/在后台时页面若被判为 hidden，requestAnimationFrame 会被
+      // 节流到几乎不跑，Cesium 一帧都不渲染（frameNumber 恒为 0、resourcesLoaded 仍为
+      // false），"模型就绪"的 afterRender 回调于是永不执行——预览会一直停在「正在加载…」
+      // （TASK-008 的接线冒烟就是这样超时的）。桌面工具没有省电的必要，一律关掉。
+      backgroundThrottling: false,
     },
   })
 

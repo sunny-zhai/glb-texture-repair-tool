@@ -454,7 +454,11 @@ async function validateModel(filePath) {
     model.debugShowBoundingVolume = false
     state.viewer.scene.primitives.add(model)
     appendLog(`Cesium 模型对象已创建：${filePath}`)
-    await waitForModelReady(model)
+    const readyState = await waitForModelReady(model)
+    if (readyState === 'timeout') {
+      // 绝不能报成"加载成功"：窗口不可见时一帧都没渲染，画面还是空的（TASK-009）
+      appendLog('模型对象已创建，但当前未渲染（窗口不可见/被遮挡时 Cesium 不渲染）——仍会继续做诊断与取景，请把窗口切到前台确认', 'warn')
+    }
     appendModelDiagnostics(model, payload.bounds)
     startModelAnimations(model, payload.metadata)
     await frameModelPreview(model, payload.bounds)
@@ -462,8 +466,12 @@ async function validateModel(filePath) {
 
     const decimalMegabytes = (payload.bytes / 1000 / 1000).toFixed(2)
     const binaryMebibytes = (payload.bytes / 1024 / 1024).toFixed(2)
-    setValidationStatus(`加载成功 · ${decimalMegabytes} MB / ${binaryMebibytes} MiB`, 'ok')
-    appendLog(`Cesium 验证成功：${filePath} · ${payload.bytes.toLocaleString()} 字节`, 'ok')
+    if (readyState === 'timeout') {
+      setValidationStatus('已创建模型，但当前未渲染（请把窗口切到前台）', 'warn')
+    } else {
+      setValidationStatus(`加载成功 · ${decimalMegabytes} MB / ${binaryMebibytes} MiB`, 'ok')
+      appendLog(`Cesium 验证成功：${filePath} · ${payload.bytes.toLocaleString()} 字节`, 'ok')
+    }
   } catch (error) {
     setValidationStatus('加载失败', 'error')
     appendLog(`Cesium 验证失败：${error.message}`, 'error')
@@ -489,18 +497,32 @@ function formatError(error) {
   return error.message || error.toString()
 }
 
-function waitForModelReady(model) {
-  if (model.ready) return Promise.resolve()
+/**
+ * @description 等模型就绪，**必须带超时**。窗口不可见/被遮挡时页面会被节流：`requestAnimationFrame`
+ *   几乎不跑 → Cesium 一帧都没渲染（`frameNumber` 恒为 0、`resourcesLoaded` 仍为 false）→
+ *   那句"置 `_ready` 并发 `readyEvent`"的 `afterRender` 回调永不执行。没有超时兜底，
+ *   `validateModel` 会一直挂在这里：`#validationStatus` 永远停在「正在加载…」，包围盒诊断与
+ *   默认取景也都不跑（窗口恢复可见后回调才会补跑，所以不是永久卡死）。走到这里说明
+ *   `Cesium.Model.fromGltfAsync` 已经返回、模型对象有效，所以超时按"已创建但未渲染"处理，
+ *   不能报成加载失败。
+ * @param {object} model Cesium.Model
+ * @param {number} [timeoutMs] 等渲染的上限
+ * @returns {Promise<'ready'|'timeout'>} `timeout` 表示等不到渲染（模型对象仍然有效）
+ */
+function waitForModelReady(model, timeoutMs = 5000) {
+  if (model.ready) return Promise.resolve('ready')
   return new Promise((resolve, reject) => {
     let removeReadyListener
     let removeErrorListener
+    let timer
     const cleanup = () => {
       removeReadyListener?.()
       removeErrorListener?.()
+      clearTimeout(timer)
     }
     removeReadyListener = model.readyEvent.addEventListener(() => {
       cleanup()
-      resolve()
+      resolve('ready')
     })
     if (model.errorEvent) {
       removeErrorListener = model.errorEvent.addEventListener((error) => {
@@ -508,6 +530,10 @@ function waitForModelReady(model) {
         reject(error instanceof Error ? error : new Error(formatError(error)))
       })
     }
+    timer = setTimeout(() => {
+      cleanup()
+      resolve('timeout')
+    }, timeoutMs)
   })
 }
 
