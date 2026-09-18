@@ -83,3 +83,16 @@
 - **替代方案**：① 引入 Vue/React（否决：违反仓库约定，打包与 CSP 成本）；② Electron 多窗口/`<webview>`（否决：跨窗口状态同步成本高）；③ 只做 CSS 美化不换结构（否决：用户明确要求"像编辑器"）；④ 用现成的 split-pane 库（否决：为一个分隔条引入依赖不划算）。
 - **影响面**：`src/index.html`（结构重排、保留既有 id）、`src/styles.css`（Grid/分隔条/抽屉/状态栏/焦点样式）、`src/renderer.js`（分栏拖拽与记忆、`ResizeObserver` → `viewer.resize()`、状态栏更新、抽屉切换）；`docs/001-code-design.md` 新增 BR-027；`test/ui-smoke.cjs` 增加布局断言。
 - **验证方式**：`node test/ui-smoke.cjs model/蹲姿.glb --port <调试端口>` 的布局断言——无整页滚动（`scrollHeight <= innerHeight + 1`）、三栏与底部日志同时存在且 3D 容器宽度大于两侧栏、拖动分隔条后 CSS 变量与容器宽度变化且触发 `viewer.resize()`、折叠日志后 3D 高度增加、`localStorage['glb-repair.layout']` 存在；外加人工目视（直立/贴地/同框、拖拽手感）。
+
+## ADR-007 栏位尺寸与内容解耦：用户意图与生效值分离
+
+- **日期**：2026-09-18
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-18；实现见 TASK-011）
+- **关联需求**：REQ-006（补充 ADR-006；不改写其历史）
+- **背景/问题**：编辑器式布局交付后用户反馈"界面宽高会受到数据影响自动调整"。实测（窗口 1100×760）：**宽度不受数据影响**（左/右栏恒 260/340），**高度会**——模型路径变长时预览信息行从 1 行换行成 3 行，预览条 126→189px、3D 画布被顶掉；更严重的是 `clampLayout` 的高度预算里减了实时的 `previewBar.offsetHeight` 与 `helpPanel.offsetHeight`，于是"路径变长 → 预览条变高 → 日志上限变小 → 下一次重算（缩窗/拖分隔条/开帮助）把 `--pane-bottom` 从 380px 夹到 290px **并 `saveLayout()` 落盘**，换回短路径也不恢复"。即**内容能永久改写用户的布局**，而且不可逆。
+- **决策**：(a) 布局尺寸只由**用户操作**与**窗口尺寸**决定，内容与临时面板**不得进入高度预算**：模型信息行固定单行省略号（完整路径挂 `title`），帮助面板限高 + 内部滚动且不参与预算；(b) **用户意图与生效值分离**——`layoutDesired` 是用户设定的尺寸（**唯一落盘对象**），`layout` 是当前窗口夹取后的生效值（只用于渲染）；窗口缩放、跨窄断点等**非用户事件只 `refitLayout()` 重算生效值，绝不落盘**，因此窗口恢复后用户尺寸自己回来；(c) 中栏网格显式写 `grid-template-columns: minmax(0, 1fr)`——只写 `grid-template-rows` 时隐式列是 `auto`，nowrap 内容会把列撑到 2994px（视觉被 `overflow:hidden` 裁掉，但宽度已爆）。
+- **理由**：面板尺寸是用户的**空间偏好**，不该由"打开了哪个模型、路径多长、帮助面板开没开"决定；临时变高只应影响这一次渲染。旧行为既不可预测也不可逆（落盘后无法恢复），正是最容易被感知为"不友好"的缺陷类别。
+- **后果**：正面——尺寸可预测、可逆；长路径不再影响画面；开关帮助不再吃掉用户的日志高度；缩窗再恢复也不再永久损失尺寸。**代价与风险**：`layout` 与 `layoutDesired` 两个概念必须同时维护，漏一处就会出现"拖了不动"或"改不回来"（故用 `commitLayout`/`commitFlags`/`refitLayout`/`adoptLayout` 四个入口收口，禁止裸赋值）；帮助面板打开时 3D 画布仍会临时变矮（由网格 `1fr` 行吸收，这是有意的），故"画布 ≥ `CANVAS_MIN_HEIGHT`"只在**帮助关闭**时保证。
+- **替代方案**：① 干脆禁止折叠、固定所有尺寸（否决：用户要求编辑器式可调）；② 只修 CSS 不分离意图（否决：长路径问题消失，但缩窗仍会永久改写尺寸）；③ 把帮助面板做成绝对定位浮层（部分采纳：限高 + 内部滚动的成本更低，且不遮挡日志）。
+- **影响面**：`src/renderer.js`（`clampLayout(input, {fitWindow})`、`commitLayout`/`commitFlags`/`refitLayout`/`adoptLayout`、`saveLayout` 落盘 `layoutDesired`、`setValidationModelSummary` 挂 `title`）、`src/styles.css`（单行省略号、`.pane-center` 显式列、帮助限高）、`test/ui-smoke.cjs`（6 条内容无关性断言）、`docs/001-code-design.md` BR-028。
+- **验证方式**：冒烟新增断言——同一窗口下把模型信息从短文本换成 400 字长文本，**预览条高度 / `--pane-bottom` / `localStorage` 的 `bottom` 三者都不得变化**；换回短文本后画布与日志高度必须精确复原；打开与收起帮助面板都不得改日志高度与落盘值。这 6 条在修复前的代码（`b8bdddc`）上**实测全红**（预览条 99→189、日志 380→290 并落盘、换回短文本仍是 290），修复后 GLB 与 IVE 两遍各 **33 步 / 105 条断言 / 0 失败**。
