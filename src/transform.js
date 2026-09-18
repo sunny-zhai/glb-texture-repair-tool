@@ -17,6 +17,8 @@ const {
 } = require('./repair')
 
 // 单位立方体的 8 个角，用于把局部盒变换到世界空间后重新求轴对齐盒。
+const asArray = (value) => (Array.isArray(value) ? value : [])
+
 const CORNERS = []
 for (let index = 0; index < 8; index += 1) {
   CORNERS.push([index & 1 ? 1 : 0, index & 2 ? 1 : 0, index & 4 ? 1 : 0])
@@ -67,6 +69,18 @@ function defaultSceneOf(json) {
 }
 
 /**
+ * @description 默认场景的状态：`none`（文件里没有 scene，glTF 下不会渲染）、
+ *   `out-of-range`（`json.scene` 指向不存在的场景——这是**文件损坏**，与"没有场景"不同，
+ *   必须分别提示，否则用户只看到"没有盒"却不知道为什么）、`ok`。
+ */
+function defaultSceneStatus(json) {
+  const scenes = json?.scenes
+  if (!Array.isArray(scenes) || scenes.length === 0) return 'none'
+  const index = Number.isInteger(json?.scene) ? json.scene : 0
+  return scenes[index] ? 'ok' : 'out-of-range'
+}
+
+/**
  * @description 从给定场景可达的网格索引集合。accessor 盒只应统计**真正会被渲染**的网格，
  *   否则文件里体积巨大的未引用网格会带来假偏差（审查实测：未引用的 1000³ 网格让
  *   1³ 的正常模型报出 1000 倍偏差并触发告警）。
@@ -79,10 +93,10 @@ function reachableMeshIndexes(nodes, scene) {
     if (!node || visiting.has(index)) return
     visiting.add(index)
     if (typeof node.mesh === 'number' && node.mesh >= 0) meshIndexes.add(node.mesh)
-    for (const child of node.children ?? []) walk(child)
+    for (const child of asArray(node.children)) walk(child)
     visiting.delete(index)
   }
-  for (const root of scene?.nodes ?? []) walk(root)
+  for (const root of asArray(scene?.nodes)) walk(root)
   return meshIndexes
 }
 
@@ -123,12 +137,12 @@ function worldBounds(nodes, scenes, localBoundsByMesh) {
         }
       }
     }
-    for (const child of node.children ?? []) walk(child, world)
+    for (const child of asArray(node.children)) walk(child, world)
     visiting.delete(index)
   }
 
-  for (const scene of Array.isArray(scenes) ? scenes : []) {
-    for (const root of scene?.nodes ?? []) walk(root, identityMatrix())
+  for (const scene of asArray(scenes)) {
+    for (const root of asArray(scene?.nodes)) walk(root, identityMatrix())
   }
   return isValidBounds(total) ? total : null
 }
@@ -240,6 +254,7 @@ function glbBounds(json) {
     worldSize: roundTriple(boundsSize(world)),
     worldCenter: roundTriple(boundsCenter(world)),
     accessorUnionSize: roundTriple(boundsSize(accessorUnion)),
+    accessorUnionCenter: roundTriple(boundsCenter(accessorUnion)),
     deviationFactor: deviationFactor(accessorUnion, world),
     deviationParts: deviationParts(accessorUnion, world),
   }
@@ -251,6 +266,7 @@ module.exports = {
   boundsDiagonal,
   boundsSize,
   defaultSceneOf,
+  defaultSceneStatus,
   deviationFactor,
   deviationParts,
   glbBounds,

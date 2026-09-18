@@ -21,7 +21,12 @@ const {
   multiplyMatrix,
   readGlb,
 } = require('./repair')
-const { boundsSize, glbBounds } = require('./transform')
+const {
+  boundsSize,
+  defaultSceneStatus,
+  glbBounds,
+  reachableMeshIndexes,
+} = require('./transform')
 
 // 采样器常量（glTF 枚举）
 const WRAP_REPEAT = 10497
@@ -33,6 +38,22 @@ const ISSUE_LEVELS = { error: '错误', warn: '警告', info: '提示' }
 const IMAGE_HEAD_BYTES = 256 * 1024
 
 const asArray = (value) => (Array.isArray(value) ? value : [])
+
+// glTF primitive.mode：默认 4(TRIANGLES)。非三角形图元不该计入三角面。
+const MODE_TRIANGLES = 4
+const MODE_TRIANGLE_STRIP = 5
+const MODE_TRIANGLE_FAN = 6
+const MODE_NAMES = {
+  0: 'POINTS', 1: 'LINES', 2: 'LINE_LOOP', 3: 'LINE_STRIP',
+  4: 'TRIANGLES', 5: 'TRIANGLE_STRIP', 6: 'TRIANGLE_FAN',
+}
+
+/** @description 按 mode 算三角面：TRIANGLES 取 ⌊n/3⌋，STRIP/FAN 取 n−2，其余为 0。 */
+function triangleCountOf(mode, count) {
+  if (mode === MODE_TRIANGLE_STRIP || mode === MODE_TRIANGLE_FAN) return Math.max(0, count - 2)
+  if (mode === undefined || mode === MODE_TRIANGLES) return Math.floor(count / 3)
+  return 0
+}
 
 function isPowerOfTwo(value) {
   return Number.isInteger(value) && value > 0 && (value & (value - 1)) === 0
@@ -48,23 +69,39 @@ function isDataUri(uri) {
  *   字节），截断会让 62% 的内嵌贴图读不到宽高，使 NPOT/占位检测静默失效。
  *   JPEG 扫描按段长前进，是 O(段数) 而非 O(字节数)，因此对整段数据扫描也不慢。
  */
+/** @description 宽高的合理性校验：拒绝 0、非整数与超过 65535 的荒诞值。 */
+function plausibleDimensions(width, height) {
+  const MAX_SIDE = 65535
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return null
+  if (width <= 0 || height <= 0 || width > MAX_SIDE || height > MAX_SIDE) return null
+  return { width, height }
+}
+
 function imageDimensions(bytes, mimeType) {
   if (!bytes || bytes.length < 8) return null
-  if (mimeType === 'image/png' || (bytes[0] === 0x89 && bytes[1] === 0x50)) {
-    // 签名(8) + 长度(4) + 'IHDR'(4) + 宽(4) + 高(4)
+  // **只看魔数**：mimeType 可能标错，垃圾字节也不该被当成图片（审查实测：伪造的
+  // 「JPEG 头」能得到 65492×53714 这种荒诞宽高，进而给出错误的 NPOT 结论）。
+  const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8
+  if (isPng) {
+    // 签名(8) + 长度(4) + 'IHDR'(4) + 宽(4) + 高(4)；IHDR 标记必须对上
     if (bytes.length < 24) return null
-    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+    if (bytes.toString('latin1', 12, 16) !== 'IHDR') return null
+    return plausibleDimensions(bytes.readUInt32BE(16), bytes.readUInt32BE(20))
   }
-  if (mimeType === 'image/jpeg' || (bytes[0] === 0xff && bytes[1] === 0xd8)) {
+  if (isJpeg) {
     let offset = 2
     while (offset + 9 < bytes.length) {
       if (bytes[offset] !== 0xff) { offset += 1; continue }
       const marker = bytes[offset + 1]
       // SOF0..SOF15，排除 DHT(C4)/JPG(C8)/DAC(CC)
       if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-        const height = bytes.readUInt16BE(offset + 5)
-        const width = bytes.readUInt16BE(offset + 7)
-        return width > 0 && height > 0 ? { width, height } : null
+        const length = bytes.readUInt16BE(offset + 2)
+        const components = bytes[offset + 9]
+        // SOF 段长必须与分量数自洽（8 + 3N），分量数只能是 1/3/4——这是结构校验，
+        // 光看标记会把随机字节流误判成图像
+        if (![1, 3, 4].includes(components) || length !== 8 + 3 * components) return null
+        return plausibleDimensions(bytes.readUInt16BE(offset + 7), bytes.readUInt16BE(offset + 5))
       }
       // 填充段（FF00）与无长度段跳过；其余按长度前进
       if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
@@ -272,24 +309,6 @@ function describeImage(json, bin, image, index, filePath) {
   return record
 }
 
-/** @description 默认场景可达的网格索引集合（包围盒与统计都只认这些网格）。 */
-function reachableMeshIndexes(json) {
-  const meshIndexes = new Set()
-  const nodes = asArray(json?.nodes)
-  const scene = asArray(json?.scenes)[Number.isInteger(json?.scene) ? json.scene : 0]
-  const visiting = new Set()
-  const walk = (index) => {
-    const node = nodes[index]
-    if (!node || visiting.has(index)) return
-    visiting.add(index)
-    if (typeof node.mesh === 'number' && node.mesh >= 0) meshIndexes.add(node.mesh)
-    for (const child of asArray(node.children)) walk(child)
-    visiting.delete(index)
-  }
-  for (const root of asArray(scene?.nodes)) walk(root)
-  return meshIndexes
-}
-
 /** @description 生成报告主体。调用方保证 json/bin 已解析成功。 */
 function analyze(report, json, bin, filePath) {
   const issues = report.issues
@@ -299,28 +318,41 @@ function analyze(report, json, bin, filePath) {
   // ---- 数量与几何 ----
   const meshes = asArray(json?.meshes)
   const primitives = meshes.flatMap((mesh) => asArray(mesh?.primitives))
+  const meshIndexes = reachableMeshIndexes(json)
   let vertices = 0
-  let indexTotal = 0
-  let nonIndexedVertexTotal = 0
+  let trianglesIndexed = 0
+  let trianglesNonIndexed = 0
+  let indexedModeTriangles = 0 // 只累计 mode=4 的索引数：整除不变量只对它成立
+  let indexedPrimitives = 0
   let nonIndexed = 0
+  let nonTrianglePrimitives = 0
   let missingTexCoordPrimitives = 0
+  let missingPositionBounds = 0
+  const modeHistogram = {}
   for (const primitive of primitives) {
     const position = json?.accessors?.[primitive?.attributes?.POSITION]
+    const mode = primitive?.mode ?? MODE_TRIANGLES
     vertices += position?.count ?? 0
+    modeHistogram[MODE_NAMES[mode] ?? `mode-${mode}`] = (modeHistogram[MODE_NAMES[mode] ?? `mode-${mode}`] ?? 0) + 1
+    if (mode !== MODE_TRIANGLES && mode !== MODE_TRIANGLE_STRIP && mode !== MODE_TRIANGLE_FAN) {
+      nonTrianglePrimitives += 1
+    }
     if (typeof primitive?.indices === 'number') {
-      indexTotal += json?.accessors?.[primitive.indices]?.count ?? 0
+      const count = json?.accessors?.[primitive.indices]?.count ?? 0
+      trianglesIndexed += triangleCountOf(mode, count)
+      if (mode === MODE_TRIANGLES) indexedModeTriangles += count
+      indexedPrimitives += 1
     } else {
       nonIndexed += 1
-      nonIndexedVertexTotal += position?.count ?? 0
+      trianglesNonIndexed += triangleCountOf(mode, position?.count ?? 0)
     }
+    if (!Array.isArray(position?.min) || !Array.isArray(position?.max)) missingPositionBounds += 1
     const material = json?.materials?.[primitive?.material]
     // 按**图元**计数（同一图元的多个纹理槽共用 UV，按槽位计数会重复报数）
     if (collectTextureSlots(material).some((slot) => !primitive?.attributes?.[`TEXCOORD_${slot.texCoord}`])) {
       missingTexCoordPrimitives += 1
     }
   }
-  const trianglesIndexed = indexTotal / 3
-  const trianglesNonIndexed = nonIndexedVertexTotal / 3
   const triangles = trianglesIndexed + trianglesNonIndexed
 
   report.counts = {
@@ -341,12 +373,14 @@ function analyze(report, json, bin, filePath) {
     triangles,
     trianglesIndexed,
     trianglesNonIndexed,
-    // 真正有证明力的不变量：索引数必须是 3 的倍数（审查指出原先的
-    // 「triangles === Σ(indices.count)/3」在无非索引图元时是恒等式、有非索引时必然为 false，
-    // 作为证据没有意义，故改为分别上报两类三角面 + 这条可判定的整除不变量）
-    indexCountDivisibleBy3: indexTotal % 3 === 0,
-    indexedPrimitives: primitives.length - nonIndexed,
+    // mode=4 的索引数必须能被 3 整除；没有 mode=4 的索引图元时报 null（0%3===0 是恒真，
+    // 拿它当证据同样空洞——审查指出过这一点）
+    indexCountDivisibleBy3: indexedModeTriangles > 0 ? indexedModeTriangles % 3 === 0 : null,
+    modeHistogram,
+    nonTrianglePrimitives,
+    indexedPrimitives,
     nonIndexedPrimitives: nonIndexed,
+    missingPositionBounds,
     // 顶点数 ÷ 三角面数：三角汤 ≈ 3.0，焊接良好 ≈ 0.6（参考件 0.61）
     vertexReuseRatio: triangles > 0 ? Number((vertices / triangles).toFixed(4)) : null,
   }
@@ -356,14 +390,20 @@ function analyze(report, json, bin, filePath) {
   const materials = asArray(json?.materials)
   const textures = asArray(json?.textures)
   const usedImageIndexes = new Set()
-  for (const material of materials) {
-    for (const slot of collectTextureSlots(material)) {
+  // 只有**被图元引用**的材质才算"在用"：文件里挂着未使用材质时，若把它的贴图也算已采样，
+  // NO_SAMPLED_TEXTURE 会假阴性（审查实测 sampledImages=1 而实际无任何图元采样）
+  const usedMaterialIndexes = new Set(primitives
+    .map((primitive) => primitive?.material)
+    .filter((index) => typeof index === 'number' && index >= 0))
+  for (const materialIndex of usedMaterialIndexes) {
+    for (const slot of collectTextureSlots(materials[materialIndex])) {
       const source = textures[slot.texture]?.source
       if (typeof source === 'number') usedImageIndexes.add(source)
     }
   }
-  const meshIndexes = reachableMeshIndexes(json)
   report.images = images
+  const undimensioned = images.filter((image) => (image.bufferView !== null || image.dataUri || image.external))
+    .filter((image) => typeof image.width !== 'number')
   report.textures = {
     total: textures.length,
     sampledImages: usedImageIndexes.size,
@@ -386,11 +426,29 @@ function analyze(report, json, bin, filePath) {
       '文件里没有任何 scene —— glTF 规范下这样的模型不会被渲染',
       '体检无法给出包围盒与节点统计；这类文件在 Cesium 里通常表现为"加载成功但看不见"')
   }
+  const sceneStatus = defaultSceneStatus(json)
+  if (sceneStatus === 'out-of-range') {
+    addIssue(issues, 'warn', 'SCENE_INDEX_OUT_OF_RANGE',
+      `json.scene = ${json.scene} 指向不存在的场景（共 ${report.counts.scenes} 个）`,
+      '文件声明了一个无效的默认场景，因此没有包围盒可算；这通常是导出器或人工编辑损坏了文件')
+  }
   const unreferenced = meshes.length - meshIndexes.size
   if (unreferenced > 0) {
     addIssue(issues, 'info', 'UNREFERENCED_MESHES',
-      `${unreferenced} 个网格没有被默认场景引用`,
-      '这些网格不会渲染；包围盒与 accessor 盒都只统计可达网格，避免被它们带偏')
+      `${unreferenced} 个网格没有被**默认场景**引用`,
+      report.counts.scenes > 1
+        ? '切换到其它场景时它们仍可能渲染；包围盒与 accessor 盒只按默认场景统计，避免被它们带偏'
+        : '这些网格不会渲染；包围盒与 accessor 盒都只统计可达网格，避免被它们带偏')
+  }
+  if (missingPositionBounds > 0) {
+    addIssue(issues, 'warn', 'POSITION_MINMAX_MISSING',
+      `${missingPositionBounds} 个图元的 POSITION accessor 缺少 min/max`,
+      'Cesium 依赖 min/max 做剔除与取景；缺失会导致包围盒算不出来（这正是"有几何却没有盒"的原因）')
+  }
+  if (undimensioned.length > 0) {
+    addIssue(issues, 'info', 'TEXTURE_DIMENSIONS_UNKNOWN',
+      `${undimensioned.length} 张贴图读不出宽高（${report.textures.dimensionsKnown}/${images.length} 可读）`,
+      'NPOT 与 1×1 占位检测对这些贴图无效；可能是外部文件缺失，或头部超过扫描上限（内嵌 256KB / data URI 4KB）')
   }
   if (materials.length && usedImageIndexes.size === 0) {
     addIssue(issues, 'warn', 'NO_SAMPLED_TEXTURE',
@@ -436,11 +494,25 @@ function analyze(report, json, bin, filePath) {
   report.bounds = glbBounds(json)
   const parts = report.bounds.deviationParts
   if (report.bounds.deviationFactor && report.bounds.deviationFactor > 10) {
+    const sizeSame = parts && parts.sizeRatio <= 1.001
     addIssue(issues, 'warn', 'ACCESSOR_BOUNDS_UNRELIABLE',
       `accessor 并集盒与真实世界盒相差 ${report.bounds.deviationFactor} 倍`,
-      `accessor 盒 ${JSON.stringify(report.bounds.accessorUnionSize)} ≠ 真实 ${JSON.stringify(report.bounds.worldSize)}`
-      + (parts ? `（尺寸比 ${parts.sizeRatio}、中心偏移比 ${parts.centerOffsetRatio}）` : '')
+      (sizeSame
+        ? `尺寸相同，但中心位置相差 ${parts.centerOffsetRatio} 倍体对角线`
+          + `（accessor 盒中心 ${JSON.stringify(report.bounds.accessorUnionCenter)}`
+          + ` vs 真实 ${JSON.stringify(report.bounds.worldCenter)}）`
+        : `accessor 盒 ${JSON.stringify(report.bounds.accessorUnionSize)}`
+          + ` vs 真实 ${JSON.stringify(report.bounds.worldSize)}`
+          + (parts ? `（尺寸比 ${parts.sizeRatio}、中心偏移比 ${parts.centerOffsetRatio}）` : ''))
       + '；只看 accessor min/max 取景会明显错位（文件里没有独立的"包围盒"字段，只能自己算）')
+  }
+  // 位置单独超限也要报：细长资产（如 1000×1×1）的体对角线很大，
+  // 平移达到数倍身长时合并倍数可能仍低于 10 而被静默放过
+  if (parts && parts.centerOffsetRatio > 1 && (!report.bounds.deviationFactor || report.bounds.deviationFactor <= 10)) {
+    addIssue(issues, 'warn', 'ACCESSOR_BOUNDS_OFFSET',
+      `accessor 盒与真实世界盒尺寸接近，但中心偏移达 ${parts.centerOffsetRatio} 倍体对角线`,
+      `accessor 盒中心 ${JSON.stringify(report.bounds.accessorUnionCenter)} vs 真实 ${JSON.stringify(report.bounds.worldCenter)}；`
+      + '按 accessor 盒取景会偏到模型外')
   }
   if (report.geometry.vertexReuseRatio !== null && report.geometry.vertexReuseRatio >= 2.9) {
     addIssue(issues, 'info', 'TRIANGLE_SOUP',
@@ -591,5 +663,7 @@ if (require.main === module) {
   }
   const result = inspect(target)
   console.log(formatReport(result))
-  process.exit(result.ok ? 0 : 1)
+  const hasError = asArray(result.issues).some((issue) => issue.level === 'error')
+  // BR-020：退出码要反映成败——报告不完整（partial）或含 error 级问题都算失败
+  process.exit(result.ok && !result.partial && !hasError ? 0 : 1)
 }
