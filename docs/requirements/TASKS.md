@@ -45,10 +45,33 @@
 - **状态**：已完成
 - **验证结果**：`node scripts/task-flow.mjs finish --test "npm test"` —— 门禁 43 通过 / 0 失败后自动合并为 `9b973c9`。断言：① 两份文档 `grep -c '{{'` = 0 ✅ ② `git ls-files docs/testing docs/release` 恰 2 份 ✅ ③ 覆盖率数字 92.29/96.44/89.46 与 `node --test --experimental-test-coverage` 实测一致 ✅ ④ `MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略 ✅ ⑤ `memory check` 通过 ✅
 
+### TASK-005 IVE 转 GLB（追溯登记）
+- **关联需求**：REQ-003
+- **依赖**：无
+- **做什么**：追溯登记平台采纳前已交付的 IVE 转 GLB 能力——原生助手 + Node 侧自包含 GLB 组装 + 上轴转换 + 贴地归心 + 顶点焊接。本任务不产生新代码，只把既有交付纳入台账。
+- **产出**：`src/ive.js`、`native/ive2glb/`、`scripts/build-ive2glb.sh`、`vendor/ive2glb/darwin-arm64/`、`test/ive.test.js`
+- **文件范围**：`src/ive.js`, `native/`, `scripts/build-ive2glb.sh`, `test/ive.test.js`
+- **验证方式**：`node --test test/ive.test.js`（24 用例）；关键数值断言见 REQ-003 验收标准
+- **状态**：已完成
+- **验证结果**：平台采纳前交付（主提交 `5b5b495`，其后 `6ada92d` 修复合并不见导出的加载错误），本次追溯登记。回归证据 `pass 24 / fail 0`；世界盒 `0.538 × 1.364 × 1.056`、顶点 56,772 → 11,516、`min.y = 0`
+
+### TASK-006 Cesium 兼容性修复能力（追溯登记）
+- **关联需求**：REQ-004
+- **依赖**：无
+- **做什么**：追溯登记平台采纳前已交付的 GLB 修复能力——蒙皮烘焙、图元合并、缺 UV 补全、扩展清理、贴图内嵌与 JPEG→PNG、批处理进度。同样不产生新代码。
+- **产出**：`src/repair.js`、`test/repair.test.js`
+- **文件范围**：`src/repair.js`, `test/repair.test.js`
+- **验证方式**：`node --test test/repair.test.js`（19 用例）
+- **状态**：已完成
+- **验证结果**：平台采纳前交付（`fd90022` 建立工作流、`1c266a4` 修复加载挂死与贴图不显示）。回归证据 `pass 19 / fail 0`
+
 ## 依赖 DAG
 
 ```text
 TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
+
+TASK-005（追溯登记，独立）
+TASK-006（追溯登记，独立）
 ```
 
 ## 并行批次
@@ -62,6 +85,7 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 | 2 | TASK-002 | 依赖 TASK-001 已完成 |
 | 3 | TASK-003 | 依赖 TASK-002 已完成 |
 | 4 | TASK-004 | 依赖 TASK-003 已完成 |
+| 5 | TASK-005, TASK-006 | 追溯登记，无依赖 |
 
 ## 进度
 
@@ -71,3 +95,5 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 | TASK-002 | REQ-001 | 已完成 | ☑ |
 | TASK-003 | REQ-001 | 已完成 | ☑ |
 | TASK-004 | REQ-002 | 已完成 | ☑ |
+| TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
+| TASK-006 | REQ-004 | 已完成 | ☑（追溯） |

@@ -40,4 +40,6 @@
 | 2026-09-18 | REQ-001 | TASK-002 | completed | bash -lc "npm test" → pass 43 / fail 0；台账三份已入库，见 docs/requirements/TASKS.md | e26b1a1 |
 | 2026-09-18 | REQ-001 | TASK-003 | completed | bash -lc "npm test" → pass 43 / fail 0；审批留痕已入库，见 docs/approvals/APPROVALS.md | 626eafe |
 | 2026-09-18 | REQ-002 | TASK-004 | completed | bash -lc "npm test" → pass 43 / fail 0；基线与覆盖率见 docs/testing/TEST_PLAN.md 与 docs/release/RELEASE_CHECKLIST.md | 9b973c9 |
+| 2026-09-18 | REQ-003 | TASK-005 | completed | node --test test/ive.test.js → pass 24 / fail 0；世界盒 0.538 × 1.364 × 1.056、顶点 56,772→11,516；规则见 docs/001-code-design.md（备注：平台采纳前交付，本次追溯登记） | 5b5b495 |
+| 2026-09-18 | REQ-004 | TASK-006 | completed | node --test test/repair.test.js → pass 19 / fail 0；规则见 docs/001-code-design.md（备注：平台采纳前交付，本次追溯登记） | 1c266a4 |
 <!-- memory:completion:end -->
