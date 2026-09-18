@@ -84,14 +84,28 @@
 - **已知遗留**（不阻塞本任务，另立任务处理）：`KHR_texture_transform.texCoord` 覆盖被忽略（`collectTextureSlots` 与 `repair.js::collectMaterialTexCoords` 一致忽略）→ `MISSING_TEXCOORD` 可能漏报
 - **补充复测**（2026-09-18，样例集被裁剪之后；不改写上方历史结论）：本地样例变为 4 个 GLB（`o-model/蹲姿.glb` + `model/{person-move,person-stand,蹲姿}.glb`）→ 0 崩溃、最慢 **1 ms**、`triangles` 与 `Σ(mode=4 索引数)/3` 4/4 一致、内嵌贴图宽高 12/12 可读；`o-model/运输车.glb` 已不在本地，其真值用例按夹具缺失跳过，`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**。用例自身已改为随语料伸缩（曾硬编码 ≥20，语料一裁剪即失败）
 ### TASK-008 界面体检面板与预览方向/缩放控件
-- **关联需求**：REQ-005（验收标准 4）
+- **关联需求**：REQ-005（验收标准 4）；设计决策 ADR-002（上轴三态）、ADR-004（预览修正不写回）
 - **依赖**：TASK-007
-- **做什么**：把体检报告做成界面面板（世界盒/accessor 盒双列 + 偏差告警 + 问题清单），并在 Cesium 预览上提供方向/缩放即时修正控件（只影响预览，写回需显式操作），日志记录最终 `modelMatrix`。
-- **产出**：`src/renderer.js`、`src/index.html`、`src/styles.css`、`src/main.js`（IPC）、`src/preload.js`
-- **文件范围**：`src/renderer.js`, `src/index.html`, `src/styles.css`, `src/main.js`, `src/preload.js`
-- **验证方式**：手工冒烟——打开一个体积正常的与一个 accessor 盒失真的模型，面板双列数值与告警可见；拖动方向/缩放使人物与车辆同框，日志出现最终 `modelMatrix`；确认输出文件未被改写（对比 `mtime` 与哈希）
+- **做什么**：把体检报告做成界面面板（世界盒/accessor 盒双列 + 偏差告警 + 事实行 + 问题清单），并在 Cesium 预览上提供**只影响预览**的修正控件：方向、缩放、以及 ADR-002 要求由人工点一次的上轴三态（`auto`/`Y-up`/`Z-up → Y-up`）；日志记录最终 `modelMatrix` 并注明未写回，写回仍是另一个显式操作（当前不存在）。
+- **产出**：`src/renderer.js`、`src/index.html`、`src/styles.css`、`src/main.js`（IPC）、`src/preload.js`、`src/report-format.js`（新）、`src/preview-transform.js`（新）、`test/report-format.test.js`（新）、`test/preview-transform.test.js`（新）、`test/ui-smoke.cjs`（新，人工跑）
+- **文件范围**：`src/renderer.js`, `src/index.html`, `src/styles.css`, `src/main.js`, `src/preload.js`, `src/report-format.js`, `src/preview-transform.js`, `test/report-format.test.js`, `test/preview-transform.test.js`, `test/ui-smoke.cjs`, `package.json`
+- **验证方式**：① `node --test test/report-format.test.js test/preview-transform.test.js`（纯函数：矩阵顺序/上轴三态/偏差文案与档位一致/残缺报告降级）；② `node test/ui-smoke.cjs <模型> --port <调试端口>` 用 CDP 驱动真实渲染进程，断言面板数值、偏差配色、问题排序、拖动不刷日志、`change` 记录最终 `modelMatrix`、上轴三态复合矩阵、失败路径不打断预览，并对输入文件做 `shasum` 前后比对；③ 人工目视：`选择预览模型（单个）` 分别取一个 GLB 与一个 IVE，看直立/贴地/贴图与"人物与车辆同框"
+- **状态**：已完成
+- **验证结果**：
+  ① 纯函数：`node --test test/report-format.test.js test/preview-transform.test.js` → **24 通过 / 0 失败**（`npm test` 104 通过 / 0 失败 / 4 跳过）。
+  ② 接线冒烟（`node test/ui-smoke.cjs model/蹲姿.glb --port 9333`）：面板 `hidden=false`、世界盒 `0.538 × 1.364 × 1.056 m`、accessor 盒 `0.005 × 0.011 × 0.012 m`、偏差档位 `inspect-deviation warn`（文案「尺寸比 129.211 倍（中心位置基本一致）…」）、6 条事实行（含**比例尺**）、问题按 warn→info 排序、面板文本无 `undefined`/`NaN`；拖动 5 次 `input` 新增日志 **0 行**，`change` 各记 1 行；方向 90°+缩放 2× 的 `modelMatrix` 与列主序手算一致；上轴选 `Z-up` 后矩阵为 `Rx(−90°)∘Ry(90°)∘2` 的复合；重置回 `0°/1.00×/auto`；输入文件 `shasum -a 256` 前后一致；缺失文件走 `{ ok:false, error:'无法读取文件：ENOENT…' }` 而不是 reject。IVE（`o-model/蹲姿.ive`）同样跑通，世界盒 `0.538 × 1.364 × 1.056 m`、中心 `0.000, 0.682, -0.000`，`.ive` 哈希不变。
+  ③ 人工目视：**待 sunny-zhai 确认**（自动化只覆盖接线与数值，覆盖不到"看起来对不对"）。
+  ④ 冒烟中暴露的**两处既有缺陷**（不在本任务范围，另立 TASK-009）：`inspect.js` 漏传默认场景导致 `UNREFERENCED_MESHES` 100% 误报；`renderer.js::waitForModelReady` 在模型已就绪时仍可能永远不落定（`#validationStatus` 卡在「正在加载…」）。
+
+### TASK-009 修掉 TASK-008 冒烟暴露的两处既有缺陷
+- **关联需求**：REQ-005（缺陷修复，不改写 TASK-007 的历史结论）
+- **依赖**：TASK-008
+- **做什么**：① `src/inspect.js` 调用 `reachableMeshIndexes(json)` 时漏了第二个参数（`scene`），于是"默认场景可达网格"恒为空集，**任何含网格的文件都会误报 `UNREFERENCED_MESHES`**（且同一份报告照样算得出世界盒，自相矛盾）；补上 `defaultSceneOf(json)` 并加回归用例（全部被引用的文件不得出现该条目、只在非默认场景里的网格必须出现）。② `src/renderer.js::waitForModelReady` 在 `Cesium.Model.fromGltfAsync` 已落定、模型已可用之后仍可能等不到 `readyEvent`（`model.ready` 为 false），导致 `validateModel` 永不返回：`#validationStatus` 卡在「正在加载…」，包围盒诊断与默认取景都不执行。保留错误分支，另加超时兜底（继续走完诊断与取景，并记一行中文警告）。
+- **产出**：`src/inspect.js`、`src/renderer.js`、`test/inspect.test.js`
+- **文件范围**：`src/inspect.js`, `src/renderer.js`, `test/inspect.test.js`
+- **验证方式**：① `node --test test/inspect.test.js` 新增两条回归用例；② `node src/inspect.js model/person-stand.glb` 不再出现 `UNREFERENCED_MESHES`（本地 4 个样例逐个核对）；③ `node test/ui-smoke.cjs model/蹲姿.glb --port 9333` 的「加载预览模型」步骤必须返回、`#validationStatus` 变为「加载成功」、日志出现相机诊断；④ `npm test` + `npm run lint` + `node scripts/memory.mjs check` 通过
 - **状态**：待开始
-- **验证结果**：（待 TASK-007 完成后开始）
+- **验证结果**：（待开始）
 
 ## 依赖 DAG
 
@@ -101,7 +115,7 @@ TASK-001 ──▶ TASK-002 ──▶ TASK-003 ──▶ TASK-004
 TASK-005（追溯登记，独立）
 TASK-006（追溯登记，独立）
 
-TASK-007 ──▶ TASK-008
+TASK-007 ──▶ TASK-008 ──▶ TASK-009（缺陷修复，依赖 TASK-008 的冒烟证据）
 ```
 
 ## 并行批次
@@ -118,6 +132,7 @@ TASK-007 ──▶ TASK-008
 | 5 | TASK-005, TASK-006 | 追溯登记，无依赖 |
 | 6 | TASK-007 | 无依赖（REQ-005 核心） |
 | 7 | TASK-008 | 依赖 TASK-007，且与其文件范围不重叠 |
+| 8 | TASK-009 | 依赖 TASK-008（缺陷由它的冒烟暴露），文件范围与 TASK-008 不重叠 |
 
 ## 进度
 
@@ -130,4 +145,5 @@ TASK-007 ──▶ TASK-008
 | TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
 | TASK-007 | REQ-005 | 已完成（经两轮冷上下文复审） | ☑ |
-| TASK-008 | REQ-005 | 待开始 | ☐ |
+| TASK-008 | REQ-005 | 已完成（待人工目视确认） | ☑ 自动 / ☐ 人工 |
+| TASK-009 | REQ-005 | 待开始 | ☐ |
