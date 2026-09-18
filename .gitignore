@@ -56,6 +56,9 @@ docs/testing/*
 !docs/release/
 docs/release/*
 !docs/release/RELEASE_CHECKLIST.md
+!docs/design/
+docs/design/*
+!docs/design/ADR.md
 AGENTS.md
 .worktrees/
 
