@@ -9,6 +9,8 @@ An Electron + plain-Node desktop tool that repairs GLB (glTF 2.0 binary) models 
 The app is split into two layers:
 
 - `src/repair.js` — the repair engine. Pure Node (CommonJS), no Electron or npm runtime deps, so it runs and tests under plain `node`.
+- `src/ive.js` — the IVE→GLB converter: drives the native `ive2glb` helper and assembles a self-contained GLB in Node. Also pure Node (uses only `jpeg-js`/`pngjs` plus `repair.js`'s `writeGlb`/`align4`).
+- `native/ive2glb/` — a small C++20 helper that reads IVE with OpenSceneGraph and dumps `scene.json` + `data.bin`. See "IVE input pipeline" below.
 - `src/main.js` + `src/preload.js` + `src/renderer.js`/`index.html` — the standard Electron main/preload/renderer shell over IPC.
 
 **All UI strings, log lines, and thrown error messages are Chinese (zh-CN);** keep new user-facing strings Chinese for consistency. The design doc (`docs/001-code-design.md`) and issue analysis (`docs/cesium-glb-load-issues.md`) are Chinese too.
@@ -16,6 +18,7 @@ The app is split into two layers:
 ## Commands
 
 - `npm install` — installs the Electron dev toolchain.
+- `npm run build:ive2glb` — builds `native/ive2glb` and vendors a **self-contained** helper into `vendor/ive2glb/darwin-<arch>/` (executable + `lib/*.dylib` + `osgPlugins/`), rewriting deps to `@rpath` and ad-hoc re-signing. macOS only; the Windows steps are in `native/ive2glb/README.md`.
 - `npm run dev` / `npm start` — runs `ensure:cesium` then launches Electron (app entry is `src/main.js`).
 - `npm run ensure:cesium` — downloads the Cesium 1.128 release zip and unpacks it to `vendor/cesium/1.128/Build/Cesium/` only if `Cesium.js` + `Widgets/widgets.css` are missing. Needed before `dev`/`start` because `index.html` loads Cesium from that exact relative path as a plain global `<script>` (no bundler).
 - `npm run lint` — `node --check` (syntax check only) over the four `src/*.js` files. Not a style linter.
@@ -56,7 +59,7 @@ The batch entry points `collectGlbEntries` (returns `{ inputPath, relativePath }
 
 ## Electron shell & IPC contract
 
-- **Main process** (`src/main.js`) owns the frameless `BrowserWindow`, the custom title bar (min/max/close), native dialogs, and validation-pane reads. IPC handlers: `pick-inputs`, `pick-output-dir`, `repair-glb` (calls `repairMany`), `read-glb-data-url` (returns the GLB as a base64 `data:model/gltf-binary` URL plus `bounds` from accessor min/max and a `metadata` summary), and the window controls. `BrowserWindow` uses `contextIsolation: true` and `nodeIntegration: false`.
+- **Main process** (`src/main.js`) owns the frameless `BrowserWindow`, the custom title bar (min/max/close), native dialogs, and validation-pane reads. IPC handlers: `pick-inputs` (filters `glb` + `ive`), `pick-output-dir`, `app-capabilities` (reports whether IVE conversion is available for this platform), `repair-glb` (converts any `.ive` inputs to temp GLBs, then calls `repairMany` on the GLBs), `read-glb-data-url` (converts `.ive` to a temp GLB first; returns the GLB as a base64 `data:model/gltf-binary` URL plus `bounds` from accessor min/max and a `metadata` summary), and the window controls. `BrowserWindow` uses `contextIsolation: true` and `nodeIntegration: false`.
 - **Preload** (`src/preload.js`) is the only bridge — it exposes `window.repairApp` wrapping each `ipcRenderer.invoke`. The renderer has no Node access; any new capability must be plumbed as a channel here + a handler in `main.js`.
 - **Renderer** (`src/renderer.js` + `index.html` + `styles.css`) is dependency-free DOM scripting. Two functional areas: the repair queue/results panel, and the Cesium validation view which creates a `Cesium.Viewer`, loads the chosen GLB via `Cesium.Model.fromGltfAsync` on the data URL, frames the camera from the bounding sphere / accessor bounds, and logs bounding-sphere/camera/animation/render diagnostics to the log pane. After a successful batch run it auto-validates the first success. If you touch Cesium preview framing, `docs/cesium-glb-load-issues.md` explains why conservative near-plane and bounds-based framing matter.
 
