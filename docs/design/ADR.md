@@ -57,3 +57,16 @@
 - **替代方案**：① 拖动即写回（否决：不可逆地改源资产）；② 只读不给控件（否决：无法消除"看着对、摆进去不对"的困惑）。
 - **影响面**：`src/renderer.js`（预览 `modelMatrix` 与控件）、`src/index.html`/`styles.css`、`src/main.js`+`src/preload.js`（若需写回通道）；CLAUDE.md 的 Electron 壳层说明。
 - **验证方式**（TASK-008 落地后）：冒烟——拖动方向/缩放使人物与车辆同框，日志出现最终 `modelMatrix`；对比输出文件 `mtime` 与哈希确认**未被改写**。
+
+## ADR-005 体检的统计口径：只认默认场景可达网格，偏差倍数含位置分量
+
+- **日期**：2026-09-18
+- **状态**：提议（实现已落地，待闸门 ② 人工确认）
+- **关联需求**：REQ-005（补充 ADR-001；不改写其历史）
+- **背景/问题**：ADR-001 落地后，独立冷上下文审查发现三处口径缺陷：① `deviationFactor` 只比「逐轴尺寸比」，**纯平移**（尺寸相同、位置差 1000）恒为 1，而 Cesium 取景同样会明显错位——正是本功能要暴露的问题；② `accessorUnionBounds` 并集了文件里**所有**网格的 accessor 盒，即使那些网格不被任何场景引用，于是「未引用的 1000³ 网格 + 被渲染的 1³ 模型」会报出 1000 倍假偏差并触发告警；③ `worldBounds` 在空 `scenes` 时退化为「把每个节点都当根」从而丢掉父级变换，多场景时盒取所有 scene 并集而节点统计只算默认场景，报告自相矛盾。
+- **决策**：(a) 偏差倍数改为 `max(逐轴尺寸比的最坏值, 1 + 中心偏移 ÷ 体对角线)`，并额外给出两个分量（`deviationParts.sizeRatio` / `centerOffsetRatio`）以解释「差在尺寸还是位置」；(b) `bounds.world`、`bounds.accessorUnion` 与节点统计**一律只按默认场景**（`json.scene ?? 0`）统计，并新增 `UNREFERENCED_MESHES` 提示未被引用的网格；(c) 空 `scenes` **不再回退**成「所有节点都是根」，返回 `null` 并给 `NO_DEFAULT_SCENE` 告警（glTF 下无 scene 即不渲染）。
+- **理由**：报告里的数字必须与「Cesium 会怎么渲染」同口径，否则用户按报告排查会被误导；假偏差比不报更糟——它会让人去修一个不存在的问题。
+- **后果**：正面——纯平移类错位能被发现；未引用网格不再污染指标；各统计口径一致。**代价与风险**：`deviationFactor` 不再是纯「尺寸倍数」（故以本 ADR 补充而非改写 ADR-001）；中心偏移以体对角线为基准，对极端细长资产（如 1000×1×1）该分量偏保守，可能低估位置错位的严重性。既有实测值未变（尺寸比在所有真实资产上占主导：装甲救护车 229,713 / 运输车 4,461 / person-move 485）。
+- **替代方案**：① 保持纯尺寸比（否决：纯平移漏检）；② 只报两个指标不合并（部分采纳：作为 `deviationParts` 一并给出，但仍需一个标量做告警门槛）；③ accessor 盒继续并集所有网格（否决：产生假偏差）。
+- **影响面**：`src/transform.js`（`deviationFactor`/`deviationParts`/`accessorUnionBounds`/`worldBounds`/`glbBounds`/`defaultSceneOf`/`reachableMeshIndexes`）、`src/inspect.js`（节点统计改用默认场景、`NO_DEFAULT_SCENE`/`UNREFERENCED_MESHES`）、`docs/001-code-design.md` BR-018、`test/inspect.test.js`。
+- **验证方式**：`node --test test/inspect.test.js` ——「纯平移也能被偏差倍数发现」（factor 1001、尺寸比 1、偏移比 1000）、「未被场景引用的网格不制造假偏差」（factor 恒为 1）、「没有 scene 的文件给出 null 盒」、「多场景只按默认场景统计」、「`deviationFactor` 同时覆盖尺寸与位置」。
