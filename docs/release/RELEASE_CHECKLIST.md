@@ -1,16 +1,16 @@
 # 发布检查清单（RELEASE CHECKLIST）
 
 > 由 `release` 技能维护。**预检未全绿不得发布**；发布后回填证据。
-> 关联需求：REQ-002 ｜ 发布版本：v0.1.0 ｜ 责任人：@sunny-zhai
+> 关联需求：REQ-002（验证基线）、REQ-005（模型体检） ｜ 发布版本：v0.1.1 ｜ 责任人：@sunny-zhai
 
 本清单只写**本项目真实可执行**的项。桌面单机工具没有服务端概念，凡不适用的项都显式标注
 "不适用"而不是留空——留空会让评审人误以为漏做。
 
 ## 1. 预检（Preflight）
 
-- [x] 关联 REQ 已验收：REQ-001（文档一致性）TASK-001/002/003 已完成并记录在完成线；REQ-002（验证基线）由本任务关闭
-- [x] 全量测试通过：`npm test` → **43 通过 / 0 失败 / 0 跳过**（夹具在位）；`npm run lint` 五文件通过
-- [x] 覆盖率已**实测并记录**：`all files` 行 92.29% / 分支 66.25% / 函数 93.70%。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
+- [x] 关联 REQ 已验收：REQ-001（文档一致性）TASK-001/002/003 已完成并记录在完成线；REQ-002（验证基线）由本任务关闭；REQ-005（模型体检）TASK-007 经两轮独立复审关闭，TASK-008 待开始
+- [x] 全量测试通过：`npm test` → **76 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；全新克隆无任何夹具时实测 66 通过 / 14 跳过 / 0 失败）；`npm run lint` 通过
+- [x] 覆盖率已**实测并记录**：`all files` 行 92.97% / 分支 73.76% / 函数 94.82%（样例集裁剪后复测，含新增的 `inspect.js` 93.57% 与 `transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
 - [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮独立上下文 subagent 复审**（第一轮不通过 → 修复 → 第二轮「有条件通过」），发现并修掉 2 个阻塞级 + 11 项残留缺陷；见 `docs/requirements/TASKS.md` 的 TASK-007 返工记录与完成线
 - [x] 无未解决的阻断级缺陷：已知问题见 §6「已知问题」，均不阻断发布但必须在发布说明中写明
 - [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖仅 `jpeg-js@^0.4.4`、`pngjs@^7.0.0`（均为 MIT，无原生扩展）；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
@@ -81,7 +81,9 @@
   - JPEG → PNG 导致输出体积变大，依赖"修完还是小体积"的用户需重新评估
 - **已知问题**：
   - Windows 安装包不含 IVE 助手（见 §3），Windows 用户只能使用 GLB 修复能力
-  - 渲染结果未经人眼确认（`TEST_PLAN.md` TC-012 待执行）
+  - 渲染结果的人眼确认仅覆盖「能否渲染」这一路径（TC-012 已由 sunny-zhai 于 2026-09-18 人工验收通过）；朝向/落地/贴图方向由自动化世界盒断言兜底，未经人眼逐项确认
+  - 模型体检（REQ-005）目前只有 `src/inspect.js` 的报告与 CLI，**界面上的体检面板与预览方向/缩放控件（TASK-008）尚未实现**，界面上看不到体检结论
+  - `KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报（TASK-007 已知遗留）
   - 无 CI：门禁（lint/test/memory check）依赖本地手工执行
   - 覆盖率未设门槛，Electron 壳层未纳入插桩
   - `npm audit` 在当前 registry 下不可用（见 §1）
@@ -90,4 +92,5 @@
 
 | 日期 | 版本 | 环境 | 结果 | 证据 | 回滚? |
 | :-- | :-- | :-- | :-- | :-- | :-- |
-| 待发布 | v0.1.0 | Windows x64 / macOS arm64 | 待执行 | `npm test` 43/43；`docs/testing/TEST_PLAN.md` | 否 |
+| 2026-09-18 | v0.1.0 | — | 代码并入 `main`（PR #6 → `3506327`、PR #7 → `0063590`），**安装包未产出**（§3 全未勾选） | `docs/approvals/APPROVALS.md` 的两条 delivery 记录 + `docs/testing/TEST_PLAN.md` | 否 |
+| 待发布 | v0.1.1 | Windows x64 / macOS arm64 | 待执行 | `npm test` 76 通过 / 0 失败 / 4 跳过；`docs/testing/TEST_PLAN.md` 结果汇总；`node scripts/memory.mjs check` 通过 | 否 |
