@@ -34,3 +34,4 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 2026-09-18 09:14 | architecture | approved | sunny-zhai | REQ-006 | docs/design/ADR.md (确认 ADR-006：CSS Grid + 自绘分隔条 + localStorage 记忆 + ResizeObserver→viewer.resize()，不引入前端框架/构建步骤，窄窗降级两栏) |
 | 2026-09-20 03:12 | spec | approved | sunny-zhai | REQ-007 | — |
 | 2026-09-20 03:12 | architecture | approved | sunny-zhai | REQ-007 | — |
+| 2026-09-20 07:21 | delivery | approved | sunny-zhai | v0.1.1 | PR #9 https://github.com/sunny-zhai/glb-texture-repair-tool/pull/9 merged into main as b155d0e (release/v0.1.1 全量交付：平台骨架入库与 .gitignore 根锚定、CLAUDE.md 口径校正、MERGE_REQUEST 重发；合并后 tree(release/v0.1.1) 与 tree(main) 完全相同，本地与远端均无差异) |
