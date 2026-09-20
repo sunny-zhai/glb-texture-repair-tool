@@ -882,3 +882,104 @@ test('repairGlbFile: person-stand 本地基线——降采样后体积只降不�
   assert.equal(after.geometry.vertices, before.geometry.vertices, '顶点数不得回退')
   assert.deepEqual(after.npotSamplerBindings, [], '降采样后的产物不得留下 NPOT × REPEAT × mipmap 绑定')
 })
+
+// ---- BR-033 / REQ-008：KHR_texture_transform.texCoord 覆盖 ----
+
+// 图元只有 TEXCOORD_0，材质经 KHR_texture_transform 以 texCoord: 1 采样贴图。
+function writeTextureTransformFixture(input) {
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0])
+  const indices = Uint16Array.from([0, 1, 2])
+  const uvs = Float32Array.from([0, 0, 1, 0, 0, 1])
+  const png = pngOfSize(4, 4)
+  const head = Buffer.concat([
+    Buffer.from(positions.buffer, positions.byteOffset, positions.byteLength),
+    Buffer.from(indices.buffer, indices.byteOffset, indices.byteLength),
+    Buffer.from(uvs.buffer, uvs.byteOffset, uvs.byteLength),
+  ])
+  const imageOffset = align4(head.length)
+  const bin = Buffer.concat([head, Buffer.alloc(imageOffset - head.length), png])
+  writeGlb(input, {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 2 }, indices: 1, material: 0 }] }],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { texCoord: 1 } } },
+      },
+    }],
+    textures: [{ source: 0 }],
+    images: [{ bufferView: 3, mimeType: 'image/png' }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [1, 1, 0] },
+      { bufferView: 1, componentType: 5123, count: 3, type: 'SCALAR' },
+      { bufferView: 2, componentType: 5126, count: 3, type: 'VEC2' },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: 36 },
+      { buffer: 0, byteOffset: 36, byteLength: 6 },
+      { buffer: 0, byteOffset: 44, byteLength: 24 },
+      { buffer: 0, byteOffset: imageOffset, byteLength: png.length },
+    ],
+    buffers: [{ byteLength: bin.length }],
+  }, bin)
+}
+
+test('repairGlbFile: 按 KHR_texture_transform.texCoord 补出 TEXCOORD_1 而不是 TEXCOORD_0（BR-033）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-transform-texcoord-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureTransformFixture(input)
+
+  // 先证明体检在修复前确实报了这条（否则"修复后不报"没有意义）
+  const beforeIssue = inspect(input).issues.find((issue) => issue.code === 'MISSING_TEXCOORD')
+  assert.ok(beforeIssue, '修复前必须报 MISSING_TEXCOORD')
+  assert.match(beforeIssue.message, /TEXCOORD_1/)
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.status, 'success')
+  assert.equal(report.texCoordsFilled, 1)
+
+  const { json, bin } = readGlb(output)
+  const primitive = json.meshes[0].primitives[0]
+  // 补的是被扩展点名的通道，而不是默认的 TEXCOORD_0
+  assert.equal(typeof primitive.attributes.TEXCOORD_1, 'number', '必须补出 TEXCOORD_1')
+  assert.equal(primitive.attributes.TEXCOORD_0, 2, '原有的 TEXCOORD_0 必须原样保留')
+  const accessor = json.accessors[primitive.attributes.TEXCOORD_1]
+  assert.equal(accessor.type, 'VEC2')
+  assert.equal(accessor.componentType, 5126)
+  assert.equal(accessor.count, 3)
+  const view = json.bufferViews[accessor.bufferView]
+  const bytes = bin.subarray(view.byteOffset, view.byteOffset + view.byteLength)
+  assert.equal(bytes.length, 24)
+  assert.equal(bytes.every((byte) => byte === 0), true, '补出的 UV 必须是全 0')
+
+  // 修复后体检不得再报这条（漏报被闭环）
+  assert.equal(
+    inspect(output).issues.some((issue) => issue.code === 'MISSING_TEXCOORD'),
+    false,
+  )
+})
+
+test('repairGlbFile: 没有扩展覆盖时仍按槽位自身的 texCoord 补 UV（不回归）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-slot-texcoord-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(4, 4) }],
+    textures: [{ source: 0 }],
+  })
+  // writeTextureFixture 的图元已带 TEXCOORD_0：先删掉，让补 UV 逻辑必须工作
+  const original = readGlb(input)
+  delete original.json.meshes[0].primitives[0].attributes.TEXCOORD_0
+  writeGlb(input, original.json, original.bin)
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.texCoordsFilled, 1)
+  const { json } = readGlb(output)
+  assert.equal(typeof json.meshes[0].primitives[0].attributes.TEXCOORD_0, 'number')
+  assert.equal(json.meshes[0].primitives[0].attributes.TEXCOORD_1, undefined)
+})
