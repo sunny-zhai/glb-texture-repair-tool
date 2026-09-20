@@ -51,12 +51,12 @@ document:
 | MOD-004 | 结果面板 | 展示输入、输出、大小变化、错误信息 |
 | MOD-005 | IVE 原生助手（C++） | 用 OpenSceneGraph 读取 IVE，导出 `scene.json` + `data.bin` 中间产物；不链接 Qt/Assimp/渲染模块 |
 | MOD-006 | IVE→GLB 组装器（`src/ive.js`） | 解析中间产物、编码贴图、组装并写出自包含 GLB；含上轴转换、贴地归心、顶点焊接 |
-| MOD-008 | 多格式转换内核（`src/convert.js`） | FBX/OBJ → 自包含 GLB：assimpjs(WASM) 进程内转换、复用 `ive.js::weldVertices` 焊接三角汤、复用 `repair.js::resolveExternalImage` 内嵌外部贴图（解析不到的换 1×1 占位并记 warning）；永不抛，返回 `{status, bytes, warnings, stats}` |
 | MOD-007 | 模型体检（`src/inspect.js`） | 只读产出参数报告：体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴推断、比例尺、问题清单；支持 `node src/inspect.js <file.glb>` |
 | MOD-008 | 世界盒与矩阵工具（`src/transform.js`） | 沿节点链累乘矩阵求世界包围盒；GLB 路径与 IVE 路径共用同一份遍历实现 |
 | MOD-009 | 体检报告格式化（`src/report-format.js`） | 把 `inspect.js` 的机器报告转成界面用的中文键值行与偏差文案；纯函数，可在 `node --test` 里直接覆盖 |
 | MOD-010 | 预览方向/缩放（`src/preview-transform.js`） | 把方向/缩放换算成 Cesium `modelMatrix`（列主序 16 元素）；纯函数，无 Cesium 依赖 |
 | MOD-011 | 体检面板与预览控件（`src/renderer.js`/`index.html`/`styles.css`） | 双列展示世界盒与 accessor 盒、偏差告警、事实行与问题清单；方向/缩放滑块只改预览矩阵并记日志 |
+| MOD-012 | 多格式转换内核（`src/convert.js`） | FBX/OBJ → 自包含 GLB：assimpjs(WASM) 进程内转换、复用 `ive.js::weldVertices` 焊接三角汤、复用 `repair.js::resolveExternalImage` 内嵌外部贴图（解析不到的换 1×1 占位并记 warning）；永不抛，返回 `{status, bytes, warnings, stats}` |
 
 ### 3.1 关键规则
 

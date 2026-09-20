@@ -41,7 +41,7 @@ const failures = []
 // 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
 let checksRun = 0
 // 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
-const EXPECTED_CHECK_COUNT = 110
+const EXPECTED_CHECK_COUNT = 112
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -529,6 +529,25 @@ async function main() {
   check('预览必须真的加载成功（不能被"未渲染"的超时兜底蒙过）', /加载成功/.test(loaded || ''), String(loaded))
   await new Promise((resolve) => setTimeout(resolve, 3000))
 
+  // REQ-007：预览产物必须**自包含**（Cesium 读的是 data URL，外部 uri 一定加载失败）。
+  // 之前这条只被"加载成功"间接保证，现在直接查 payload；转换告警也必须出现在日志里。
+  const selfContained = await run('预览产物自包含性与转换告警', `(async () => {
+    const payload = await window.repairApp.readGlbDataUrl(${JSON.stringify(modelPath)});
+    return {
+      uris: (payload.metadata && payload.metadata.externalImageUris) || [],
+      imageCount: (payload.metadata && payload.metadata.imageCount) || 0,
+      warnings: payload.conversionWarnings || [],
+      loggedWarnings: (document.getElementById('log').textContent.match(/转换告警：/g) || []).length,
+    };
+  })()`, true)
+  if (selfContained) {
+    check('预览产物不得残留外部贴图 uri（否则 Cesium 读不到）',
+      selfContained.uris.length === 0, JSON.stringify(selfContained))
+    check('有转换告警时必须逐条落进日志（批量与预览两条路都不能吞）',
+      selfContained.warnings.length === 0 || selfContained.loggedWarnings > 0,
+      JSON.stringify(selfContained))
+  }
+
   const inspect = await run('读体检面板', `(() => {
     const text = (id) => document.getElementById(id)?.textContent ?? null;
     const panel = document.getElementById('inspectPanel');
@@ -879,8 +898,26 @@ async function main() {
       rightVisibility: getComputedStyle(document.getElementById('paneRight')).visibility,
       applied,
     };
+    // 抽屉有 0.16s 的 transition：固定 sleep 在窗口不可见/被遮挡时会 flaky（冷审复现过一次假红），
+    // 改成轮询到"连续两次读数相同"再取快照
+    const settle = async (probe, timeoutMs = 3000) => {
+      const started = Date.now();
+      let previous = null;
+      while (Date.now() - started < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 60));
+        const current = probe();
+        if (previous !== null && current === previous) return;
+        previous = current;
+      }
+    };
+    // 抽屉有 0.16s 的 transition：窗口被遮挡时合成器会把它**停在中途**（冷审与本次都遇到过
+    // x=792 而最终应为 540 的假红）。这里测试期间关掉过渡，让状态切换立即落定——
+    // 断言的是布局结果，不是动画进度。
+    const paneRight = document.getElementById('paneRight');
+    const previousTransition = paneRight.style.transition;
+    paneRight.style.transition = 'none';
     document.getElementById('toggleDrawer').click();
-    await new Promise((r) => setTimeout(r, 350));
+    await settle(() => JSON.stringify({ x: rect('paneRight').x, v: getComputedStyle(document.getElementById('paneRight')).visibility, c: shell.className }));
     const opened = {
       classes: shell.className,
       scrollWidth: se.scrollWidth, clientWidth: se.clientWidth,
@@ -889,8 +926,9 @@ async function main() {
       ariaExpanded: document.getElementById('toggleDrawer').getAttribute('aria-expanded'),
     };
     document.getElementById('toggleDrawer').click();
-    await new Promise((r) => setTimeout(r, 350));
+    await settle(() => JSON.stringify({ v: getComputedStyle(document.getElementById('paneRight')).visibility, c: shell.className }));
     const reclosed = { classes: shell.className, rightVisibility: getComputedStyle(document.getElementById('paneRight')).visibility };
+    paneRight.style.transition = previousTransition;
     return { closed, opened, reclosed, limits: window.__layout.limits };
   })()`, true)
   if (narrow) {

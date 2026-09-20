@@ -60,8 +60,9 @@ function resolveAssimpModule() {
   return assimpFactory
 }
 
-/** @description assimpjs（及其 wasm）是否可用；不可用时界面据此提示，而不是静默失败。 */
+/** @description assimpjs（及其 wasm）是否可用；未探测过时退化为"模块能否 require"。 */
 function assimpAvailable() {
+  if (assimpProbe) return assimpProbe.ok
   return typeof resolveAssimpModule() === 'function'
 }
 
@@ -71,12 +72,32 @@ function missingAssimpMessage() {
 }
 
 let assimpInstance = null
+let assimpProbe = null
+
+/**
+ * @description **真正**尝试加载一次 wasm 并缓存结果。能力探测不能只看 JS 模块能否 require：
+ *   实测（冷审）glue 能 require 但 `assimpjs.wasm` 读不到时，只查模块会给出假阳性——界面显示
+ *   "支持 FBX/OBJ"，而每次转换必然失败。
+ */
+async function probeAssimp() {
+  if (assimpProbe) return assimpProbe
+  try {
+    const factory = resolveAssimpModule()
+    if (typeof factory !== 'function') throw new Error(missingAssimpMessage())
+    assimpInstance = await factory()
+    assimpProbe = { ok: true, error: '' }
+  } catch (error) {
+    assimpLoadError = error
+    assimpInstance = null
+    assimpProbe = { ok: false, error: error.message }
+  }
+  return assimpProbe
+}
 
 async function loadAssimp() {
   if (assimpInstance) return assimpInstance
-  const factory = resolveAssimpModule()
-  if (typeof factory !== 'function') throw new Error(missingAssimpMessage())
-  assimpInstance = await factory()
+  const probe = await probeAssimp()
+  if (!probe.ok) throw new Error(missingAssimpMessage())
   return assimpInstance
 }
 
@@ -175,8 +196,15 @@ function createAppender(json, chunks) {
   }
 }
 
+const COMPONENT_BYTES = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
+
+/** @description 取某个 accessor 自己的字节区间（**必须**算上 `accessor.byteOffset`）。 */
 function accessorBytes(bin, view, accessor) {
-  return bin.subarray(view.byteOffset, view.byteOffset + view.byteLength)
+  const bytesPerComponent = COMPONENT_BYTES[accessor.componentType] || 0
+  const components = COMPONENTS_BY_TYPE[accessor.type] || 0
+  const length = bytesPerComponent * components * accessor.count
+  const start = view.byteOffset + (accessor.byteOffset || 0)
+  return bin.subarray(start, start + length)
 }
 
 function positionMinMax(bytes, count) {
@@ -197,9 +225,15 @@ function positionMinMax(bytes, count) {
  * @description 焊接所有三角形图元的顶点（复用 `weldVertices`）。新数据追加为新 bufferView，
  *   并**原地改写**图元自己那几个 accessor（而不是新增 accessor）——否则旧 accessor 仍然引用
  *   旧 bufferView，`compactBufferViews` 就回收不掉旧顶点数据（实测 FBX 会从 4.7MB 涨到 5.6MB）。
- *   共享 accessor（被多个图元引用）时保守跳过该图元，绝不改坏几何。
+ *
+ *   **保守跳过**（原地改写的前提是"这些 accessor 只属于这一个图元、且没有偏移"）：被多个图元
+ *   引用、被动画 sampler / skins / morph targets 引用、`accessor.byteOffset` 非 0、一个
+ *   bufferView 被多个 accessor 共用、或图元带 morph targets 的，一律原样保留。
+ *   冷审给过两个可复现反例：`byteOffset:4` 的 POSITION 会被读错并写出错位几何；
+ *   POSITION 兼作动画 output 时会被连动画一起改坏（count 6→4）。
  *   只处理**非交错**图元；不满足条件（或没有可合并顶点）时原样保留。
  * @returns {{welded:number, before:number, after:number, primitives:number}}
+ * @remarks 导出仅供单测直接构造反例（正常调用只走 `convertToGlb`）。
  */
 function weldPrimitives(json, chunks) {
   const appender = createAppender(json, chunks)
@@ -208,7 +242,8 @@ function weldPrimitives(json, chunks) {
   const bufferViews = json.bufferViews || []
   const bin = chunks[0]
 
-  // accessor 的引用计数：>1 说明被多个图元（或动画）共享，原地改写会波及别人
+  // accessor 的引用计数：>1 说明被别处共享，原地改写会波及别人。
+  // 必须把**所有**引用方都数进来——冷审的反例就是只数了图元、漏了动画 sampler。
   const usage = new Map()
   const countUsage = (index) => {
     if (!Number.isInteger(index)) return
@@ -218,7 +253,24 @@ function weldPrimitives(json, chunks) {
     for (const primitive of asArray(mesh && mesh.primitives)) {
       for (const accessorIndex of Object.values((primitive && primitive.attributes) || {})) countUsage(accessorIndex)
       countUsage(primitive && primitive.indices)
+      for (const target of asArray(primitive && primitive.targets)) {
+        for (const accessorIndex of Object.values(target || {})) countUsage(accessorIndex)
+      }
     }
+  }
+  for (const animation of asArray(json.animations)) {
+    for (const sampler of asArray(animation && animation.samplers)) {
+      countUsage(sampler && sampler.input)
+      countUsage(sampler && sampler.output)
+    }
+  }
+  for (const skin of asArray(json.skins)) countUsage(skin && skin.inverseBindMatrices)
+
+  // 一个 bufferView 被多个 accessor 共用时，追加新 view 并改写其一会让另一个错位
+  const accessorsPerView = new Map()
+  for (const accessor of accessors) {
+    if (!Number.isInteger(accessor && accessor.bufferView)) continue
+    accessorsPerView.set(accessor.bufferView, (accessorsPerView.get(accessor.bufferView) || 0) + 1)
   }
 
   for (const mesh of asArray(json.meshes)) {
@@ -226,6 +278,8 @@ function weldPrimitives(json, chunks) {
       if (!primitive || !primitive.attributes) continue
       if (primitive.mode !== undefined && primitive.mode !== TRIANGLES_MODE) continue
       if (!Number.isInteger(primitive.indices)) continue
+      // morph targets 是逐顶点的增量，焊接会改变顶点数 —— 一律跳过
+      if (asArray(primitive.targets).length > 0) continue
 
       const entries = Object.entries(primitive.attributes)
       if (entries.some(([, accessorIndex]) => usage.get(accessorIndex) !== 1)) continue
@@ -238,7 +292,10 @@ function weldPrimitives(json, chunks) {
         const view = accessor ? bufferViews[accessor.bufferView] : null
         const components = accessor ? COMPONENTS_BY_TYPE[accessor.type] : 0
         if (!accessor || !view || view.byteStride || !components
-          || !WELDABLE_COMPONENT_TYPES.has(accessor.componentType)) {
+          || !WELDABLE_COMPONENT_TYPES.has(accessor.componentType)
+          // 有偏移或与别的 accessor 共用 view 时不改写（改写只保证"独占且无偏移"这一种形状）
+          || accessor.byteOffset
+          || accessorsPerView.get(accessor.bufferView) !== 1) {
           supported = false
           break
         }
@@ -254,6 +311,7 @@ function weldPrimitives(json, chunks) {
       const indexAccessor = accessors[primitive.indices]
       const indexView = indexAccessor ? bufferViews[indexAccessor.bufferView] : null
       if (!supported || !streams.length || !indexAccessor || !indexView || indexAccessor.componentType !== UINT32) continue
+      if (indexAccessor.byteOffset || accessorsPerView.get(indexAccessor.bufferView) !== 1) continue
 
       stats.before += streams[0].count
       const welded = weldVertices(streams, accessorBytes(bin, indexView, indexAccessor), indexAccessor.count)
@@ -330,10 +388,16 @@ function compactBufferViews(json, bin) {
   const used = new Set()
   for (const accessor of accessors) {
     if (Number.isInteger(accessor && accessor.bufferView)) used.add(accessor.bufferView)
+    // sparse accessor 的 indices/values 也引用 bufferView——漏掉会把它们回收掉
+    for (const part of [accessor && accessor.sparse && accessor.sparse.indices, accessor && accessor.sparse && accessor.sparse.values]) {
+      if (Number.isInteger(part && part.bufferView)) used.add(part.bufferView)
+    }
   }
   for (const image of images) {
     if (Number.isInteger(image && image.bufferView)) used.add(image.bufferView)
   }
+  // 注意：Draco / meshopt 的压缩数据靠 extensions 里的 bufferView 引用，assimp 的 glb2 不产出，
+  // 一旦将来接入这类产物，这里必须把 extensions 里的引用也补进 used，否则会回收掉压缩数据。
 
   const oldViews = asArray(json.bufferViews)
   const newViews = []
@@ -391,8 +455,9 @@ function geometryStats(json) {
 /** @description 把内存里的 GLB 字节解析成 { json, bin }（`readGlb` 只吃路径，这里借临时文件复用同一套解析）。 */
 function parseGlbBytes(bytes) {
   const tempFile = path.join(os.tmpdir(), `glb-convert-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.glb`)
-  fs.writeFileSync(tempFile, bytes)
   try {
+    // writeFileSync 也放进 try：只写了一半就失败时同样要清掉这个临时文件
+    fs.writeFileSync(tempFile, bytes)
     return readGlb(tempFile)
   } finally {
     fs.rmSync(tempFile, { force: true })
@@ -405,6 +470,10 @@ function parseGlbBytes(bytes) {
  * @param {string} inputPath FBX / OBJ 的绝对路径
  * @param {{weld?: boolean}} [options] `weld:false` 关闭焊接（默认开启）
  * @returns {Promise<{status:'success'|'error', bytes?:Buffer, warnings:string[], stats?:object, error?:string}>}
+ * @remarks **已知代价（冷审实测）**：`ConvertFileList` 是同步 wasm，单个 FBX 约 4~6 秒会独占
+ *   主进程（期间窗口按钮无响应）；实例常驻复用，重复转换时 wasm 侧内存会增长（OBJ×15 实测
+ *   48→135MB 无平台期，FBX×5 到 ~107MB 后趋平）。几十个 FBX 的批量应做一次 soak，
+ *   后续可考虑挪到 utilityProcess/worker 里跑。
  */
 async function convertToGlb(inputPath, options = {}) {
   const result = { status: 'error', warnings: [] }
@@ -460,6 +529,8 @@ async function convertToGlb(inputPath, options = {}) {
       bytesOut: bytes.length,
       elapsedMs: Date.now() - started,
       sidecars: sidecars.length,
+      // 产物里的贴图总数（FBX 的贴图本来就内嵌，embeddedImages 会是 0，不能拿它当"贴图张数"）
+      images: asArray(json.images).length,
       embeddedImages: embedded.stats.embedded,
       replacedImages: embedded.stats.replaced,
       generator: (json.asset && json.asset.generator) || '',
@@ -491,4 +562,8 @@ module.exports = {
   convertToGlb,
   isConvertiblePath,
   missingAssimpMessage,
+  // 能力探测：真正加载一次 wasm（只查模块会有假阳性）
+  probeAssimp,
+  // 仅供单测直接构造"不该焊接"的反例（正常路径只走 convertToGlb）
+  weldPrimitives,
 }

@@ -11,9 +11,11 @@ const {
   convertToGlb,
   isConvertiblePath,
   missingAssimpMessage,
+  weldPrimitives,
 } = require('../src/convert')
 const { readGlb } = require('../src/repair')
 const { glbBounds } = require('../src/transform')
+const { inspect } = require('../src/inspect')
 
 const projectRoot = path.join(__dirname, '..')
 const fbxFixture = path.join(projectRoot, 'o-model', '蹲姿.fbx')
@@ -104,7 +106,7 @@ test('convert: 不存在的文件与不可转换的格式都返回中文错误�
   assert.match(wrong.error, /只支持 FBX \/ OBJ/)
 })
 
-test('convert: 坏文件返回中文错误且不抛（批量不会中断）', { skip: convertSkipReason(fbxFixture) }, async () => {
+test('convert: 坏文件返回中文错误且不抛（批量不会中断）', async () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'convert-bad-'))
   try {
     const broken = path.join(dir, 'broken.fbx')
@@ -176,6 +178,20 @@ test('convert: MTL 里解析不到的贴图用 1×1 占位并在 warnings 里给
     const { json } = parse(report.bytes)
     const placeholders = (json.images || []).filter((image) => String(image.name || '').startsWith('missing:'))
     assert.ok(placeholders.length >= 1, '占位贴图要留下 missing: 名字，便于体检识别')
+
+    // I-1：体检的**问题清单**也必须能看到原始 uri（只留在日志里不够）
+    const os = require('node:os')
+    const tempFile = path.join(os.tmpdir(), `convert-inspect-${process.pid}-${Math.random().toString(16).slice(2)}.glb`)
+    fs.writeFileSync(tempFile, report.bytes)
+    try {
+      const inspection = inspect(tempFile)
+      const placeholderIssue = (inspection.issues || []).find((issue) => issue.code === 'TEXTURE_1X1_PLACEHOLDER')
+      assert.ok(placeholderIssue, '体检必须报出 1×1 占位')
+      assert.match(placeholderIssue.message, /WuYanZu_Hat_D\.jpg/, `占位 issue 必须带出原始 uri，实际：${placeholderIssue.message}`)
+      assert.match(String(placeholderIssue.detail || ''), /放到模型同级目录/, '占位 issue 要给出可操作的恢复建议')
+    } finally {
+      fs.rmSync(tempFile, { force: true })
+    }
   })
 
 test('convert: 焊接把三角汤压到参考件量级且面数不变',
@@ -199,11 +215,128 @@ test('convert: 汇总统计与写出的 GLB 自洽（顶点/面/贴图）',
   { skip: convertSkipReason(fbxFixture) }, async () => {
     const report = await convertToGlb(fbxFixture)
     assert.equal(report.status, 'success', report.error)
-    const geometry = countGeometry(parse(report.bytes).json)
-    assert.equal(report.stats.vertices, geometry.vertices)
-    assert.equal(report.stats.triangles, geometry.triangles)
+    const { json } = parse(report.bytes)
+    // 与**独立常量**比对：同一份 json 两边算出来的相等属同义反复，证明不了读的是产物
+    assert.equal(report.stats.vertices, 11516)
+    assert.equal(report.stats.triangles, 18924)
+    assert.equal(report.stats.images, 3, '产物里的贴图总数（FBX 本来就内嵌，不能拿 embeddedImages 当张数）')
     assert.equal(report.stats.bytesOut, report.bytes.length)
     assert.equal(report.stats.verticesBeforeWeld, 56772)
     assert.ok(report.stats.elapsedMs >= 0)
     assert.match(report.stats.generator, /assimp/)
+    // 产物里每个图片都必须是内嵌的 bufferView（stats.images 与之一致）
+    assert.equal((json.images || []).filter((image) => Number.isInteger(image.bufferView)).length, 3)
   })
+
+test('convert: 贴图解析顺序覆盖「相对路径 / 同等目录同名 / .fbm 内同名」三种', async () => {
+  const os = require('node:os')
+  const { PNG } = require(path.join(projectRoot, 'node_modules', 'pngjs'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'convert-resolve-'))
+  const png = new PNG({ width: 2, height: 2 })
+  for (let i = 0; i < png.data.length; i += 4) { png.data[i] = 255; png.data[i + 3] = 255 }
+  const pngBytes = PNG.sync.write(png)
+  const geometry = 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'
+  const cases = []
+
+  try {
+    // ① MTL 写相对路径，贴图就在旁边
+    const relDir = path.join(dir, 'rel')
+    fs.mkdirSync(relDir)
+    fs.writeFileSync(path.join(relDir, 'm.obj'), `mtllib m.mtl\n${geometry}`)
+    fs.writeFileSync(path.join(relDir, 'm.mtl'), 'newmtl a\nmap_Kd tex.png\n')
+    fs.writeFileSync(path.join(relDir, 'tex.png'), pngBytes)
+    cases.push(['相对路径', path.join(relDir, 'm.obj')])
+
+    // ② MTL 写别的机器的反斜杠路径，但同名贴图就在旁边（按 basename 命中）
+    const sameDir = path.join(dir, 'same')
+    fs.mkdirSync(sameDir)
+    fs.writeFileSync(path.join(sameDir, 'm.obj'), `mtllib m.mtl\n${geometry}`)
+    fs.writeFileSync(path.join(sameDir, 'm.mtl'), 'newmtl a\nmap_Kd E:\\zxb\\somewhere\\tex.png\n')
+    fs.writeFileSync(path.join(sameDir, 'tex.png'), pngBytes)
+    cases.push(['同级同名', path.join(sameDir, 'm.obj')])
+
+    // ③ 贴图只在 .fbm 子目录里（MTL 依旧写绝对路径）
+    const fbmDir = path.join(dir, 'fbm')
+    fs.mkdirSync(path.join(fbmDir, 'model.fbm'), { recursive: true })
+    fs.writeFileSync(path.join(fbmDir, 'm.obj'), `mtllib m.mtl\n${geometry}`)
+    fs.writeFileSync(path.join(fbmDir, 'm.mtl'), 'newmtl a\nmap_Kd D:\\art\\model.fbm\\tex.png\n')
+    fs.writeFileSync(path.join(fbmDir, 'model.fbm', 'tex.png'), pngBytes)
+    cases.push(['.fbm 内同名', path.join(fbmDir, 'm.obj')])
+
+    for (const [label, objPath] of cases) {
+      assert.deepEqual(
+        collectSidecarFiles(objPath).map((file) => file.name).includes('tex.png'), true,
+        `${label}：sidecar 必须带上 tex.png`,
+      )
+      const report = await convertToGlb(objPath)
+      assert.equal(report.status, 'success', `${label}：${report.error}`)
+      assert.equal(report.warnings.length, 0, `${label} 不该有告警：${report.warnings.join(' | ')}`)
+      const { json } = parse(report.bytes)
+      assert.equal((json.images || []).filter((image) => Number.isInteger(image.bufferView)).length, 1, `${label}：贴图必须内嵌`)
+      assert.equal((json.images || []).filter((image) => image.uri).length, 0, `${label}：不得残留 uri`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** @description 造一个最小的三角汤 GLB 形状（2 个三角形 / 6 条顶点记录 / 4 个唯一顶点）。 */
+function syntheticSoup({ positionByteOffset = 0, withAnimation = false } = {}) {
+  const positions = new Float32Array([
+    0, 0, 0, 1, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 1, 0, 1, 1, 0,
+  ])
+  const normals = new Float32Array(18).fill(0)
+  for (let i = 2; i < 18; i += 3) normals[i] = 1
+  const indices = new Uint32Array([0, 1, 2, 3, 4, 5])
+  const pad = Buffer.alloc(positionByteOffset)
+  const positionBytes = Buffer.from(positions.buffer)
+  const chunk0 = Buffer.concat([pad, positionBytes])
+  const chunk1 = Buffer.from(normals.buffer)
+  const chunk2 = Buffer.from(indices.buffer)
+  const bin = Buffer.concat([chunk0, chunk1, chunk2])
+  const json = {
+    asset: { version: '2.0' },
+    accessors: [
+      { bufferView: 0, byteOffset: positionByteOffset || undefined, componentType: 5126, count: 6, type: 'VEC3', min: [0, 0, 0], max: [1, 1, 0] },
+      { bufferView: 1, componentType: 5126, count: 6, type: 'VEC3' },
+      { bufferView: 2, componentType: 5125, count: 6, type: 'SCALAR' },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: chunk0.length, target: 34962 },
+      { buffer: 0, byteOffset: chunk0.length, byteLength: chunk1.length, target: 34962 },
+      { buffer: 0, byteOffset: chunk0.length + chunk1.length, byteLength: chunk2.length, target: 34963 },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 2, mode: 4 }] }],
+    buffers: [{ byteLength: bin.length }],
+  }
+  if (withAnimation) {
+    json.animations = [{ samplers: [{ input: 2, output: 0 }], channels: [] }]
+  }
+  return { json, bin }
+}
+
+test('convert: 焊接对"带 byteOffset 的 accessor"保守跳过（冷审反例 I-5①）', () => {
+  const { json, bin } = syntheticSoup({ positionByteOffset: 4 })
+  const stats = weldPrimitives(json, [bin])
+  assert.equal(stats.welded, 0, 'byteOffset≠0 时必须跳过，否则会读出错位几何')
+  assert.equal(json.accessors[0].count, 6, '原始 accessor 必须原样保留')
+  assert.equal(json.accessors[0].byteOffset, 4)
+})
+
+test('convert: 焊接对"被动画 sampler 复用的 accessor"保守跳过（冷审反例 I-5②）', () => {
+  const { json, bin } = syntheticSoup({ withAnimation: true })
+  const stats = weldPrimitives(json, [bin])
+  assert.equal(stats.welded, 0, 'POSITION 兼作动画 output 时不能原地改写，否则会连动画一起改坏')
+  assert.equal(json.accessors[0].count, 6)
+})
+
+test('convert: 正常形状仍然焊接（守卫不能把该焊的也挡掉）', () => {
+  const { json, bin } = syntheticSoup()
+  const stats = weldPrimitives(json, [bin])
+  assert.equal(stats.welded, 1)
+  assert.equal(stats.before, 6)
+  assert.equal(stats.after, 4, '2 个三角形共享 2 个顶点 → 6 条记录应焊成 4 个顶点')
+  assert.equal(json.accessors[0].count, 4)
+  assert.equal(json.accessors[2].count, 6, '索引数量不变（面数不变）')
+})

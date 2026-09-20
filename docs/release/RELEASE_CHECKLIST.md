@@ -13,7 +13,7 @@
 - [x] 覆盖率已**实测并记录**：`all files` 行 92.97% / 分支 73.76% / 函数 94.82%（样例集裁剪后复测，含新增的 `inspect.js` 93.57% 与 `transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
 - [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮独立上下文 subagent 复审**（第一轮不通过 → 修复 → 第二轮「有条件通过」），发现并修掉 2 个阻塞级 + 11 项残留缺陷；见 `docs/requirements/TASKS.md` 的 TASK-007 返工记录与完成线
 - [x] 无未解决的阻断级缺陷：已知问题见 §6「已知问题」，均不阻断发布但必须在发布说明中写明
-- [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖仅 `jpeg-js@^0.4.4`、`pngjs@^7.0.0`（均为 MIT，无原生扩展）；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
+- [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖为 `jpeg-js@^0.4.4`（**BSD-3-Clause**）、`pngjs@^7.0.0`（MIT）、`assimpjs@^0.0.10`（MIT，内含 assimp 本体 **BSD-3-Clause**；`node_modules/assimpjs/dist/license.assimp.txt` 与 `license.assimpjs.txt` 随包分发）；几者均无原生扩展；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
 - [x] 无明文凭证入库：对 `src/`、`scripts/`、`package.json` 做过关键词扫描，未发现密钥/令牌；仓库内无 `.env`
 
 ## 2. 迁移（Migration）
@@ -35,7 +35,7 @@
   - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
 - [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
-- [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`，且 `o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）
+- [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`（该探测会真正加载一次 wasm——只查 JS 模块会有假阳性）、`o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）；dist 里必须能看到 `assimpjs/dist/license.assimp.txt`、`license.assimpjs.txt` 两份许可证文件
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
 - [ ] 观测就绪：无遥测、无服务端指标。用户侧可见：界面日志面板（含 `坐标 …/尺寸 …/顶点 …` 行）+ 主进程控制台
 

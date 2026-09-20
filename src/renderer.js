@@ -599,6 +599,15 @@ function setRunning(running) {
   runRepairButton.textContent = running ? '修复中…' : '开始修复'
 }
 
+/** @description 待转换格式的中文名（进度与日志文案用；别再一律写成 IVE）。 */
+function convertFormatLabel(relativePath) {
+  const ext = String(relativePath || '').toLowerCase().split('.').pop()
+  if (ext === 'ive') return 'IVE'
+  if (ext === 'fbx') return 'FBX'
+  if (ext === 'obj') return 'OBJ'
+  return '模型'
+}
+
 function handleRepairProgress(progress) {
   switch (progress?.phase) {
     case 'scanning':
@@ -636,31 +645,38 @@ function handleRepairProgress(progress) {
       )
       break
     case 'convert-start':
-      showProgress(progress.index, progress.total, `正在把 IVE 转换为 GLB：${progress.relativePath}`)
-      appendLog(`[IVE ${progress.index + 1}/${progress.total}] 转换中：${progress.relativePath}`)
+      // 待转换的不止 IVE（还有 FBX/OBJ）：文案按源扩展名走，别把 FBX 说成 IVE
+      showProgress(progress.index, progress.total, `正在把 ${convertFormatLabel(progress.relativePath)} 转换为 GLB：${progress.relativePath}`)
+      appendLog(`[${convertFormatLabel(progress.relativePath)} ${progress.index + 1}/${progress.total}] 转换中：${progress.relativePath}`)
       break
     case 'convert-done':
       if (progress.status === 'error') {
-        showProgress(progress.index + 1, progress.total, `IVE 转换失败：${progress.relativePath}`, 'done')
-        appendLog(`IVE 转换失败：${progress.relativePath}：${progress.error}`, 'error')
+        showProgress(progress.index + 1, progress.total, `${convertFormatLabel(progress.relativePath)} 转换失败：${progress.relativePath}`, 'done')
+        appendLog(`${convertFormatLabel(progress.relativePath)} 转换失败：${progress.relativePath}：${progress.error}`, 'error')
       } else {
-        showProgress(progress.index + 1, progress.total, `IVE 已转换为 GLB：${progress.relativePath}`)
-        // 尺寸是世界包围盒（宽 × 高 × 前后深，单位米），直接暴露"摆进去到底是多大"。
+        showProgress(progress.index + 1, progress.total, `${convertFormatLabel(progress.relativePath)} 已转换为 GLB：${progress.relativePath}`)
+        // 尺寸是世界包围盒（宽 × 高 × 前后深，单位米）——只有 IVE 那条链会报，FBX/OBJ 没有
         const size = Array.isArray(progress.worldSize) && progress.worldSize.length === 3
           ? `，尺寸 ${progress.worldSize.map((value) => Number(value).toFixed(2)).join(' × ')} m`
           : ''
-        // 焊接收益：IVE 原始几何是三角汤，这里显示的才是真正落盘的顶点数。
+        // 焊接收益：原始几何是三角汤，这里显示的才是真正落盘的顶点数
         const geometry = Number.isFinite(progress.vertices) && progress.vertices > 0
           ? `，顶点 ${progress.vertices}`
             + (progress.verticesBefore > progress.vertices ? `（同类合并前 ${progress.verticesBefore}）` : '')
             + `，三角面 ${progress.triangles}`
           : ''
+        // FBX/OBJ 没有"剪掉无网格节点"这一步，字段缺失时不能打印 undefined
+        const pruned = Number.isFinite(progress.prunedNodes) ? `，剪掉无网格节点 ${progress.prunedNodes} 个` : ''
+        const images = Number.isFinite(progress.images) ? `贴图 ${progress.images} 张，` : ''
         appendLog(
-          `IVE 转换完成：${progress.relativePath} → ${(progress.newBytes / 1024 / 1024).toFixed(2)} MB，`
-          + `贴图 ${progress.images} 张，网格 ${progress.meshes} 个，剪掉无网格节点 ${progress.prunedNodes} 个，`
+          `${convertFormatLabel(progress.relativePath)} 转换完成：${progress.relativePath} → ${(progress.newBytes / 1024 / 1024).toFixed(2)} MB，`
+          + `${images}网格 ${progress.meshes} 个${pruned}，`
           + `坐标 ${progress.axis || '未转换'}${size}${geometry}`,
           'ok',
         )
+        // 转换阶段的告警（例如 MTL 里指向别的机器的贴图路径解析不到）必须在这里打出来，
+        // 否则批量路径会把它们静默吞掉——只有单文件预览那条路才会显示（冷审 I-2）
+        for (const warning of progress.warnings || []) appendLog(`转换告警：${warning}`, 'warn')
       }
       break
     case 'done':

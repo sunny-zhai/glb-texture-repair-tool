@@ -261,6 +261,9 @@ function finish(report, startedAt) {
 function describeImage(json, bin, image, index, filePath) {
   const record = {
     index,
+    // 名称里可能承载着原始 uri（`src/convert.js` 对解析不到的贴图写的是 `missing:<原始 uri>`），
+    // 体检清单必须能看到它，否则"贴图丢了"这件事就只剩一句"1×1 占位图"（冷审 I-1）
+    name: typeof image?.name === 'string' ? image.name : null,
     bufferView: typeof image?.bufferView === 'number' ? image.bufferView : null,
     mimeType: image?.mimeType ?? null,
     uri: typeof image?.uri === 'string' ? image.uri : null,
@@ -469,8 +472,18 @@ function analyze(report, json, bin, filePath) {
         `贴图 ${image.index} 是外部路径：${image.uri}`, '需要内嵌后才能在任何环境加载')
     }
     if (image.width === 1 && image.height === 1) {
+      // 转换阶段解析不到的贴图会被换成 1×1 占位并把原始 uri 记在 image.name 里：
+      // 这种情况要在文案里点名原路径，用户才知道该把哪个文件放到模型旁边
+      const missingUri = typeof image.name === 'string' && image.name.startsWith('missing:')
+        ? image.name.slice('missing:'.length)
+        : null
       addIssue(issues, 'warn', 'TEXTURE_1X1_PLACEHOLDER',
-        `贴图 ${image.index} 是 1×1 占位图`, '多半是资产制作时的残留，视觉上无意义，可考虑剔除')
+        missingUri
+          ? `贴图 ${image.index} 是 1×1 占位图（原图未找到：${missingUri}）`
+          : `贴图 ${image.index} 是 1×1 占位图`,
+        missingUri
+          ? '把该贴图文件（或它的 .fbm 目录）放到模型同级目录后重新转换，即可自动内嵌'
+          : '多半是资产制作时的残留，视觉上无意义，可考虑剔除')
     }
   }
   const usesRepeatMipmap = report.samplers.some((sampler) => sampler.repeats && sampler.mipmapped)
