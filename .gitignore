@@ -59,14 +59,10 @@ docs/release/*
 !docs/design/
 docs/design/*
 !docs/design/ADR.md
-AGENTS.md
 .worktrees/
 
-# ---------------------------------------------------------------- 项目开发流程配置（本机工具生成，不入库）
-# .ai/ 是开发流程配置（agents/skills/workflows/platform-lock.json），
-# scripts/*.mjs 是该流程生成的脚本。注意只忽略 .mjs：
-# scripts/ensure-cesium.js 与 scripts/build-ive2glb.sh 是产品脚本，必须继续入库
-# （后者是重建 vendor/ive2glb 助手的唯一途径），所以绝不能写成整个 scripts/。
-.ai/
-dsh/
-scripts/*.mjs
+# ---------------------------------------------------------------- 项目开发流程配置（随仓库入库）
+# .ai/（agents/skills/workflows/platform-lock.json）、dsh/ 与 scripts/*.mjs 是流程引擎与入口，
+# 已随仓库入库，新克隆即可直接跑通 Tenon 流程，不要再把它们当本机配置忽略。
+# scripts/ 下 ensure-cesium.js、build-ive2glb.sh 与各 *.mjs 全部入库——
+# build-ive2glb.sh 是重建 vendor/ive2glb 助手的唯一途径，不能整目录忽略。
