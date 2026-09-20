@@ -321,7 +321,13 @@
 - **产出**：`src/renderer.js`、`test/ui-smoke.cjs`
 - **文件范围**：`src/renderer.js`, `test/ui-smoke.cjs`
 - **验证方式**：`node test/ui-smoke.cjs`——设置 `Z-up/90°/2×` 后重载页面三个控件复原且提示可见；从未动过时不写 `localStorage`；显式选回 `auto` 后重载仍是 `auto`；垃圾载荷落回默认且页面异常 0；输入文件 `shasum` 前后一致（不写回）
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**：
+  ① **实现**：新增 `localStorage` 键 `glb-repair.preview`（`version: 1`，`{yawDeg, scale, axis}`）。只在控件的 `change`（松手/选完）与「重置预览修正」按钮上写入——拖动过程的 `input` 不写；"从未动过"表现为**键不存在**，因此与"显式选了 `auto`"可区分。启动时与新模型加载时都用 `previewTools.clampPreview` 规整后摆回控件，并在日志里说明「已沿用上次选择」；`window.__preview`（`key`/`get`/`stored`）只读暴露给冒烟（沿用 `window.__layout` 的既有做法）。
+  ② **冒烟**：`node test/ui-smoke.cjs model/蹲姿.glb --port 9333` → **66 步 / 132 条断言 / 0 失败**（新增 6 条：从未动过不写键且为默认 `auto/0°/1.00×`、显式选择落盘形状与控件一致、重启后复原且日志含「已沿用上次选择」、显式选回 `auto` 后记录仍在且重启仍是 `auto`、坏 JSON 回落默认、越界/未知档位（`yawDeg: 999 / scale: -3 / axis: 'nope'`）被规整到合法区间）。既有断言一条未删；`EXPECTED_CHECK_COUNT` 126 → **132**。
+  ③ **旧实现必然为红（推理，未单独跑 A/B）**：旧代码既没有 `glb-repair.preview` 也没有 `window.__preview`，重载后控件回到默认，`axis === 'z'` 与"记录存在"两类断言无法成立；而且探针取不到 `window.__preview` 时新断言整块被跳过，冒烟的"已执行断言数下限"会先报红。**未做** stashed A/B 实测（与 TASK-017/019/024 的实测口径不同，这里只给推理，不冒充实测）。
+  ④ 顺带把行为变化补进文档（原任务未含文档项，按仓库规则补）：`docs/001-code-design.md` 新增 **BR-035** 与 §6 第 21 条；`REQUIREMENTS.md` 的 REQ-010 状态改为已完成；`docs/testing/TEST_PLAN.md` 汇总口径更新为 66 步 / 132 条断言。
+  ⑤ 门禁：`npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
 
 ### TASK-024 布局模型由像素改为占比
 - **关联需求**：REQ-011（验收标准 1、2、3、4、5）；设计决策见 ADR-011
@@ -468,4 +474,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-026 | REQ-011 | 已完成 | ☑ 自动 |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
 | TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
-| TASK-023 | REQ-010 | 待开始 | ☐ |
+| TASK-023 | REQ-010 | 已完成 | ☑ 自动 |

@@ -44,7 +44,7 @@ let checksRun = 0
 // （TASK-018 加了「4 档降采样」与「档位进入 IPC 载荷」2 条 → 112 + 2 = 114；
 //   REQ-011/TASK-024 加了 6 条占比不变量、旧版迁移与夹取恢复 → 114 + 6 = 120；
 //   REQ-011/TASK-025 加了 6 条多尺寸自适应矩阵不变量 → 120 + 6 = 126）
-const EXPECTED_CHECK_COUNT = 126
+const EXPECTED_CHECK_COUNT = 132
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -689,6 +689,91 @@ async function main() {
       JSON.stringify(adaptRows.map((row) => ({ size: row.size, previewBar: row.previewBar, previewOverflow: row.previewOverflow, page: row.page }))))
   }
   await setViewport(1280, 800)
+
+  // ---------------------------------------------------------------- REQ-010：预览三态记忆（TASK-023）
+  // 三条硬要求：① 只记"用户显式选过"的（从未动过不写键）；② 显式选回 auto 也要记住；
+  // ③ 坏载荷不崩、规整到合法区间。输入文件的 shasum 不变由冒烟末尾的既有断言负责。
+  const PREVIEW_MEMORY_KEY = 'glb-repair.preview'
+  const PREVIEW_PROBE = `(() => ({
+    yaw: document.getElementById('previewYaw').value,
+    scale: document.getElementById('previewScale').value,
+    axis: document.getElementById('previewAxis').value,
+    stored: localStorage.getItem(window.__preview.key),
+    value: window.__preview.get(),
+    logTail: document.getElementById('log').textContent.slice(-240),
+  }))()`
+  await rawEval(`localStorage.removeItem('${PREVIEW_MEMORY_KEY}')`)
+  await reloadPage('清掉预览记忆并重载页面')
+  const previewUntouched = await run('从未动过预览控件时不写记忆', PREVIEW_PROBE)
+  if (previewUntouched) {
+    check('从未动过预览控件时不得写入 localStorage，且控件为默认 auto / 0° / 1.00×',
+      previewUntouched.stored === null && previewUntouched.yaw === '0'
+        && previewUntouched.scale === '1' && previewUntouched.axis === 'auto',
+      JSON.stringify(previewUntouched))
+  }
+
+  const previewSet = await run('设置预览三态（Z-up / 90° / 2×）', `(() => {
+    const fire = (id, value) => {
+      const el = document.getElementById(id);
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    fire('previewYaw', '90');
+    fire('previewScale', '2');
+    fire('previewAxis', 'z');
+    return { stored: localStorage.getItem(window.__preview.key), value: window.__preview.get() };
+  })()`)
+  await reloadPage('带着预览记忆重载页面')
+  const previewRestored = await run('重启后预览三态必须复原', PREVIEW_PROBE)
+  if (previewSet && previewRestored) {
+    const stored = JSON.parse(previewSet.stored || '{}')
+    check('显式选择必须落盘为独立记录（version 1 + 三态），且与控件一致',
+      stored.version === 1 && stored.yawDeg === 90 && stored.scale === 2 && stored.axis === 'z'
+        && previewSet.value && previewSet.value.yawDeg === 90 && previewSet.value.scale === 2 && previewSet.value.axis === 'z',
+      JSON.stringify({ stored, value: previewSet.value }))
+    check('重启后预览三态必须复原为上次选择，且日志说明"沿用上次选择"',
+      previewRestored.yaw === '90' && previewRestored.scale === '2' && previewRestored.axis === 'z'
+        && /已沿用上次选择/.test(previewRestored.logTail),
+      JSON.stringify(previewRestored))
+  }
+
+  await run('把上轴显式选回 auto', `(() => {
+    const el = document.getElementById('previewAxis');
+    el.value = 'auto';
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return window.__preview.get();
+  })()`)
+  await reloadPage('显式 auto 后重载页面')
+  const previewExplicitAuto = await run('显式 auto 必须被记住', PREVIEW_PROBE)
+  if (previewExplicitAuto) {
+    check('显式选回 auto 后重启仍是 auto，且记录仍然存在（不是被当成"从未选过"）',
+      previewExplicitAuto.axis === 'auto' && previewExplicitAuto.stored !== null,
+      JSON.stringify(previewExplicitAuto))
+  }
+
+  await rawEval(`localStorage.setItem('${PREVIEW_MEMORY_KEY}', 'not json')`)
+  await reloadPage('种入坏 JSON 的预览记忆并重载页面')
+  const previewGarbage = await run('坏 JSON 的预览记忆必须回落默认', PREVIEW_PROBE)
+  if (previewGarbage) {
+    check('预览记忆是坏 JSON 时必须回落默认值且不抛异常',
+      previewGarbage.yaw === '0' && previewGarbage.scale === '1' && previewGarbage.axis === 'auto',
+      JSON.stringify(previewGarbage))
+  }
+
+  await rawEval(`localStorage.setItem('${PREVIEW_MEMORY_KEY}', JSON.stringify({ version: 1, yawDeg: 999, scale: -3, axis: 'nope' }))`)
+  await reloadPage('种入越界/未知档位的预览记忆并重载页面')
+  const previewOutOfRange = await run('越界与未知档位必须被规整到合法区间', PREVIEW_PROBE)
+  if (previewOutOfRange) {
+    check('越界方向/缩放/未知上轴必须被规整到合法区间（不崩、不留非法值）',
+      Number(previewOutOfRange.yaw) >= 0 && Number(previewOutOfRange.yaw) <= 355
+        && Number(previewOutOfRange.yaw) % 5 === 0
+        && Number(previewOutOfRange.scale) >= 0.1 && Number(previewOutOfRange.scale) <= 5
+        && previewOutOfRange.axis === 'auto',
+      JSON.stringify(previewOutOfRange))
+  }
+  // 收尾：清掉记忆，避免影响后续步骤（后续步骤不依赖预览记忆，但保持状态可预期）
+  await rawEval(`localStorage.removeItem('${PREVIEW_MEMORY_KEY}')`)
+  await reloadPage('清理预览记忆并重载页面')
 
   // 种入一组**与默认值和 styles.css 初值都不同**的布局并重载：只有真的走了
   // "读 localStorage → clamp → 写 CSS 变量"这条链路才会得到这组数，否则断言无从通过
