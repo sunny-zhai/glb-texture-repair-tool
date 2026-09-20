@@ -196,8 +196,13 @@
 - **产出**：`docs/002-requirements.md`、`docs/001-code-design.md`、`CLAUDE.md`、`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`
 - **文件范围**：`docs/002-requirements.md`, `docs/001-code-design.md`, `CLAUDE.md`, `docs/testing/TEST_PLAN.md`, `docs/release/RELEASE_CHECKLIST.md`
 - **验证方式**：`node scripts/memory.mjs check` 通过；`docs/` 入库范围仍与既有口径一致；人工复核 BR-030 与 ADR-008 的措辞与实际实现一致。
-- **状态**：待开始
-- **验证结果**：（待开始）
+- **状态**：已完成
+- **验证结果**：
+  ① `docs/002-requirements.md` §6 问题 4 已把 M3 的"本期不做"标注为**翻案**并写明理由、后端与 spike 数字；台账按 §4 追加 `reopened` 留痕（`memory.mjs log --task TASK-015 --event reopened`）。
+  ② `docs/001-code-design.md` 新增 **BR-030**（多格式转换口径：自包含、不静默丢贴图、必须焊接、同名不同扩展名必须区分、无外部二进制）与模块 **MOD-008 `src/convert.js`**。
+  ③ `CLAUDE.md`：新增 `src/convert.js` 模块说明；把"图像转码自包含"扩写成**"图像与模型转码都自包含"**（不 shell 外部二进制、**不按平台分发二进制**、assimpjs 的 wasm 需 `asarUnpack`）；IPC 契约补 `fbx`/`obj` 过滤器、`assimp` 能力与 `convertSourceToGlb` 的同名去歧义；测试段落补 `test/convert.test.js` 的夹具门控与本地基线 115/111/0/4。
+  ④ `docs/testing/TEST_PLAN.md` 新增 **TC-018** 与汇总行；`docs/release/RELEASE_CHECKLIST.md` 新增"assimpjs wasm 随包可加载 + 安装后 `assimp: true` + FBX/OBJ 可预览可落盘"检查项。
+  ⑤ `node scripts/memory.mjs check` 通过；`git ls-files docs/` 仍为 **10 份**（本次只改既有入库文件，没有新增 `docs/` 文件）。
 
 ## 依赖 DAG
 
@@ -258,4 +263,4 @@ TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内�
 | TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
 | TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-015 | REQ-007 | 待开始 | ☐ |
+| TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |

@@ -51,6 +51,7 @@ document:
 | MOD-004 | 结果面板 | 展示输入、输出、大小变化、错误信息 |
 | MOD-005 | IVE 原生助手（C++） | 用 OpenSceneGraph 读取 IVE，导出 `scene.json` + `data.bin` 中间产物；不链接 Qt/Assimp/渲染模块 |
 | MOD-006 | IVE→GLB 组装器（`src/ive.js`） | 解析中间产物、编码贴图、组装并写出自包含 GLB；含上轴转换、贴地归心、顶点焊接 |
+| MOD-008 | 多格式转换内核（`src/convert.js`） | FBX/OBJ → 自包含 GLB：assimpjs(WASM) 进程内转换、复用 `ive.js::weldVertices` 焊接三角汤、复用 `repair.js::resolveExternalImage` 内嵌外部贴图（解析不到的换 1×1 占位并记 warning）；永不抛，返回 `{status, bytes, warnings, stats}` |
 | MOD-007 | 模型体检（`src/inspect.js`） | 只读产出参数报告：体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴推断、比例尺、问题清单；支持 `node src/inspect.js <file.glb>` |
 | MOD-008 | 世界盒与矩阵工具（`src/transform.js`） | 沿节点链累乘矩阵求世界包围盒；GLB 路径与 IVE 路径共用同一份遍历实现 |
 | MOD-009 | 体检报告格式化（`src/report-format.js`） | 把 `inspect.js` 的机器报告转成界面用的中文键值行与偏差文案；纯函数，可在 `node --test` 里直接覆盖 |
@@ -90,6 +91,7 @@ document:
 | BR-027 | 主界面为**编辑器式三栏 + 底部日志**：页面本身不得整页滚动（`document.scrollingElement.scrollHeight <= innerHeight + 1`），滚动只发生在面板内部；各栏有最小尺寸、分隔条可拖拽，布局状态写 `localStorage` 并在读取时 clamp；**3D 容器尺寸变化必须调 `viewer.resize()`**（Cesium 只监听 window resize，分隔条拖动它感知不到，不处理会被拉伸/裁剪），并节流到下一帧；窄窗口（<1100px）降级为两栏 + 右栏抽屉，不得出现横向滚动 | P1 |
 | BR-028 | 栏位尺寸与**内容解耦**（ADR-007）：面板宽高只由**用户操作**与**窗口尺寸**决定，任何内容/临时面板都不得改变它——① 高度预算不得读入随内容变化的实时高度（模型信息行固定单行省略号 + `title`，帮助面板限高且**不参与预算**）；② **用户意图与生效值分离**：`layoutDesired`（唯一落盘对象）是用户设定的尺寸，`layout` 是当前窗口夹取后的**生效值**（仅用于渲染），窗口缩放/跨窄断点等非用户事件只 `refitLayout()` 重算生效值、**绝不落盘**，故窗口恢复后用户尺寸自行回来；③ 中栏网格必须显式 `grid-template-columns: minmax(0, 1fr)`，否则 nowrap 内容会把列撑开（实测 2994px）。**反例（修复前实测）**：超长模型路径让预览条 126→189px，重算时把日志从 380px 夹到 290px **并写进 `localStorage`**，换回短路径也不恢复 | P1 |
 | BR-029 | 滚动条**自绘细条**，且每个区域**只留最外层一个滚动容器**：① 全局用 `::-webkit-scrollbar`（8px 轨道 + 2px 透明描边内缩 = 视觉 4px 圆角细条）替代系统默认样式，**不得同时写标准属性** `scrollbar-width`/`scrollbar-color`——Chromium 121+ 只要看到标准属性就会**整体忽略** webkit 伪元素，两个都写等于没写；② 滚动职责按区域唯一化：左栏与右栏**只有 `.pane-body` 可滚**（`.list`、`.inspect-issues` 等**不得**自带 `max-height` + `overflow` 自成滚动条），日志区只有 `.log` 可滚（父级 `.pane-body` 已 `overflow: hidden`），帮助面板限高自滚但它是独立网格行、不与其它滚动容器嵌套。**反例（修复前实测）**：左栏一个面板里同时存在 `.pane-body` + `#inputList` + `#resultList` **三个**滚动条，右栏 `.pane-body` 内还嵌 `#inspectIssues` 第二层 | P2 |
+| BR-030 | 多格式输入（FBX/OBJ）的转换口径（ADR-008）：① 用 **assimpjs(WASM)** 在进程内转换，**不引入外部可执行程序**、不按平台分发二进制；② 产物必须**自包含**——`images[].uri` 一律内嵌（OBJ 的贴图 assimp 只写 uri 不内嵌，连相对路径也如此，必须在转换阶段用 `resolveExternalImage` 补齐）；③ 解析不到的贴图**不得静默丢**：换 1×1 占位并留 `missing:<原始 uri>` 名字 + warning，日志与体检都要能看到原始路径；④ 三角汤必须焊接（复用 `ive.js::weldVertices`，键覆盖全部属性含 JOINTS/WEIGHTS），**面数与贴图不得改变**；⑤ 同名不同扩展名的源（`蹲姿.fbx` + `蹲姿.obj`、`蹲姿.ive` + `蹲姿.glb`）转换后会同名，必须按源扩展名区分，否则临时文件与输出双双互相覆盖而两条都报成功 | P1 |
 
 ## 4. 接口设计
 
