@@ -795,6 +795,7 @@ function renderInspectionResult(result) {
   }
 
   inspectPanel.hidden = false
+  for (const warning of result.conversionWarnings || []) appendLog(`转换告警：${warning}`, 'warn')
   fillInspectBoxes(report.bounds)
 
   const level = reportFormat.deviationLevel(report.bounds?.deviationFactor)
@@ -934,6 +935,8 @@ async function validateModel(filePath) {
     state.validationBounds = payload.bounds
     setValidationModelSummary(payload.filePath, payload.bytes)
     appendValidationMetadata(payload.metadata)
+    // 转换阶段解析不到的贴图（FBX/OBJ 常见：MTL 指向别的机器的绝对路径）如实报出来
+    for (const warning of payload.conversionWarnings || []) appendLog(`转换告警：${warning}`, 'warn')
     if (!state.viewer) {
       state.viewer = new Cesium.Viewer(cesiumContainer, {
         animation: false,
@@ -1315,16 +1318,24 @@ window.repairApp.onWindowMaximizeState((maximized) => {
   maximizeWindow.setAttribute('aria-label', maximized ? '还原' : '最大化')
 })
 
-// IVE 依赖随包分发的原生助手；缺失时明确告知而不是静默失败。
+// 三种待转换格式各有后端：IVE 靠随包的原生助手，FBX/OBJ 靠进程内的 assimpjs(WASM)。
+// 缺哪个就说清哪个，不静默降级。
 window.repairApp.capabilities().then((capabilities) => {
   if (!capabilities) return
   capabilityHint.hidden = false
-  if (capabilities.ive) {
-    capabilityHint.textContent = '支持输入 GLB 与 IVE：IVE 会先由 ive2glb 转换为 GLB，再进入同一套修复与 Cesium 验证流程。'
-    return
+  const formats = ['GLB']
+  if (capabilities.ive) formats.push('IVE')
+  if (capabilities.assimp) formats.push('FBX', 'OBJ')
+  const notes = []
+  if (capabilities.ive) notes.push('IVE 由 ive2glb 转换')
+  if (capabilities.assimp) notes.push('FBX/OBJ 由 assimpjs 转换')
+  capabilityHint.textContent = `支持输入 ${formats.join(' / ')}${notes.length ? `：${notes.join('；')}` : ''}，转换后进入同一套修复与 Cesium 验证流程。`
+  if (!capabilities.ive) {
+    appendLog(`IVE 转换不可用：未找到 ive2glb。已查找：${(capabilities.iveHelperSearched || []).join('、')}`, 'error')
   }
-  capabilityHint.textContent = `当前平台（${capabilities.platform}）未提供 IVE 转换助手，.ive 文件无法转换。`
-  appendLog(`IVE 转换不可用：未找到 ive2glb。已查找：${(capabilities.iveHelperSearched || []).join('、')}`, 'error')
+  if (!capabilities.assimp) {
+    appendLog(`FBX/OBJ 转换不可用：${capabilities.assimpMessage || 'assimpjs 不可用'}`, 'error')
+  }
 }).catch(() => {
   // 能力探测失败不影响主流程
 })

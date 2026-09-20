@@ -1016,7 +1016,9 @@ async function main() {
     const log = document.getElementById('log').textContent;
     return {
       tail: log.slice(-120),
-      clicked: log.includes('请选择一个或多个 GLB / IVE 文件'),
+      // 只断言"拿到了主进程的中文校验错误"，不钉死格式清单——REQ-007 加了 FBX/OBJ 后
+      // 文案从「GLB / IVE」变成「GLB / IVE / FBX / OBJ」，钉死文案会让加格式变成假红
+      clicked: /请选择一个或多个 .*文件，或一个目录/.test(log),
       buttonRestored: document.getElementById('runRepair').textContent === '开始修复',
       disabled: document.getElementById('runRepair').disabled,
     };
