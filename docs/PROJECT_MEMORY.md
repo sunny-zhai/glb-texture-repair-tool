@@ -9,25 +9,19 @@
 <!-- 本段由 `node scripts/memory.mjs sync` 生成，请勿手改 -->
 
 - **项目类型 / 受管平台版本**：cli-tool / platform 1.0.0
-- **顶层结构**（深度 2；已排除 `.git` `.venv` `node_modules` `.worktrees` 等）：
+- **顶层结构**（深度 2；仅含纳入版本控制的内容）：
   - `.ai/` → `agents`, `skills`, `workflows`
-  - `.claude/` → `.cc-writes`
-  - `.workbuddy/` → `memory`
   - `assets/` → （无子目录）
-  - `docs/` → `api`, `approvals`, `coding-standard`, `design`, `release`, `requirements`, `testing`
+  - `docs/` → `approvals`, `design`, `release`, `requirements`, `testing`
   - `dsh/` → `workflows`
-  - `model/` → （无子目录）
   - `native/` → `ive2glb`
-  - `o-model/` → （无子目录）
-  - `refs/` → `models`
   - `scripts/` → （无子目录）
   - `src/` → （无子目录）
   - `test/` → （无子目录）
-  - `tests/` → （无子目录）
-  - `vendor/` → `cesium`, `ive2glb`
+  - `vendor/` → `ive2glb`
 - **顶层文件**：`.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package-lock.json`, `package.json`
 - **入口点**：`npm run build:ive2glb`、`npm run dev`、`npm run dist:win`、`npm run ensure:cesium`、`npm run lint`、`npm run start`、`npm run test`
-- **项目文档**：REQUIREMENTS.md ✓ · TASKS.md ✓ · TEST_PLAN.md ✓ · PERF_BUDGET.md ✓ · RELEASE_CHECKLIST.md ✓ · APPROVALS.md ✓ · ADR.md ✓ · openapi.json ✓ · PROJECT_MEMORY.md ✓
+- **项目文档**：REQUIREMENTS.md ✓ · TASKS.md ✓ · TEST_PLAN.md ✓ · PERF_BUDGET.md — · RELEASE_CHECKLIST.md ✓ · APPROVALS.md ✓ · ADR.md ✓ · openapi.json — · PROJECT_MEMORY.md ✓
 - **工作流**：`.ai/workflows` 5 个（`bug-fix.js`, `deploy.js`, `doc-update.js`, `feature-dev.js`, `req-parallel.js`）· `dsh/workflows` 5 个 · 两侧一致
 <!-- memory:structure:end -->
 

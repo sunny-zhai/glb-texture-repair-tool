@@ -11,6 +11,7 @@
 //   - 结构段每次 sync 整体覆盖，因此不得含时间戳或机器相关信息（否则每次 check 都失败）；
 //   - 完成段只追加。写点固定在**串行合并点**（单写者）：并行开发阶段任何任务都不得改动本文件。
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
@@ -112,6 +113,21 @@ const listDir = (path) => {
 }
 
 // ---- 结构快照（必须确定性：无时间戳、无绝对路径、全部排序）----
+//
+// 关键约束：快照只能依赖**被版本控制的内容**。若按工作树扫描，主树会带上被忽略的目录
+// （node_modules、样例数据等），而克隆与 worktree 里没有这些东西 → 同一条记忆线在别人机器上
+// 算出的快照必然不同 → `memory check` 必失败。实测：某项目快照含 `model/ o-model/ refs/`
+// （均被 gitignore），克隆里 `memory check` 报「结构快照已过期」。
+// 因此优先用 `git ls-files` 推导；非 git 项目才回退工作树扫描，并在快照里注明。
+function trackedPaths() {
+  try {
+    const out = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+    return new Set(out.split('\0').filter(Boolean))
+  } catch {
+    return null
+  }
+}
+
 function readLock() {
   const path = join(root, '.ai/platform-lock.json')
   if (!existsSync(path)) return null
@@ -148,40 +164,96 @@ function pythonEntryPoints() {
   return entries.sort()
 }
 
-function workflowNames(dir) {
-  const path = join(root, dir)
-  if (!existsSync(path)) return []
-  return readdirSync(path).filter((name) => name.endsWith('.js')).sort()
+// 由被跟踪路径推导结构：顶层目录/文件、各顶层目录的直接子目录
+function structureFromTracked(tracked) {
+  const topDirs = new Set()
+  const topFiles = new Set()
+  const children = new Map()
+  for (const path of tracked) {
+    const parts = path.split('/')
+    if (parts.length === 1) {
+      topFiles.add(parts[0])
+      continue
+    }
+    topDirs.add(parts[0])
+    if (parts.length > 2) {
+      if (!children.has(parts[0])) children.set(parts[0], new Set())
+      children.get(parts[0]).add(parts[1])
+    }
+  }
+  return { topDirs, topFiles, children }
+}
+
+// 非 git 项目：按工作树扫描（排除已知噪声目录）
+function structureFromWorkingTree() {
+  const topDirs = listDir(root).filter((name) => statSync(join(root, name)).isDirectory())
+  const topFiles = listDir(root).filter((name) => statSync(join(root, name)).isFile())
+  const children = new Map()
+  for (const name of topDirs) {
+    children.set(name, listDir(join(root, name)).filter((child) => statSync(join(root, name, child)).isDirectory()))
+  }
+  return { topDirs: new Set(topDirs), topFiles: new Set(topFiles), children }
 }
 
 function generateStructure() {
-  const lock = readLock()
+  const tracked = trackedPaths()
   const lines = []
   lines.push('<!-- 本段由 `node scripts/memory.mjs sync` 生成，请勿手改 -->')
   lines.push('')
-  lines.push(lock
-    ? `- **项目类型 / 受管平台版本**：${lock.meta?.type ?? '未标注'} / platform ${lock.platformVersion ?? '未标注'}`
-    : '- **项目类型 / 受管平台版本**：本仓库是平台母体（无 `.ai/platform-lock.json`）')
 
-  lines.push('- **顶层结构**（深度 2；已排除 `.git` `.venv` `node_modules` `.worktrees` 等）：')
-  const topDirs = listDir(root).filter((name) => statSync(join(root, name)).isDirectory())
-  if (topDirs.length === 0) lines.push('  - （无子目录）')
-  for (const name of topDirs) {
-    const children = listDir(join(root, name)).filter((child) => statSync(join(root, name, child)).isDirectory())
-    lines.push(`  - \`${name}/\` → ${children.length > 0 ? children.map((c) => `\`${c}\``).join(', ') : '（无子目录）'}`)
+  const lockPath = join(root, '.ai/platform-lock.json')
+  const lock = readLock()
+  let typeLine
+  if (!existsSync(lockPath)) {
+    typeLine = '本仓库是平台母体（无 `.ai/platform-lock.json`）'
+  } else if (tracked !== null && !tracked.has('.ai/platform-lock.json')) {
+    typeLine = '未登记（`.ai/platform-lock.json` 未纳入版本控制）'
+  } else {
+    typeLine = `${lock?.meta?.type ?? '未标注'} / platform ${lock?.platformVersion ?? '未标注'}`
   }
-  const topFiles = listDir(root).filter((name) => statSync(join(root, name)).isFile())
-  lines.push(`- **顶层文件**：${topFiles.length > 0 ? topFiles.map((f) => `\`${f}\``).join(', ') : '（无）'}`)
+  lines.push(`- **项目类型 / 受管平台版本**：${typeLine}`)
 
-  const entry = [...packageScripts(), ...pythonEntryPoints()]
+  const { topDirs, topFiles, children } = tracked === null
+    ? structureFromWorkingTree()
+    : structureFromTracked(tracked)
+  lines.push(tracked === null
+    ? '- **顶层结构**（深度 2；按工作树扫描 —— 本项目未纳入版本控制）：'
+    : '- **顶层结构**（深度 2；仅含纳入版本控制的内容）：')
+  const sortedDirs = [...topDirs].sort()
+  if (sortedDirs.length === 0) lines.push('  - （无子目录）')
+  for (const name of sortedDirs) {
+    const kids = [...(children.get(name) ?? [])].sort()
+    lines.push(`  - \`${name}/\` → ${kids.length > 0 ? kids.map((c) => `\`${c}\``).join(', ') : '（无子目录）'}`)
+  }
+  const sortedTopFiles = [...topFiles].sort()
+  lines.push(`- **顶层文件**：${sortedTopFiles.length > 0 ? sortedTopFiles.map((f) => `\`${f}\``).join(', ') : '（无）'}`)
+
+  // 入口点只读被跟踪的清单文件，避免未跟踪文件影响快照
+  const readable = (rel) => tracked === null || tracked.has(rel)
+  const entry = [
+    ...(readable('package.json') ? packageScripts() : []),
+    ...(readable('pyproject.toml') ? pythonEntryPoints() : []),
+  ]
   lines.push(`- **入口点**：${entry.length > 0 ? entry.map((e) => `\`${e}\``).join('、') : '（无 package.json / pyproject 脚本入口）'}`)
 
   const docs = DOC_SEEDS.map((name) => {
-    const ok = existsSync(join(root, DOC_DIRS[name], name))
+    const rel = `${DOC_DIRS[name]}/${name}`
+    const ok = tracked === null ? existsSync(join(root, rel)) : tracked.has(rel)
     return `${name} ${ok ? '✓' : '—'}`
   })
   lines.push(`- **项目文档**：${docs.join(' · ')}`)
 
+  const workflowNames = (dir) => {
+    if (tracked === null) {
+      const path = join(root, dir)
+      if (!existsSync(path)) return []
+      return readdirSync(path).filter((name) => name.endsWith('.js')).sort()
+    }
+    return [...tracked]
+      .filter((path) => path.startsWith(`${dir}/`) && path.endsWith('.js') && !path.slice(dir.length + 1).includes('/'))
+      .map((path) => path.slice(dir.length + 1))
+      .sort()
+  }
   const ai = workflowNames('.ai/workflows')
   const dsh = workflowNames('dsh/workflows')
   const parity = JSON.stringify(ai) === JSON.stringify(dsh) ? '两侧一致' : '**两侧不一致**'
