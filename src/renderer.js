@@ -73,17 +73,27 @@ const state = {
 let inspectToken = 0
 
 // ================================================================ 编辑器式布局（BR-027 / ADR-006）
-// 布局状态：三栏像素宽 + 日志高度 + 三个折叠标志。写 localStorage（键 glb-repair.layout），
-// 读取时一律 clamp —— 在 1280 宽屏幕上存的 460px 左栏被搬到 900 宽窗口时必须先夹到合法区间，
-// 否则中栏被挤到 0、页面出现横向滚动。
+// 布局状态（REQ-011 / ADR-011）：用户意图是**占比**（左/右栏占可用宽度、底部日志占窗口高度），
+// 像素只是派生物——窗口缩放时只按占比重算像素，所以各区占比恒定；拖拽仍按像素跟手，落盘前换算回占比。
+// 写 localStorage（键 glb-repair.layout，version 2）；version 1 的旧像素载荷按当前窗口迁移。
 const LAYOUT_KEY = 'glb-repair.layout'
-const LAYOUT_VERSION = 1
+const LAYOUT_VERSION = 2
 // 折叠后日志只剩标题行
 const LOG_COLLAPSED_HEIGHT = 34
+// 像素**下限**（可用性）与比例**上下限**（构图）。上限必须是比例：旧的像素上限（480/560/560）
+// 在大窗口下本身就是占比杀手（左栏 480px 在 2560 宽下只剩 18.75%），与"占比固定"直接冲突。
 const PANE_LIMITS = {
-  left: { min: 180, max: 480 },
-  right: { min: 220, max: 560 },
-  bottom: { min: 90, max: 560 },
+  left: { min: 180 },
+  right: { min: 220 },
+  bottom: { min: 90 },
+}
+// 比例下限只防"极端比例被存下来"（例如在大窗口里把某栏拖到 0.5%），真正的可用性下限是
+// **像素下限**（见 PANE_LIMITS）——两者都生效时取更宽松的一方，否则小窗口会把日志卡在
+// 比 90px 还高的位置（实测 0.12 × 757 = 91 > 90，拖到底也下不来）。
+const PANE_RATIO_LIMITS = {
+  left: { min: 0.06, max: 0.40 },
+  right: { min: 0.07, max: 0.45 },
+  bottom: { min: 0.06, max: 0.60 },
 }
 // 中栏（3D 主视口）的最小宽高：夹取左/右/底栏时始终为它留出空间，保证它是最宽的一栏
 const CENTER_MIN_WIDTH = 420
@@ -91,6 +101,13 @@ const CENTER_MIN_HEIGHT = 240
 // 3D 画布本身的最小高度（中栏减去预览控件条后仍要留出的高度）
 const CANVAS_MIN_HEIGHT = 160
 const LAYOUT_DEFAULT = { left: 260, right: 340, bottom: 200 }
+// 默认占比由"1280×800 下的 260 / 340 / 200 像素"换算而来，保证默认观感与旧版一致
+const RATIO_REFERENCE = { width: 1280 - 8, height: 800 }
+const LAYOUT_RATIO_DEFAULT = {
+  left: LAYOUT_DEFAULT.left / RATIO_REFERENCE.width,
+  right: LAYOUT_DEFAULT.right / RATIO_REFERENCE.width,
+  bottom: LAYOUT_DEFAULT.bottom / RATIO_REFERENCE.height,
+}
 const SPLITTER_KEY_STEP = 16
 
 let layout = {
@@ -99,11 +116,10 @@ let layout = {
   rightCollapsed: false,
   drawerOpen: false,
 }
-// `layout` = 当前窗口下**实际生效**的尺寸（渲染用）；`layoutDesired` = 用户**真正设定**的尺寸
-// （落盘的只有它）。两者分开的理由（TASK-011）：窗口临时变小、跨到窄断点、或面板内容临时变高，
-// 都只该影响"这一次渲染"。过去把夹取结果直接 saveLayout() 落盘，导致用户的选择被永久改写
-// ——实测"日志 313px → 换成超长路径模型 → 重算把它夹到 295px 落盘 → 换回短路径也不恢复"。
-let layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
+// `layout` = 当前窗口下**实际生效**的像素（渲染用）；`layoutRatio` = 用户**真正设定**的占比
+// （落盘的只有它）。两者分开的理由（ADR-007，单位从 px 换成比例）：窗口临时变小、跨到窄断点、
+// 或面板内容临时变高，都只该影响"这一次渲染"——窗口恢复后占比要能自己回来。
+let layoutRatio = { ...LAYOUT_RATIO_DEFAULT }
 // initLayout() 会挂一次性监听，用这个护栏保证它只生效一次
 let layoutInitialized = false
 
@@ -122,24 +138,71 @@ function layoutMetrics() {
   }
 }
 
+// 可用空间：宽度要减掉两条 4px 分隔条（REQ-011 的占比以它为分母）
+function ratioSpace() {
+  const { width, height } = layoutMetrics()
+  return { width: Math.max(0, width - 8), height: Math.max(0, height) }
+}
+
+/** @description 把任意输入规整为合法的**占比**（用户意图的唯一单位）。 */
+function clampRatio(input) {
+  const candidate = input && typeof input === 'object' ? input : {}
+  return {
+    left: clampNumber(candidate.left, PANE_RATIO_LIMITS.left.min, PANE_RATIO_LIMITS.left.max, LAYOUT_RATIO_DEFAULT.left),
+    right: clampNumber(candidate.right, PANE_RATIO_LIMITS.right.min, PANE_RATIO_LIMITS.right.max, LAYOUT_RATIO_DEFAULT.right),
+    bottom: clampNumber(candidate.bottom, PANE_RATIO_LIMITS.bottom.min, PANE_RATIO_LIMITS.bottom.max, LAYOUT_RATIO_DEFAULT.bottom),
+  }
+}
+
+/** @description 占比 → 像素（派生物）。分母是当前可用空间，因此占比与窗口尺寸无关。 */
+function ratioToPixels(ratio, space = ratioSpace()) {
+  const safe = clampRatio(ratio)
+  return {
+    left: safe.left * space.width,
+    right: safe.right * space.width,
+    bottom: safe.bottom * space.height,
+  }
+}
+
+/** @description 像素 → 占比：拖拽改动换算成占比后才能落盘（ADR-011 决策 b）。 */
+function ratioFromPixels(pixels) {
+  const space = ratioSpace()
+  if (!(space.width > 0) || !(space.height > 0)) return clampRatio(layoutRatio)
+  return clampRatio({
+    left: pixels.left / space.width,
+    right: pixels.right / space.width,
+    bottom: pixels.bottom / space.height,
+  })
+}
+
+/** @description 占比 → 当前窗口下**生效的像素**（先换算，再走最小尺寸/中栏/画布约束）。 */
+function layoutFromRatio(ratio, options = {}) {
+  return clampLayout(ratioToPixels(ratio), options)
+}
+
 /**
- * @description 把任意（可能来自旧屏幕的）布局值夹到合法区间。
- * @param {object} input 布局值
- * @param {{fitWindow?: boolean}} [options] `fitWindow: false` 只按栏位自身的上下限规整
- *   （用于保存用户意图），不套用当前窗口/内容的预算——否则窗口一小，用户设定的值就被吃掉。
+ * @description 把任意（可能来自旧屏幕的）布局**像素**夹到合法区间。
+ * @param {object} input 像素布局值
+ * @param {{fitWindow?: boolean}} [options] `fitWindow: false` 只按栏位自身的下限规整，
+ *   不套用当前窗口/内容的预算——否则窗口一小，用户设定的值就被吃掉。
  */
 function clampLayout(input, options = {}) {
   const { fitWindow = true } = options
   const candidate = input && typeof input === 'object' ? input : {}
   const { width, height, narrow } = layoutMetrics()
-  let left = clampNumber(candidate.left, PANE_LIMITS.left.min, PANE_LIMITS.left.max, LAYOUT_DEFAULT.left)
-  let right = clampNumber(candidate.right, PANE_LIMITS.right.min, PANE_LIMITS.right.max, LAYOUT_DEFAULT.right)
-  let bottom = clampNumber(candidate.bottom, PANE_LIMITS.bottom.min, PANE_LIMITS.bottom.max, LAYOUT_DEFAULT.bottom)
+  const space = ratioSpace()
+  // 像素上没有上限（ADR-011 决策 e：上限由比例上限承担），这里的 max 只用来兜"输入大于当前窗口"
+  const leftMax = Math.max(PANE_LIMITS.left.min, space.width)
+  const rightMax = Math.max(PANE_LIMITS.right.min, space.width)
+  const bottomMax = Math.max(PANE_LIMITS.bottom.min, space.height)
+  let left = clampNumber(candidate.left, PANE_LIMITS.left.min, leftMax, LAYOUT_DEFAULT.left)
+  let right = clampNumber(candidate.right, PANE_LIMITS.right.min, rightMax, LAYOUT_DEFAULT.right)
+  let bottom = clampNumber(candidate.bottom, PANE_LIMITS.bottom.min, bottomMax, LAYOUT_DEFAULT.bottom)
 
   if (fitWindow && width > 0) {
     if (narrow) {
       // 窄窗口只有 左栏 + 4px + 中栏 三列，右栏是不占列宽的浮层抽屉
-      const narrowMax = Math.max(PANE_LIMITS.left.min, Math.min(PANE_LIMITS.left.max, Math.round(width * 0.4)))
+      const narrowMax = Math.max(PANE_LIMITS.left.min, Math.round(width * 0.4))
       left = Math.min(left, narrowMax, Math.max(PANE_LIMITS.left.min, width - 4 - CENTER_MIN_WIDTH),
         Math.floor((width - 4 - 1) / 2))
     } else {
@@ -192,18 +255,43 @@ function clampLayout(input, options = {}) {
   }
 }
 
+/**
+ * @description 读取持久化布局，返回**占比载荷**或 null。
+ *   version 2 直接取占比；version 1 的旧像素载荷按**当前窗口**换算成占比迁移（ADR-011 决策 f）——
+ *   迁移不出合法值就回落默认占比，绝不让某一栏被挤到 0。
+ */
 function readStoredLayout() {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-    // 版本不认识就整份丢弃：前向兼容不能靠 clamp 硬吃未知结构
-    if (parsed.version !== LAYOUT_VERSION) return null
-    return parsed
+    if (parsed.version === LAYOUT_VERSION) {
+      return { ratio: clampRatio(parsed), flags: readStoredFlags(parsed), migrated: false }
+    }
+    if (parsed.version === 1) {
+      // 旧格式是像素：用当前可用空间换算成占比。夹取只在 px 层做，比例本身交给 clampRatio。
+      const pixels = clampLayout({
+        left: parsed.left,
+        right: parsed.right,
+        bottom: parsed.bottom,
+      })
+      return { ratio: ratioFromPixels(pixels), flags: readStoredFlags(parsed), migrated: true }
+    }
+    // 其它版本不认识就整份丢弃：前向兼容不能靠 clamp 硬吃未知结构
+    return null
   } catch (error) {
     // 隐私模式 / 坏 JSON 都不该影响使用，回落到默认布局
     return null
+  }
+}
+
+function readStoredFlags(parsed) {
+  // 布尔字段只认真正的布尔：真值垃圾串（"no"）会把日志静默折叠（冷审实测）
+  return {
+    logCollapsed: parsed.logCollapsed === true,
+    rightCollapsed: parsed.rightCollapsed === true,
+    drawerOpen: parsed.drawerOpen === true,
   }
 }
 
@@ -211,10 +299,10 @@ function saveLayout() {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify({
       version: LAYOUT_VERSION,
-      // 落盘的是**用户意图**，不是当前窗口夹取后的生效值（TASK-011）
-      left: layoutDesired.left,
-      right: layoutDesired.right,
-      bottom: layoutDesired.bottom,
+      // 落盘的是**用户意图**（占比），不是当前窗口夹取后的生效像素（ADR-007/ADR-011）
+      left: Number(layoutRatio.left.toFixed(6)),
+      right: Number(layoutRatio.right.toFixed(6)),
+      bottom: Number(layoutRatio.bottom.toFixed(6)),
       logCollapsed: layout.logCollapsed,
       rightCollapsed: layout.rightCollapsed,
       drawerOpen: layout.drawerOpen,
@@ -224,16 +312,19 @@ function saveLayout() {
   }
 }
 
-/** @description **用户操作**改布局：按当前窗口预算夹取后，同时更新生效值与落盘意图。 */
+/**
+ * @description **用户操作**改布局：拖的是像素，记住的是占比——先把新像素换算成占比，
+ *   再由占比重算生效像素（ADR-011 决策 b）。
+ */
 function commitLayout(next) {
-  layout = clampLayout(next)
-  layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
+  layoutRatio = ratioFromPixels({ ...layout, ...(next || {}) })
+  layout = layoutFromRatio(layoutRatio)
   return layout
 }
 
 /**
- * @description **只改折叠标志**的用户操作：不重写尺寸意图——小窗口下点一次折叠，
- *   不该顺手把用户在大窗口里设定的宽高吃掉（TASK-011）。
+ * @description **只改折叠标志**的用户操作：不重写占比意图——小窗口下点一次折叠，
+ *   不该顺手把用户在大窗口里设定的比例吃掉（TASK-011）。
  */
 function commitFlags(flags) {
   layout = clampLayout({ ...layout, ...flags })
@@ -241,23 +332,19 @@ function commitFlags(flags) {
 }
 
 /**
- * @description **非用户事件**（窗口缩放、跨窄断点、内容变化）重算生效值：只改这一次渲染，
- *   既不动 layoutDesired 也不落盘——这样窗口恢复或换回短内容后，用户的尺寸能自己回来。
+ * @description **非用户事件**（窗口缩放、跨窄断点、内容变化）重算生效像素：占比不动、不落盘——
+ *   这样窗口恢复或换回短内容后，用户的占比能自己回来（ADR-007 + ADR-011）。
  */
 function refitLayout() {
-  layout = clampLayout({
-    ...layout,
-    left: layoutDesired.left,
-    right: layoutDesired.right,
-    bottom: layoutDesired.bottom,
-  })
+  layout = layoutFromRatio(layoutRatio)
   return layout
 }
 
-/** @description 从存储/默认值建立初始布局（生效值与落盘意图一起定）。 */
+/** @description 从存储/默认值建立初始布局（占比意图与生效像素一起定）。 */
 function adoptLayout(source) {
-  layout = clampLayout(source)
-  layoutDesired = { left: layout.left, right: layout.right, bottom: layout.bottom }
+  layoutRatio = clampRatio(source?.ratio ?? source)
+  layout = layoutFromRatio(layoutRatio)
+  if (source?.flags) layout = clampLayout({ ...layout, ...source.flags })
   return layout
 }
 
@@ -434,7 +521,10 @@ function initLayout() {
   // 被调用两次会让每个处理器各跑一遍（实测再点一次折叠按钮，logCollapsed 翻转两次等于没翻）
   if (layoutInitialized) return
   layoutInitialized = true
-  adoptLayout(readStoredLayout() || LAYOUT_DEFAULT)
+  const stored = readStoredLayout()
+  adoptLayout(stored || LAYOUT_RATIO_DEFAULT)
+  // 旧版（version 1）像素载荷一旦迁移成功就立刻按新格式回写，避免每次启动都重算一遍
+  if (stored?.migrated) saveLayout()
   const narrowQuery = typeof window.matchMedia === 'function'
     ? window.matchMedia('(max-width: 1099px)')
     : null
@@ -483,10 +573,21 @@ function initLayout() {
 window.__layout = {
   key: LAYOUT_KEY,
   get: () => ({ ...layout }),
-  limits: { ...PANE_LIMITS, centerMinWidth: CENTER_MIN_WIDTH, centerMinHeight: CENTER_MIN_HEIGHT, canvasMinHeight: CANVAS_MIN_HEIGHT, logCollapsedHeight: LOG_COLLAPSED_HEIGHT },
+  getRatio: () => ({ ...layoutRatio }),
+  limits: {
+    ...PANE_LIMITS,
+    ratio: PANE_RATIO_LIMITS,
+    ratioDefault: LAYOUT_RATIO_DEFAULT,
+    centerMinWidth: CENTER_MIN_WIDTH,
+    centerMinHeight: CENTER_MIN_HEIGHT,
+    canvasMinHeight: CANVAS_MIN_HEIGHT,
+    logCollapsedHeight: LOG_COLLAPSED_HEIGHT,
+  },
   clamp: (input) => clampLayout(input),
   restore: () => {
-    adoptLayout(readStoredLayout() || LAYOUT_DEFAULT)
+    const stored = readStoredLayout()
+    adoptLayout(stored || LAYOUT_RATIO_DEFAULT)
+    if (stored?.migrated) saveLayout()
     applyLayout()
     return { ...layout }
   },

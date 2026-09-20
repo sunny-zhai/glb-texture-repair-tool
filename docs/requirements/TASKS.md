@@ -323,6 +323,41 @@
 - **验证方式**：`node test/ui-smoke.cjs`——设置 `Z-up/90°/2×` 后重载页面三个控件复原且提示可见；从未动过时不写 `localStorage`；显式选回 `auto` 后重载仍是 `auto`；垃圾载荷落回默认且页面异常 0；输入文件 `shasum` 前后一致（不写回）
 - **状态**：待开始
 
+### TASK-024 布局模型由像素改为占比
+- **关联需求**：REQ-011（验收标准 1、2、3、4、5）；设计决策见 ADR-011
+- **依赖**：无
+- **做什么**：把布局状态从"三栏像素宽 + 日志像素高"改为"**三栏宽占比 + 日志高占比**"：`layoutRatio` 是唯一落盘的量，`layout`（像素）由它乘当前可用宽高推出。拖动分隔条时按当前可用空间把新像素**换算回占比**；窗口缩放只重算像素、不改占比。夹取规则必须确定：先等比整体压缩以满足各区最小尺寸，仍不满足时按固定优先级依次触底；窗口恢复到足够大后占比回到用户设定值。`localStorage` 键加版本（`version: 2`），`version:1` 的像素载荷迁移为等价占比或安全回落默认值。**保留所有既有元素 id 与事件绑定**，只改布局的内部模型。
+- **产出**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`
+- **文件范围**：`src/renderer.js`, `src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：`node test/ui-smoke.cjs <模型> --port <端口>` 新增占比断言——同一组拖拽结果在 1100×760 / 1440×900 / 1920×1200 三档窗口下，左/中/右占可用宽度与底部占高度的百分比变化 ≤ 1 个百分点（**该断言在当前实现上必须为红**）；拖拽后新占比随后续缩放保持；重启（重载页面）后占比还原（像素误差 ≤ 1px）；旧版 `version:1` 像素载荷被安全迁移；夹取到极限再恢复后占比不失真。`npm run lint` + `npm test` 全绿
+- **状态**：已完成
+- **验证结果**：
+  ① **模型**：`layoutRatio`（占比）是唯一落盘意图，`layout`（像素）由 `ratioToPixels(占比, 可用空间)` 派生；拖拽把新像素经 `ratioFromPixels` 换算回占比再落盘；窗口缩放只 `refitLayout()` 重算像素（占比不动、不落盘）。可用空间 = `appShell.clientWidth − 8`（两条 4px 分隔条）× `appShell.clientHeight`——**不能用 `window.innerHeight`**，实测差一条自定义标题栏（757 vs 800），用错会让底部占比整体偏移。
+  ② **上限改为比例**：`PANE_RATIO_LIMITS` = 左 0.06~0.40 / 右 0.07~0.45 / 底 0.06~0.60（旧的像素上限 480/560/560 已删）。比例**下限**刻意低于像素下限所对应的比例——先前用 0.12 时实测 0.12 × 757 = 91 > 90，把日志"拖到底"卡在 91px 下不来；现在像素下限（90/180/220）在正常窗口下始终可达。
+  ③ **旧版迁移**：`version: 1` 的像素载荷按当前窗口换算成占比，`initLayout()`/`restore()` 迁移成功后**立即回写 v2**（不再每次启动重算）。
+  ④ **冒烟**：`node test/ui-smoke.cjs model/蹲姿.glb --port 9333` → **47 步 / 120 条断言 / 0 失败**（新增 6 条：占比不漂移 ≤1pp、resize 不得改写落盘占比、占比重算后中栏仍最宽、各档不整页滚动、极小窗口夹取后窗口恢复回设定占比、旧版 v1→v2 迁移且像素还原 ±1px；既有断言全部保留，仅把 3 条的期望值从写死像素改成"按同一可用空间折算"，因为底部像素现在由占比派生）。
+  ⑤ **旧实现必红（实测 A/B，不是推断）**：把 `src/renderer.js` 用 `git stash` 暂时还原成像素模型、只额外加一个只读 `getRatio` 探针（避免因 API 缺失而假红），同一套断言给出漂移——以 1280×800 为参照（左 20.44% / 右 26.73% / 中 52.83% / 底 26.46%）：**1100×760** → 23.81 / 31.14 / 45.05 / 27.93（左 +3.37pp、中 −7.78pp）；**1440×900** → 18.16 / 23.74 / 58.10 / 23.36（中 +5.27pp）；**1920×1200** → 13.60 / 17.78 / 68.62 / 17.30（左 −6.84pp、右 −8.95pp、中 +15.79pp、底 −9.15pp）——全部远超 1pp 阈值，"夹取后恢复"也红（恢复后 16.33% ≠ 设定 20.44%）。恢复新实现后这 6 条全绿。
+  ⑥ **顺带修掉冒烟自身的脆弱**：旧实现没有 `limits.ratio` 时，`limits.ratio.left.max` 会让整跑崩栈（`Cannot read properties of undefined`）而不是报红；现在三处访问都改为"缺字段即断言失败"。
+  ⑦ `npm run lint` 通过；`npm test` 不受影响（`renderer.js` 不在单测插桩范围）；`node scripts/memory.mjs check` 通过。
+
+### TASK-025 内部元素自适应收口（多尺寸矩阵）
+- **关联需求**：REQ-011（验收标准 6）
+- **依赖**：TASK-024（同改 `src/renderer.js`/`src/styles.css`/`test/ui-smoke.cjs`）
+- **做什么**：在 900×700 / 1100×760 / 1280×800 / 1440×900 / 1920×1200 的尺寸矩阵下逐区排查内部元素是否自适应：每个区域"overflow 为 auto|scroll 的元素"必须恰好 1 个（BR-029 不回归）、无横向溢出、中栏 3D 画布 ≥ `CANVAS_MIN_HEIGHT`、预览控件条与状态栏不换行（长路径用省略号 + `title`）、帮助面板限高自滚且不参与高度预算（BR-028 不回归）。**发现即修**，每个修掉的溢出都要在冒烟里留一条断言；若排查后确认无缺陷，则在冒烟里留下这组"多尺寸无溢出"断言作为回归网，并在任务记录里说明未发现缺陷。
+- **产出**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`（按实际发现）
+- **文件范围**：`src/renderer.js`, `src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：冒烟在五个尺寸下逐区断言上述四类不变量；任一断言失败即红；`npm test` 与既有断言不回归
+- **状态**：待开始
+
+### TASK-026 REQ-011 的文档与规则回填
+- **关联需求**：REQ-011；设计决策见 ADR-011
+- **依赖**：TASK-024、TASK-025
+- **做什么**：`docs/001-code-design.md` 新增 **BR-034**（布局以占比为唯一用户意图、像素只是派生物；夹取优先级确定；旧版像素载荷迁移）并更新 MOD-011 与 BR-027/BR-028 的交叉引用；`docs/design/ADR.md` 把 ADR-011 状态改为已采纳；`docs/testing/TEST_PLAN.md` 新增 TC-024 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的渲染进程段落把"像素 + clamp"口径改成"占比 + 派生像素"。
+- **产出**：`docs/001-code-design.md`、`docs/design/ADR.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/design/ADR.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-034/TC-024 措辞与实现一致（数值取自实测）
+- **状态**：待开始
+
 ## 依赖 DAG
 
 ```text
@@ -375,6 +410,10 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 16 | TASK-017, TASK-021 | TASK-017 无依赖（REQ-008 起点）；TASK-021 无依赖但需外部 Windows 环境；二者文件范围不重叠（`src/repair.js`+`src/inspect.js`+两个单测文件 vs `native/`、`vendor/`） |
 | 17 | TASK-018 | 依赖 TASK-017；改 `repair.js`/`renderer.js`/`index.html`/`ui-smoke.cjs`，与 TASK-023 的 `renderer.js` 重叠，故与 TASK-023 分属不同批次 |
 | 18 | TASK-019, TASK-023 | TASK-019 依赖 TASK-018（同改 `repair.js`）；TASK-023 无依赖且只改 `renderer.js`/`ui-smoke.cjs`，与 TASK-019 的 `inspect.js`/`repair.js` 不重叠，可并行 |
+| 21 | TASK-023 | REQ-010 预览记忆；与 TASK-024 同改 `renderer.js`/`ui-smoke.cjs`，故两者必须串行（先做哪个都行，这里按登记顺序） |
+| 22 | TASK-024 | REQ-011 占比模型；无依赖，但排在 TASK-023 之后以避免争抢 `renderer.js`/`ui-smoke.cjs` |
+| 23 | TASK-025 | 依赖 TASK-024（同一批文件；多尺寸矩阵排查要基于占比模型） |
+| 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
 | 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 
@@ -402,6 +441,9 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-018 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-019 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-020 | REQ-008 | 已完成 | ☑ 自动 |
+| TASK-024 | REQ-011 | 已完成 | ☑ 自动 |
+| TASK-025 | REQ-011 | 待开始 | ☐ |
+| TASK-026 | REQ-011 | 待开始 | ☐ |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
 | TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
 | TASK-023 | REQ-010 | 待开始 | ☐ |
