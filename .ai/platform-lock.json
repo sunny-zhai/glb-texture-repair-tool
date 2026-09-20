@@ -24,6 +24,9 @@
       "testing",
       "stack-testing",
       "release"
+    ],
+    "excluded": [
+      "docs/coding-standard/"
     ]
   },
   "files": {
@@ -59,12 +62,6 @@
     "dsh/workflows/req-parallel.js": "cfbfb4f558d00b261fcddf94dc23d6ee55b84a404315a209b24b67c33f12e4ce",
     "dsh/workflows/verify.mjs": "d8b9e97b4421654c1a0e70b0271ad8c62053e5e7137138c6d735c367d93788c4",
     "dsh/workflows/README.md": "2a54e97c62a5974424fa3f3109b3f4e935e1f8a160475d044a0d7ee64aad527b",
-    "docs/coding-standard/README.md": "41774ee54f5cd60436b2924498e62ea26572da21301a67a11e4a92e03718e2b7",
-    "docs/coding-standard/backend-spring-boot.md": "8755bdfa59f0f915270cbe41b7cff6b0fcd6d245acdd2b4b95b933b905b430ab",
-    "docs/coding-standard/common.md": "11c42c5adc5ca19fa4a311ed612047381001d3fa9ea6ced5404533b743f33917",
-    "docs/coding-standard/mobile-react-native.md": "b0c7f05a8a8134ceedf218ab2062ee462ac21704287fffb168c28962d27035c3",
-    "docs/coding-standard/testing-review.md": "55e51ccb0e4d3380a861f5ef58efca62728a323148c13175f1530309ce789c78",
-    "docs/coding-standard/web-vue3.md": "1c4da42fad22b9fd1547155791dc1b0eb6e37f82d1e78769b29be2fbe23e6b64",
     ".ai/AGENTS.md": "a2c24a58d60b20c29236eb42363a6f4d1e53b3229ceda2fe5b0d761dddd2789e",
     "docs/requirements/REQUIREMENTS.md": "a38960adcfef352d427ab2ec00804ced355f08dbd9ced5cd682a993d12cf2756",
     "docs/requirements/TASKS.md": "5f83d87449044186853714676b51e2548a87ab8b11ef84941871989547a22736",

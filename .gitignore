@@ -55,12 +55,16 @@ docs/approvals/*
 !docs/testing/
 docs/testing/*
 !docs/testing/TEST_PLAN.md
+!docs/testing/PERF_BUDGET.md
 !docs/release/
 docs/release/*
 !docs/release/RELEASE_CHECKLIST.md
 !docs/design/
 docs/design/*
 !docs/design/ADR.md
+!docs/api/
+docs/api/*
+!docs/api/openapi.json
 .worktrees/
 
 # ---------------------------------------------------------------- 项目开发流程配置（随仓库入库）
