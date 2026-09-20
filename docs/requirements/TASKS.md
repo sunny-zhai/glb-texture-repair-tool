@@ -204,6 +204,31 @@
   ④ `docs/testing/TEST_PLAN.md` 新增 **TC-018** 与汇总行；`docs/release/RELEASE_CHECKLIST.md` 新增"assimpjs wasm 随包可加载 + 安装后 `assimp: true` + FBX/OBJ 可预览可落盘"检查项。
   ⑤ `node scripts/memory.mjs check` 通过；`git ls-files docs/` 仍为 **10 份**（本次只改既有入库文件，没有新增 `docs/` 文件）。
 
+### TASK-016 修掉 REQ-007 冷审的 6 条重要项（含 3 条可复现反例）
+- **关联需求**：REQ-007（不改写 TASK-013~015 的历史结论）
+- **依赖**：TASK-015（缺陷由它的交付暴露）
+- **做什么**：冷上下文复审（有条件通过/无阻塞级）给出 6 条重要项，逐条修：
+  **I-1 体检清单看不到缺失贴图的原始 uri**（`inspect.js` 的 `describeImage` 不透出 `image.name`，`TEXTURE_1X1_PLACEHOLDER` 文案只有"贴图 0 是 1×1 占位图"）→ 透出 `name` 并把 `missing:<原始 uri>` 写进 issue 文案。
+  **I-2 批量修复路径日志有 `undefined`、写死"IVE"文案、且吞掉转换告警**（`renderer.js` 的 `convert-*` 分支不读 `progress.warnings`，`prunedNodes`/`worldSize` 对 FBX/OBJ 不存在，`images` 取 `embeddedImages` 导致"贴图 0 张"）→ 按源扩展名出中文文案 + 字段缺省回退 + 打印 warning。
+  **I-3 `assimpAvailable()` 只探测 JS 模块**（glue 能 require 但 wasm 加载失败时假阳性，能力探测报 `assimp:true` 却每次转换必失败）→ 能力探测改为真正 `await` 一次加载并缓存结果/失败原因。
+  **I-4 同名 GLB+GLB 仍静默覆盖**（`uniqueRelativePath` 只作用于待转换项；两个同名 GLB 两条都报 success 却只落一个文件）→ 把普通 GLB 条目也纳入去重（仅在真撞名时改名，保留 BR-001 的单文件命名）。
+  **I-5 焊接原地改写缺两个不变量守卫**（① `accessor.byteOffset` 非 0 时读/写都会错位；② `usage` 统计不含动画/蒙皮/morph targets，POSITION 被动画 sampler 复用时会连动画一起改坏）→ 读取带上 `accessor.byteOffset`，并对 `byteOffset≠0` 或 accessor 被非图元引用的情况**保守跳过**焊接；补两条单测。
+  **I-6 发布检查清单的依赖/许可证失真**（漏 `assimpjs`；`jpeg-js` 实为 BSD-3-Clause 而非 MIT）→ 更新清单并点明随包许可证文件。
+  另修 4 条低成本次要项：`MOD-008` 撞号、REQ-007 #4/ADR-008(d) 与实现口径不一致（"移除贴图槽" vs "1×1 占位"）、ADR-008 包体积自相矛盾、`convert.test.js` 的自我满足断言与缺失夹具门控，以及冒烟补一条"预览产物不得残留外部 uri"的直接断言 + 抽屉断言改为轮询等待（消除 flaky）。
+- **产出**：`src/convert.js`、`src/main.js`、`src/renderer.js`、`src/inspect.js`、`test/convert.test.js`、`test/ui-smoke.cjs`、`docs/001-code-design.md`、`docs/design/ADR.md`、`docs/requirements/REQUIREMENTS.md`、`docs/release/RELEASE_CHECKLIST.md`
+- **文件范围**：同上
+- **验证方式**：① 新增单测覆盖 I-5 的两个反例（`byteOffset≠0` 与 accessor 被动画 sampler 复用 → 必须跳过焊接）；② `inspect()` 对占位贴图的 issue 文案必须含原始 uri；③ 能力探测在 wasm 不可加载时返回 false 且给出中文原因；④ 两个同名 GLB 批量修复必须产出两个文件；⑤ 冒烟新增"预览产物外部 uri 为 0"的断言；⑥ `npm run lint` + `npm test` 全绿；⑦ 冒烟在 GLB/IVE/FBX/OBJ 四种格式上仍全绿。
+- **状态**：已完成
+- **验证结果**：
+  ① **I-1**：`src/inspect.js` 的 `describeImage` 透出 `image.name`；`TEXTURE_1X1_PLACEHOLDER` 文案在占位贴图上写出**原图路径**（`原图未找到：E:\…\WuYanZu_Hat_D.jpg`）并给出可操作 hint（放到模型同级目录）。新增单测断言（旧实现下会红）。
+  ② **I-2**：批量日志改为按源扩展名出文案、`prunedNodes` 缺失不再打印 `undefined`、`images` 改用产物贴图总数、并**逐条打印 `progress.warnings`**。实跑 FBX+OBJ 批量日志：`[FBX 1/2] 转换中：蹲姿.fbx` → `FBX 转换完成：… 贴图 3 张，网格 3 个，坐标 …`、`[OBJ 2/2] …` → `转换告警：贴图"…WuYanZu_Hat_D.jpg"未能解析，已用 1×1 占位替换…`（此前 FBX 被写成 IVE、贴图误报 0 张、且告警被整条吞掉）。
+  ③ **I-3**：能力探测改为 `probeAssimp()` **真正 await 一次 wasm 加载**并缓存结果/失败原因，`app-capabilities` 改异步；模块缺失与 wasm 读不到都会给出中文原因。实跑仍报 `assimp: true`。
+  ④ **I-4**：同名去重扩到**普通 GLB 条目**。实跑两个同名 GLB（不同子目录）→ 落 `dup.glb` 与 `dup-glb.glb` **两个文件**、两条 success（此前只落一个文件却两条都报成功）。
+  ⑤ **I-5**：`accessorBytes` 计入 `accessor.byteOffset`；并对 `byteOffset≠0`、bufferView 被多 accessor 共用、accessor 被动画/蒙皮/morph targets 引用、图元带 morph targets 的情况**一律跳过焊接**。新增三条单测（两个冷审反例 + "正常形状仍要焊"），`test/convert.test.js` **13/13 通过**。
+  ⑥ **I-6**：发布检查清单改为 `jpeg-js`（BSD-3-Clause）、`pngjs`（MIT）、`assimpjs`（MIT + assimp BSD-3-Clause），并把两份许可证文件随包列为检查项。
+  ⑦ 次要项：模块编号改 **MOD-012**（不再与 transform 撞号）；REQ-007 #4 与 ADR-008(d) 的口径统一为"保留材质槽 + 1×1 占位"（与 BR-030 一致）；ADR-008 的包体积口径改为约 4.2MB 并写明 npm 报的 8.7MB 是整目录解包体积；`convert.test.js` 去掉自我满足断言与不必要的夹具门控、补"相对路径 / 同级同名 / `.fbm` 内同名"三种解析顺序用例；冒烟补"预览产物不得残留外部 uri + 有告警必须落日志"的直接断言，并把抽屉几何断言改为**测试期关闭过渡**（消除冷审与本次都复现过的 flaky，根因是合成器把 0.16s transition 停在中途）。ADR-008 另补两条已知代价：`ConvertFileList` 同步阻塞主进程（FBX 单次 4~6s）、重复转换时 wasm 侧内存增长。
+  ⑧ 全量：`npm run lint` 通过；`npm test` → **119 用例 / 115 通过 / 0 失败 / 4 跳过**；冒烟 GLB / IVE / FBX / OBJ **各 35 步 / 112 条断言 / 0 失败**。
+
 ## 依赖 DAG
 
 ```text
@@ -221,6 +246,8 @@ TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写�
 TASK-011 ──▶ TASK-012（体验细化：细滚动条 + 每区只留最外层滚动条）
 
 TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内核 → 接线与打包 → 文档与规则）
+
+TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本次要项）
 ```
 
 ## 并行批次
@@ -244,6 +271,7 @@ TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内�
 | 12 | TASK-013 | REQ-007 转换内核，无依赖（与 TASK-012 文件范围不重叠，可并行） |
 | 13 | TASK-014 | 依赖 TASK-013；改 `main.js`/`package.json`/`ui-smoke.cjs` |
 | 14 | TASK-015 | 依赖 TASK-014（文档要引用最终实现与实测数字） |
+| 15 | TASK-016 | 依赖 TASK-015（缺陷由冷审暴露） |
 
 ## 进度
 
@@ -264,3 +292,4 @@ TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内�
 | TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
 | TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
