@@ -270,8 +270,15 @@
 - **做什么**：`src/inspect.js` 的 `collectTextureSlots` 与 `src/repair.js` 的 `collectMaterialTexCoords` 在读取贴图槽时，一并读取 `material.extensions.KHR_texture_transform.texCoord` 覆盖（扩展里的 `texCoord` 优先于槽位自身的 `texCoord`）——当前两处都忽略它，导致"材质实际采样 `TEXCOORD_1` 却只检查 `TEXCOORD_0`"的漏报，而漏报的后果是 Cesium 整个场景不渲染。两处口径必须一致。
 - **产出**：`src/inspect.js`、`src/repair.js`、`test/inspect.test.js`、`test/repair.test.js`
 - **文件范围**：`src/inspect.js`, `src/repair.js`, `test/inspect.test.js`, `test/repair.test.js`
-- **验证方式**：`node --test test/inspect.test.js test/repair.test.js`——构造"缺 `TEXCOORD_0`、经 `KHR_texture_transform` 以 `texCoord: 1` 采样"的合成 GLB：体检报 `MISSING_TEXCOORD` 且点名 `TEXCOORD_1`（**该用例在旧代码上必须为红**），修复补出的是全零 `TEXCOORD_1`
-- **状态**：待开始
+- **验证方式**：`node --test test/inspect.test.js test/repair.test.js`——构造"图元**有** `TEXCOORD_0`、材质经 `KHR_texture_transform` 以 `texCoord: 1` 采样"的合成 GLB（这个形状是必须的：若图元连 `TEXCOORD_0` 都没有，旧代码检查 `TEXCOORD_0` 时同样会报，用例就不是红的了）：体检必须报 `MISSING_TEXCOORD` 且**点名 `TEXCOORD_1`**，修复必须补出全零 `TEXCOORD_1`；对照组（去掉扩展覆盖）不得报
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js test/inspect.test.js` → **80 用例 / 79 通过 / 1 跳过（缺 `o-model/运输车.glb`）/ 0 失败**；全量 `npm test` → **141 用例 / 137 通过 / 0 失败 / 4 跳过**（TASK-018 后基线 137/133/0/4，净增 4 条）；`npm run lint` 通过。
+  ② **旧代码必红（实测，不是推断）**：把 `src/inspect.js`、`src/repair.js` 用 `git stash` 临时还原到 TASK-019 之前、只保留新用例再跑，4 条里 **3 条红**——体检漏报那条、体检"点名通道"那条、修复"补对通道"那条；唯一绿的是"没有扩展覆盖"的对照组（它本就该在两侧都绿）。恢复改动后 4 条全绿。
+  ③ **体检侧**：`MISSING_TEXCOORD` 为 `error` 级，文案把缺失语义点名为 `TEXCOORD_1`（旧文案只写「缺少对应 TEXCOORD_n」，用户会去补错的通道）；对照组（无扩展覆盖、采样的 `TEXCOORD_0` 存在）不报。
+  ④ **修复侧**：补出的是 `TEXCOORD_1`（`VEC2` / `componentType 5126` / `count 3` / 24 字节全 0），原 `TEXCOORD_0` 仍指向原 accessor；修复后 `inspect()` 不再报该问题。无扩展覆盖时不回归（仍补 `TEXCOORD_0`）。
+  ⑤ **口径同源**：`textureTexCoordOf(reference)` 定义在 `src/repair.js` 并导出，`src/inspect.js` 直接 `require` 它（inspect 本就依赖 repair；反过来 require 会形成循环），因此体检与修复不存在第二套口径。
+  ⑥ **冒烟**：`node test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上各 **36 步 / 114 条断言 / 0 失败**（本条改动不碰 UI 与断言，属回归确认）。
 
 ### TASK-020 REQ-008 的文档与规则回填
 - **关联需求**：REQ-008
@@ -386,7 +393,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-017 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-018 | REQ-008 | 已完成 | ☑ 自动 |
-| TASK-019 | REQ-008 | 待开始 | ☐ |
+| TASK-019 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-020 | REQ-008 | 待开始 | ☐ |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
 | TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
