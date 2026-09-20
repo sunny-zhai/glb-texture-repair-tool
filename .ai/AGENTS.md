@@ -26,10 +26,28 @@ node scripts/task-flow.mjs start --req 001 --desc login     # 从版本分支建
 node scripts/task-flow.mjs finish --test "<项目验证命令>"    # 门禁通过→自动合并回版本分支（失败不合并，退出码 3）
 node scripts/task-flow.mjs request --base master            # 发起合主干申请（写 MERGE_REQUEST.md），由人合并
 node scripts/sync-base.mjs                                  # 人工验收不通过：先同步主干再改
-node scripts/version.mjs bump --level minor                 # 升版本：建新版本分支并设为当前
 ```
 
 `finish` / `request` 拒绝在受保护分支上执行；脏工作树会中止操作。
+
+### 版本：只在明确升级时变更
+
+- **合并绝不改变版本号**：`start` / `finish` / `request` / `sync-base` 都不会升版本。`finish` 只是把任务分支合并回**它派生时**的版本分支
+- **需求 / 任务固定属于它派生时的版本分支**：要让某个需求落在指定版本，先切到那个版本分支再 `start`：
+
+  ```bash
+  git checkout release/v0.1.0        # 切到目标版本分支
+  node scripts/task-flow.mjs start --req 004 --desc legacy-fix
+  ```
+
+- **升级是显式动作**（由人决定，且必须写明级别）：
+
+  ```bash
+  node scripts/version.mjs bump --level patch|minor|major    # 建新版本分支并设为当前
+  ```
+
+  不给 `--level` 会直接报错（退出码 2）——避免一次裸跑静默 +1，把"某需求属于哪个版本"变成偶然
+- **当前版本随时可查**：`node scripts/version.mjs show`，或 `node scripts/progress.mjs`（进程线里显示当前版本）
 
 ## 三、需求驱动并行开发（`req-parallel`）
 

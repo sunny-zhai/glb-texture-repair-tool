@@ -95,6 +95,16 @@ const adrCount = (adr?.split(/^## /m).slice(1) ?? []).filter((block) => {
 const contractReal = Boolean(contract) && !contract.includes('{{')
 const designReady = adrCount > 0 || contractReal
 const gateDecisions = new Set(approvals.map((entry) => `${entry.gate}:${entry.decision}`))
+// 当前版本：让"现在是什么版本"每天都可见——版本只在显式 bump 时变更，合并不改变它
+const versionState = (() => {
+  const raw = readOptional('.ai/version.json')
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+})()
 const verificationDone = testPlan.executed > 0 || testPlan.checked > 0
 
 const phases = [
@@ -137,7 +147,7 @@ const phases = [
 const SYMBOL = { done: '✓', active: '◐', pending: '○' }
 
 if (asJson) {
-  console.log(JSON.stringify({ root, phases, requirements, tasks, approvals: approvals.length, testPlan, release, git }, null, 2))
+  console.log(JSON.stringify({ root, version: versionState, phases, requirements, tasks, approvals: approvals.length, testPlan, release, git }, null, 2))
   process.exit(0)
 }
 
@@ -158,5 +168,9 @@ if (tasks.length > 0) {
 if (approvals.length > 0) {
   console.log('\n人工闸门留痕')
   for (const entry of approvals) console.log(`  - ${entry.time} ${entry.gate} → ${entry.decision}（${entry.actor}）`)
+}
+if (versionState?.current) {
+  console.log(`\nversion: ${versionState.current}${versionState.version ? `（${versionState.version}）` : ''}`
+    + ' · 合并不改变版本号；升级用 `node scripts/version.mjs bump --level patch|minor|major`')
 }
 console.log(`\ngit: ${git.branch} · ${git.commits} 个提交 · 未提交 ${git.dirty} 个文件 · 最近 ${git.lastCommit}`)

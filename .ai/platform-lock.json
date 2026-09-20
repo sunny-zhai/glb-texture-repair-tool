@@ -65,7 +65,7 @@
     "docs/coding-standard/mobile-react-native.md": "b0c7f05a8a8134ceedf218ab2062ee462ac21704287fffb168c28962d27035c3",
     "docs/coding-standard/testing-review.md": "55e51ccb0e4d3380a861f5ef58efca62728a323148c13175f1530309ce789c78",
     "docs/coding-standard/web-vue3.md": "1c4da42fad22b9fd1547155791dc1b0eb6e37f82d1e78769b29be2fbe23e6b64",
-    ".ai/AGENTS.md": "70fd5f2519325ebac31d3639822e39dfad662ea03f3fa7294f248df3fc872f2e",
+    ".ai/AGENTS.md": "a2c24a58d60b20c29236eb42363a6f4d1e53b3229ceda2fe5b0d761dddd2789e",
     "docs/requirements/REQUIREMENTS.md": "a38960adcfef352d427ab2ec00804ced355f08dbd9ced5cd682a993d12cf2756",
     "docs/requirements/TASKS.md": "5f83d87449044186853714676b51e2548a87ab8b11ef84941871989547a22736",
     "docs/testing/TEST_PLAN.md": "ed04c5228bfeda0024fbb54b2c0812f8be3db6ca425d8c4d8555febaa433d3a3",
@@ -77,12 +77,12 @@
     "scripts/check-contract.mjs": "a46a78ab1bd94f26d98cf25db0bb24806e69450c71b86104d5f076a99716465d",
     "scripts/changelog.mjs": "38f7832cc4db2ba8cde78fc68b0471b3565904178527cb59cafbdd65d60b5834",
     "scripts/record-approval.mjs": "9b9cab488912b803d8e7d8142f20cfd034daea4106020e3ec825e2d270966675",
-    "scripts/progress.mjs": "814375444b41fb735130be8222fe22254c61ff0684722c0f863d7b9aeea927fd",
+    "scripts/progress.mjs": "7b2314c17fe8d11e8ecbe30bdb0f215607a1fd3b092ebf4fe0de44bbb23224a2",
     "scripts/requirements-parse.mjs": "0a65838397e4625764dde3d172149422e9f6c1cf394f5ba587c8eacb7c2ad7bc",
     "scripts/memory.mjs": "c414eb307c00eb4d0a19495dd60203af3dd5b646175317494c656ef5e8353b22",
     "scripts/sync-base.mjs": "2a7052a11c0dc35a152d30671d0ebc2f009876b4f94712d4954f7251b2c5d6cb",
-    "scripts/version.mjs": "f0c7234b64296c0cc700442d06cf3c57475a6f0938632787aa9440e7e532aae8",
-    "scripts/task-flow.mjs": "fbf81f08210f4e20c2d97dc47e374923a8be6c6ab6428a7cbb871aeb20e3425b",
+    "scripts/version.mjs": "c6f82bae48a7a1106804f4eb3745de7d5e3b6da99eb7b466f90a867ef508c591",
+    "scripts/task-flow.mjs": "c08ed49c36940401ea1340be6dcf9d1ae757bd9b8301a1730c2fc3bd624a2261",
     "scripts/skill.mjs": "8e18234b6305c5c39c83cca6a8fa015323560a98bf0939a3cbfed8cb5ca1e4b1"
   }
 }

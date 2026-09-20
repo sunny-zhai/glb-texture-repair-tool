@@ -133,7 +133,8 @@ if (command === 'start') {
 
   git(['checkout', version.current])
   git(['checkout', '-b', branch])
-  console.log(`task-flow: created ${branch} from ${version.current}`)
+  console.log(`task-flow: created ${branch} from ${version.current}`
+    + `（绑定 ${version.version ?? version.current}；要换绑定就切到目标版本分支再 start）`)
   console.log(`task-flow: implement here, then run: node scripts/task-flow.mjs finish`)
   process.exit(0)
 }
@@ -226,7 +227,8 @@ if (command === 'finish') {
   }
 
   const mergedCommit = execFileSync('git', ['rev-parse', '--short', versionBranch], { cwd: root, encoding: 'utf8' }).trim()
-  console.log(`task-flow: auto-merged ${feature} (${featureHead}) into ${versionBranch} as ${mergedCommit}`)
+  console.log(`task-flow: auto-merged ${feature} (${featureHead}) into ${versionBranch} as ${mergedCommit}`
+    + `（版本未变：合并不会改变版本号）`)
   if (mergeInOwner) console.log(`task-flow: merged in the worktree holding ${versionBranch}: ${owner}`)
   console.log(`task-flow: when ${versionBranch} is verified, run: node scripts/task-flow.mjs request --base master`)
   process.exit(0)

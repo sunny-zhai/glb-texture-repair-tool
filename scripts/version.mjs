@@ -25,9 +25,9 @@ const statePath = join(root, '.ai', 'version.json')
 const git = (args, opts = {}) =>
   execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }).trim()
 
-function fail(message) {
+function fail(message, code = 1) {
   console.error(`version: ${message}`)
-  process.exit(1)
+  process.exit(code)
 }
 
 function loadState() {
@@ -203,7 +203,13 @@ if (command === 'init') {
 
 if (command === 'bump') {
   if (!state) fail('no version branch registered; run init first')
-  const level = option('--level', 'patch')
+  // 升版本是**显式动作**：合并（start / finish / request / sync-base）绝不改变版本号。
+  // 不给 --level 直接报错——默认 patch 会让一次裸跑静默 +1，把"某需求属于哪个版本"变成偶然。
+  if (!argv.includes('--level')) {
+    fail('bump requires an explicit --level patch|minor|major'
+      + '（升版本是显式动作：合并不会改变版本号；需求固定属于它派生时的版本分支）', 2)
+  }
+  const level = option('--level')
   const version = nextVersion(state.version, level)
   const branch = `${state.prefix}${version}`
   if (branchExists(branch)) fail(`branch "${branch}" already exists`)
