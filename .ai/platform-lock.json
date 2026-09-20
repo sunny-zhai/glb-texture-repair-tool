@@ -62,7 +62,7 @@
     "dsh/workflows/req-parallel.js": "cfbfb4f558d00b261fcddf94dc23d6ee55b84a404315a209b24b67c33f12e4ce",
     "dsh/workflows/verify.mjs": "d8b9e97b4421654c1a0e70b0271ad8c62053e5e7137138c6d735c367d93788c4",
     "dsh/workflows/README.md": "2a54e97c62a5974424fa3f3109b3f4e935e1f8a160475d044a0d7ee64aad527b",
-    ".ai/AGENTS.md": "a2c24a58d60b20c29236eb42363a6f4d1e53b3229ceda2fe5b0d761dddd2789e",
+    ".ai/AGENTS.md": "a3256adce32c40221fc27f62be5016666c0ebe69e79488f843750f8cc7bb32d4",
     "docs/requirements/REQUIREMENTS.md": "a38960adcfef352d427ab2ec00804ced355f08dbd9ced5cd682a993d12cf2756",
     "docs/requirements/TASKS.md": "5f83d87449044186853714676b51e2548a87ab8b11ef84941871989547a22736",
     "docs/testing/TEST_PLAN.md": "ed04c5228bfeda0024fbb54b2c0812f8be3db6ca425d8c4d8555febaa433d3a3",
@@ -76,10 +76,11 @@
     "scripts/record-approval.mjs": "9b9cab488912b803d8e7d8142f20cfd034daea4106020e3ec825e2d270966675",
     "scripts/progress.mjs": "7b2314c17fe8d11e8ecbe30bdb0f215607a1fd3b092ebf4fe0de44bbb23224a2",
     "scripts/requirements-parse.mjs": "0a65838397e4625764dde3d172149422e9f6c1cf394f5ba587c8eacb7c2ad7bc",
-    "scripts/memory.mjs": "1452bfc5fa854b894420d8590391616844ebc716ea25f1d08c7c5b328f7e0fb8",
+    "scripts/memory.mjs": "3ce961f593aacc316c52bc98dcd5cb47287b63c51e719e1c892ea92fd3b71cf7",
     "scripts/sync-base.mjs": "2a7052a11c0dc35a152d30671d0ebc2f009876b4f94712d4954f7251b2c5d6cb",
     "scripts/version.mjs": "c6f82bae48a7a1106804f4eb3745de7d5e3b6da99eb7b466f90a867ef508c591",
-    "scripts/task-flow.mjs": "c08ed49c36940401ea1340be6dcf9d1ae757bd9b8301a1730c2fc3bd624a2261",
-    "scripts/skill.mjs": "8e18234b6305c5c39c83cca6a8fa015323560a98bf0939a3cbfed8cb5ca1e4b1"
+    "scripts/task-flow.mjs": "56e6c43c9d3789d08128e057d6dd0b0d94e8c63b2bc3dc030312f6e7a9dfd736",
+    "scripts/skill.mjs": "8e18234b6305c5c39c83cca6a8fa015323560a98bf0939a3cbfed8cb5ca1e4b1",
+    "scripts/platform-issue.mjs": "e3d5fb2c5145d33a16c28442e21b7af08cd6e07e4fffb1c35a7b5e326ab75624"
   }
 }

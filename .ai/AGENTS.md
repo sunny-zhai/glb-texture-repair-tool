@@ -89,7 +89,24 @@ node scripts/memory.mjs log --task TASK-XXX --req REQ-XXX --evidence "<命令 �
 
 ## 六、门禁与验证
 
-改动完成前至少运行：项目自身的验证命令（如 `npm test`、`npx tsc --noEmit`）+ `node scripts/memory.mjs check`。契约文件存在时运行 `node scripts/check-contract.mjs`；记忆线结构变化后先 `memory sync`。
+改动完成前至少运行：项目自身的验证命令（如 `npm test`、`npx tsc --noEmit`）+ `node scripts/memory.mjs check` + `node scripts/platform-issue.mjs check`。契约文件存在时运行 `node scripts/check-contract.mjs`；记忆线结构变化后先 `memory sync`。
+
+## 六之二、遇到平台问题时
+
+平台工作流本身的问题**不要只写在散文里**——写进台账才有生命周期，母体也才能据此修流程。
+
+```bash
+node scripts/platform-issue.mjs log --category rule-gap --severity major \
+  --trigger "task-flow:finish" --summary "<一句话问题>" --evidence "<命令 → 结果 或 文件:行>"
+node scripts/platform-issue.mjs capture -- node scripts/memory.mjs check   # 非零退出才记录
+node scripts/platform-issue.mjs list                                      # 未关闭的问题
+node scripts/platform-issue.mjs resolve --id ISSUE-001 --status fixed --fixed-by <commit|REQ>
+```
+
+- 分类：`platform-bug` / `rule-gap` / `tool-gap` / `docs-gap` / `env` / `other`；严重度：`blocker` / `major` / `minor`
+- 台账 `docs/PLATFORM_ISSUES.md` **只追加**：改状态是追加事件行；分类与严重度以首行为准
+- 台账是**项目自己的数据**，随项目入库，平台升级不会覆盖它；**没有任何数据回传**（平台无服务端），由母体侧主动汇总
+- 平台自检报 ❌ 时会自动落账（按"触发点+摘要"去重），`--no-report` 可关
 
 ## 七、提交纪律
 

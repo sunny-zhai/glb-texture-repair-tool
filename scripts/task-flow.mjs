@@ -249,16 +249,23 @@ if (command === 'request') {
   const log = git(['log', '--pretty=format:%h %s', `${base}..${version.current}`])
     .split('\n')
     .filter(Boolean)
+  // 快照锚点：清单与计数描述的是「生成那一刻」，而承载本文件的申请提交在此之后
+  // 才落地——没有锚点时「分支顶端比清单多 1」会被人工复核误读成漏列（v0.1.0 写 75 实为 76、
+  // v0.1.1 写 77 实为 78，两轮交付都踩过）。锚点让这份文件自洽且可判定。
+  const snapshot = git(['rev-parse', '--short', version.current])
   const title = `release: ${version.version ?? version.current} → ${base}`
   const body = [
     `# ${title}`,
     '',
     `- version branch: \`${version.current}\``,
     `- target: \`${base}\`（受保护分支，需人工合并）`,
-    `- commits: ${log.length}`,
+    `- snapshot: \`${snapshot}\`（本清单与计数对应的版本分支顶端）`,
+    `- commits: ${log.length}（\`${base}..${version.current}\` 在 snapshot 处的计数）`,
     '',
     '## 变更',
     ...(log.length > 0 ? log.map((line) => `- ${line}`) : ['- （无新增提交）']),
+    '',
+    `> 承载本文件的申请提交在 snapshot \`${snapshot}\` 之后落地，因此**不在清单与计数内**——分支顶端可能比 snapshot 多 1 个提交。这是自指，不是漏列。`,
     '',
     '## 验收前请确认',
     '- [ ] 版本分支上的测试/门禁全绿（`docs/testing/TEST_PLAN.md`）',

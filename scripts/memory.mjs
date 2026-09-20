@@ -4,7 +4,7 @@
 //   node scripts/memory.mjs sync [--root <path>]
 //   node scripts/memory.mjs log --task TASK-XXX [--req REQ-XXX] [--event completed|reopened]
 //                               --evidence "<命令或路径 → 结果>" [--commit <sha>] [--note <text>] [--root <path>]
-//   node scripts/memory.mjs check [--root <path>]
+//   node scripts/memory.mjs check [--root <path>] [--report]   # --report：失败时往问题台账落一条（默认关）
 //
 // 边界：
 //   - 权威状态在 docs/requirements/TASKS.md；本文件是**派生的历史**，不是状态源；
@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
+import { ISSUE_FILE, logIssue } from './platform-issue.mjs'
 
 const FILE = 'docs/PROJECT_MEMORY.md'
 const S_BEGIN = '<!-- memory:structure:begin -->'
@@ -426,6 +427,21 @@ if (isEntry) {
   if (violations.length > 0) {
     console.error(`memory: check 未通过（${violations.length} 项）`)
     for (const message of violations) console.error(`  - ${message}`)
+    // 可选上报：默认**关**。check 在每次合并点都会跑，而它多数失败是"台账没跟上"
+    // （忘了 sync / 忘了 log），那是项目侧动作缺失，不是平台缺陷——默认上报会把
+    // 母体的待分诊队列淹掉。需要留痕时显式加 --report。
+    if (argv.includes('--report')) {
+      const result = logIssue(root, {
+        category: 'rule-gap',
+        severity: 'minor',
+        trigger: 'memory.mjs:check',
+        summary: `memory check 未通过：${violations[0]}`,
+        evidence: `${violations.length} 项｜${violations.slice(0, 3).join('；')}`,
+      }, { dedup: true })
+      console.error(result.skipped
+        ? `memory: 已有未关闭的同类问题 ${result.id}，未重复记录`
+        : `memory: 已上报 ${result.id} 到 ${ISSUE_FILE}`)
+    }
     process.exit(1)
   }
   if (command === 'check') console.log('memory: check 通过（结构快照与完成线均与权威来源一致）')

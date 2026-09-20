@@ -49,6 +49,9 @@ docs/requirements/*
 !docs/requirements/REQUIREMENTS.md
 !docs/requirements/TASKS.md
 !docs/PROJECT_MEMORY.md
+# 平台问题台账（Tenon REQ-014）：使用中遇到的问题记录在这里，随项目入库
+# （`docs/*` 会把它一起吞掉，必须显式放行——这正是 ISSUE-001 记录的坑）
+!docs/PLATFORM_ISSUES.md
 !docs/approvals/
 docs/approvals/*
 !docs/approvals/APPROVALS.md
