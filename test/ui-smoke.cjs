@@ -42,8 +42,9 @@ const failures = []
 let checksRun = 0
 // 断言调用点总数。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
 // （TASK-018 加了「4 档降采样」与「档位进入 IPC 载荷」2 条 → 112 + 2 = 114；
-//   REQ-011/TASK-024 加了 6 条占比不变量、旧版迁移与夹取恢复 → 114 + 6 = 120）
-const EXPECTED_CHECK_COUNT = 120
+//   REQ-011/TASK-024 加了 6 条占比不变量、旧版迁移与夹取恢复 → 114 + 6 = 120；
+//   REQ-011/TASK-025 加了 6 条多尺寸自适应矩阵不变量 → 120 + 6 = 126）
+const EXPECTED_CHECK_COUNT = 126
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -588,6 +589,106 @@ async function main() {
       JSON.stringify(scrollbars.panes.bottom))
     check('内容灌满后页面本身仍不得整页滚动', scrollbars.pageScrolls === false, String(scrollbars.pageScrolls))
   }
+
+  // ---------------------------------------------------------------- REQ-011：内部元素自适应（多尺寸矩阵）
+  // 占比模型解决了"构图被窗口改写"，但每个区域的**内部**还必须在各个尺寸下都不溢出：
+  // 每区恰好一个滚动容器（BR-029）、无横向溢出、3D 画布 ≥ CANVAS_MIN_HEIGHT、状态栏不换行、
+  // 页面不整页滚动。这里不灌满内容（那是 TASK-012 的职责），只扫尺寸。
+  const ADAPT_PROBE = `(() => {
+    const shell = document.getElementById('appShell');
+    const desc = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+      + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
+    const scrollersIn = (root) => {
+      const out = [];
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        const cs = getComputedStyle(el);
+        if (/auto|scroll/.test(cs.overflowY)) out.push(desc(el));
+      }
+      return out;
+    };
+    const box = (el) => ({
+      clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
+      clientHeight: el.clientHeight, scrollHeight: el.scrollHeight,
+      horizontalOverflow: el.scrollWidth > el.clientWidth + 1,
+      verticalOverflow: el.scrollHeight > el.clientHeight + 1,
+    });
+    const panes = {};
+    for (const [name, id] of [['left', 'paneLeft'], ['right', 'paneRight'], ['bottom', 'paneBottom'], ['center', 'paneCenter']]) {
+      const el = document.getElementById(id);
+      panes[name] = { ...box(el), scrollers: scrollersIn(el) };
+    }
+    const previewBar = document.querySelector('.preview-bar');
+    const statusBar = document.getElementById('statusBar');
+    const container = document.getElementById('cesiumContainer');
+    const se = document.scrollingElement;
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      narrow: shell.classList.contains('narrow'),
+      panes,
+      canvasHeight: Math.round(container.getBoundingClientRect().height),
+      canvasMinHeight: window.__layout.limits.canvasMinHeight,
+      previewBar: { height: Math.round(previewBar.getBoundingClientRect().height), ...box(previewBar) },
+      statusBar: { height: Math.round(statusBar.getBoundingClientRect().height), ...box(statusBar) },
+      page: { scrollWidth: se.scrollWidth, clientWidth: se.clientWidth, scrollHeight: se.scrollHeight, innerHeight: window.innerHeight },
+      ratio: window.__layout.getRatio(),
+    };
+  })()`
+
+  // 先种入一组**均衡**占比并重载：前面的极限拖拽把日志留在了比例上限，画布正好贴在下限上，
+  // 那样"画布 ≥ 下限"就是恒真的空断言。均衡占比让画布有富余，扫描才有意义。
+  await setViewport(1280, 800)
+  await seedLayout(RATIO_SEED(), '自适应扫描前种入均衡占比')
+
+  const adaptSamples = []
+  for (const [width, height] of [[900, 700], [1100, 760], [1280, 800], [1440, 900], [1920, 1200]]) {
+    await setViewport(width, height)
+    adaptSamples.push({ size: `${width}×${height}`, sample: await run(`自适应采样（${width}×${height}）`, ADAPT_PROBE) })
+  }
+  const adaptRows = adaptSamples.map(({ size, sample }) => sample && ({
+    size,
+    narrow: sample.narrow,
+    scrollers: {
+      left: sample.panes.left.scrollers.length,
+      right: sample.panes.right.scrollers.length,
+      bottom: sample.panes.bottom.scrollers.length,
+      center: sample.panes.center.scrollers.length,
+    },
+    overflow: ['left', 'right', 'bottom', 'center'].filter((name) => sample.panes[name].horizontalOverflow),
+    canvas: sample.canvasHeight,
+    canvasMin: sample.canvasMinHeight,
+    previewBar: sample.previewBar.height,
+    previewOverflow: sample.previewBar.horizontalOverflow,
+    statusBar: sample.statusBar.height,
+    statusOverflow: sample.statusBar.horizontalOverflow,
+    page: sample.page,
+  }))
+  console.log('自适应矩阵采样：' + JSON.stringify(adaptRows))
+  if (adaptRows.every(Boolean)) {
+    check('自适应矩阵：五个尺寸都要采到数据',
+      adaptRows.length === 5 && adaptRows.every((row) => row.scrollers && row.canvas > 0),
+      JSON.stringify(adaptRows.map((row) => row.size)))
+    check('自适应矩阵：每个区域恰好一个滚动容器（左/右/日志 1，中栏 0），任何尺寸都成立',
+      adaptRows.every((row) => row.scrollers.left === 1 && row.scrollers.right === 1
+        && row.scrollers.bottom === 1 && row.scrollers.center === 0),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, scrollers: row.scrollers }))))
+    check('自适应矩阵：任何尺寸下各区域都不得横向溢出',
+      adaptRows.every((row) => row.overflow.length === 0),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, overflow: row.overflow }))))
+    check('自适应矩阵：任何尺寸下 3D 画布都必须 ≥ CANVAS_MIN_HEIGHT（且不是贴在下限上就算过）',
+      adaptRows.every((row) => row.canvas >= row.canvasMin)
+        && adaptRows.filter((row) => row.canvas > row.canvasMin).length >= 3,
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, canvas: row.canvas, min: row.canvasMin }))))
+    check('自适应矩阵：状态栏不得换行（高度恒定）也不得横向溢出',
+      new Set(adaptRows.map((row) => row.statusBar)).size === 1
+        && adaptRows.every((row) => row.statusOverflow === false),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, statusBar: row.statusBar, overflow: row.statusOverflow }))))
+    check('自适应矩阵：预览控件条允许换行但不得横向溢出，且页面任何尺寸都不得整页滚动',
+      adaptRows.every((row) => row.previewOverflow === false)
+        && adaptRows.every((row) => row.page.scrollHeight <= row.page.innerHeight + 1
+          && row.page.scrollWidth <= row.page.clientWidth + 1),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, previewBar: row.previewBar, previewOverflow: row.previewOverflow, page: row.page }))))
+  }
+  await setViewport(1280, 800)
 
   // 种入一组**与默认值和 styles.css 初值都不同**的布局并重载：只有真的走了
   // "读 localStorage → clamp → 写 CSS 变量"这条链路才会得到这组数，否则断言无从通过
