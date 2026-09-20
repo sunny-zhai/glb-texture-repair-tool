@@ -31,4 +31,5 @@ node <平台路径>/scripts/platform-doctor.mjs --target .
 | ID | 日期 | 分类 | 严重度 | 触发点 | 摘要 | 证据 | 状态 |
 |---|---|---|---|---|---|---|---|
 | ISSUE-001 | 2026-09-20 | platform-bug | major | gitignore:docs/* | 命令失败（exit 1）：git ls-files --error-unmatch docs/PLATFORM_ISSUES.md | exit 1｜error: 路径规格 'docs/PLATFORM_ISSUES.md' 未匹配任何 git 已知文件 ⏎ Did you forget to 'git add'? | open |
+| ISSUE-001 | 2026-09-20 | — | — | — |  | fixed-by: 7e0760d｜在 .gitignore 放行 !docs/PLATFORM_ISSUES.md；台账已入库 | fixed |
 <!-- issues:end -->
