@@ -180,8 +180,14 @@
 - **产出**：`src/main.js`、`src/renderer.js`、`src/preload.js`（如需）、`package.json`、`test/ui-smoke.cjs`（FBX/OBJ 各跑一遍）
 - **文件范围**：`src/main.js`, `src/renderer.js`, `src/preload.js`, `package.json`, `test/ui-smoke.cjs`
 - **验证方式**：① 冒烟 `node test/ui-smoke.cjs o-model/蹲姿.fbx --port 9333` 与 `... o-model/蹲姿.obj` 全绿（预览路径不得因外部 uri 失败）；② `node test/ui-smoke.cjs model/蹲姿.glb` 与 `o-model/蹲姿.ive` 仍全绿（不回归）；③ 手动：选择器里能看到 fbx/obj，批量修复能把 OBJ 落盘成 GLB；④ `npm run lint` + `npm test` 全绿。
-- **状态**：待开始
-- **验证结果**：（待开始）
+- **状态**：已完成
+- **验证结果**：
+  ① 三条 IPC 全部接通（统一前置 `convertSourceToGlb`，IVE 与 FBX/OBJ 返回同一形状）：文件过滤器加 `fbx`/`obj`、`collectGlbEntries` 扩展名加 `.fbx`/`.obj`、`repair-glb` 批量转换带 `convert-start/convert-done` 进度、`read-glb-data-url` 与 `inspect-glb` 各自转临时 GLB 并在 `finally` 清理；`app-capabilities` 新增 `assimp` 与 `assimpMessage`；渲染进程把能力与**转换告警**（解析不到的贴图）打进日志。
+  ② 冒烟 `node test/ui-smoke.cjs`：`o-model/蹲姿.fbx` 与 `o-model/蹲姿.obj` **各 34 步 / 110 条断言 / 0 失败**；`model/蹲姿.glb` 与 `o-model/蹲姿.ive` 仍各 34 步 / 110 条断言 / 0 失败（不回归）。
+  ③ **可落盘端到端实跑**（走真实 IPC `repairGlb`，非模拟）：`蹲姿.fbx` → `蹲姿.glb`（15.1MB，含 JPEG→PNG 归一化）、`蹲姿.obj` → `蹲姿-obj.glb`（599KB），两条都 `status:'success'`。
+  ④ **过程中发现并修掉一个真缺陷**：同名不同扩展名的源（`蹲姿.fbx` + `蹲姿.obj`，以及既有的 `蹲姿.ive` + `蹲姿.glb`）转换后都叫 `蹲姿.glb`，于是**临时文件互相覆盖**（FBX 那条的 `oldBytes` 实际是 OBJ 的 599,468）、**输出目录也互相覆盖**，而两条都报 `success`——只落一个文件。修法是撞名时按源扩展名区分（`蹲姿-obj.glb`），只在真的撞到时才改名；复测确认产出两个文件、临时路径也分开。
+  ⑤ 冒烟里那条"主按钮必须拿到主进程中文校验错误"原先钉死了 `GLB / IVE` 文案，本次因文案扩成 `GLB / IVE / FBX / OBJ` 而假红——已改成只断言"拿到了中文校验错误"，避免以后加格式再假红。
+  ⑥ `npm run lint` 通过；`npm test` → **115 用例 / 111 通过 / 0 失败 / 4 跳过**。`package.json` 的 `asarUnpack` 已加 `node_modules/assimpjs/dist/**`（wasm 必须能被按 `__dirname` 读到）。
 
 ### TASK-015 文档与规则修订（含 M3 结论翻案留痕）
 - **关联需求**：REQ-007；设计决策见 ADR-008
@@ -251,5 +257,5 @@ TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内�
 | TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
-| TASK-014 | REQ-007 | 待开始 | ☐ |
+| TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-015 | REQ-007 | 待开始 | ☐ |
