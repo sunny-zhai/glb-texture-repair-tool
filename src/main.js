@@ -15,7 +15,60 @@ const {
   missingIveHelperMessage,
   resolveIveHelper,
 } = require('./ive')
+const {
+  assimpAvailable,
+  convertToGlb,
+  isConvertiblePath,
+  missingAssimpMessage,
+} = require('./convert')
 const { inspect } = require('./inspect')
+
+// REQ-007：非 GLB 的输入先转成 GLB 再进管线。IVE 走原生助手，FBX/OBJ 走 assimpjs(WASM)。
+const SOURCE_EXTENSIONS = ['.glb', '.ive', '.fbx', '.obj']
+const SOURCE_LABEL = 'GLB / IVE / FBX / OBJ'
+const CONVERTIBLE_EXTENSIONS = ['.ive', '.fbx', '.obj']
+
+/** @description 该输入是否不是 GLB、需要先转换。 */
+function needsConversion(filePath) {
+  return isIvePath(filePath) || isConvertiblePath(filePath)
+}
+
+/** @description 转换产物的相对路径：换掉扩展名、保留相对子目录结构。 */
+function convertedRelativePath(relativePath) {
+  return relativePath.replace(/\.[^./\\]+$/, '.glb')
+}
+
+/**
+ * @description 把非 GLB 输入转成 GLB 文件。两条后端（IVE 原生助手 / assimpjs WASM）返回
+ *   **同一形状**的报告，调用方不必分辨格式；失败只返回中文错误，不抛。
+ * @returns {Promise<object>} `status:'success'` 时含 `newBytes/warnings`，失败时含 `error`
+ */
+async function convertSourceToGlb(inputPath, targetPath, options = {}) {
+  if (isIvePath(inputPath)) {
+    if (!iveConversionAvailable()) return { status: 'error', error: missingIveHelperMessage() }
+    // 轴转换/贴地/归心的默认值在 src/ive.js 里，这里只做透传，便于后续把开关搬到界面上。
+    return convertIveToGlb(inputPath, targetPath, options)
+  }
+  if (isConvertiblePath(inputPath)) {
+    if (!assimpAvailable()) return { status: 'error', error: missingAssimpMessage() }
+    const report = await convertToGlb(inputPath)
+    if (report.status !== 'success') return { status: 'error', error: report.error }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+    fs.writeFileSync(targetPath, report.bytes)
+    return {
+      status: 'success',
+      newBytes: report.bytes.length,
+      warnings: report.warnings,
+      meshes: report.stats.meshes,
+      images: report.stats.embeddedImages,
+      vertices: report.stats.vertices,
+      verticesBefore: report.stats.verticesBeforeWeld,
+      triangles: report.stats.triangles,
+      axis: 'assimp 直出（已按 glTF Y-up 约定）',
+    }
+  }
+  return { status: 'error', error: `不支持的输入格式：${path.basename(inputPath)}` }
+}
 
 let mainWindow
 const appIconPath = path.join(__dirname, '..', 'assets', 'app-icon.png')
@@ -64,7 +117,7 @@ ipcMain.handle('pick-inputs', async (_, mode, current) => {
     properties: mode === 'directory'
       ? ['openDirectory']
       : ['openFile', 'multiSelections'],
-    filters: [{ name: '三维模型（GLB / IVE）', extensions: ['glb', 'ive'] }],
+    filters: [{ name: `三维模型（${SOURCE_LABEL}）`, extensions: ['glb', 'ive', 'fbx', 'obj'] }],
   }
   const result = await dialog.showOpenDialog(mainWindow, options)
   if (result.canceled) return normalizeSelection(current)
@@ -76,6 +129,9 @@ ipcMain.handle('pick-inputs', async (_, mode, current) => {
 
 ipcMain.handle('app-capabilities', () => ({
   ive: iveConversionAvailable(),
+  // REQ-007：FBX/OBJ 的能力单独上报（WASM 平台无关，但仍要能给出"为什么不可用"）
+  assimp: assimpAvailable(),
+  assimpMessage: assimpAvailable() ? '' : missingAssimpMessage(),
   platform: `${process.platform}-${process.arch}`,
   iveHelperSearched: resolveIveHelper().searched,
 }))
@@ -90,7 +146,7 @@ ipcMain.handle('repair-glb', async (event, payload) => {
   const inputPaths = normalizeSelection(payload?.inputPaths)
   const outputDir = payload?.outputDir
   if (!inputPaths.length) {
-    throw new Error('请选择一个或多个 GLB / IVE 文件，或一个目录。')
+    throw new Error(`请选择一个或多个 ${SOURCE_LABEL} 文件，或一个目录。`)
   }
   if (!outputDir) {
     throw new Error('请选择输出目录。')
@@ -106,27 +162,53 @@ ipcMain.handle('repair-glb', async (event, payload) => {
   }
   options.onProgress = sendProgress
 
-  // IVE 不是 GLB，先用原生助手转换成 GLB，再统一进入修复管线，
+  // IVE / FBX / OBJ 都不是 GLB，先用各自的转换器转成 GLB，再统一进入修复管线，
   // 这样转换结果同样会经历贴图归一化、蒙皮烘焙与 Cesium 兼容处理。
   let temporaryDir = ''
   try {
-    const entries = collectGlbEntries(inputPaths, ['.glb', '.ive'])
-    const repairEntries = entries.filter((entry) => !isIvePath(entry.inputPath))
-    const iveEntries = entries.filter((entry) => isIvePath(entry.inputPath))
+    const entries = collectGlbEntries(inputPaths, SOURCE_EXTENSIONS)
+    const repairEntries = entries.filter((entry) => !needsConversion(entry.inputPath))
+    const convertEntries = entries.filter((entry) => needsConversion(entry.inputPath))
 
-    if (iveEntries.length > 0) {
-      if (!iveConversionAvailable()) throw new Error(missingIveHelperMessage())
-      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-ive-'))
-      iveEntries.forEach((entry, index) => {
+    // 同名不同扩展名（`蹲姿.fbx` + `蹲姿.obj`，或 `蹲姿.ive` + `蹲姿.glb`）转换后都是
+    // `蹲姿.glb`：临时文件会互相覆盖、输出目录也会互相覆盖，而两条都报 success。
+    // 撞了就按源扩展名区分（`蹲姿-obj.glb`），只在真的撞到时才改名，不动单文件时的既有命名。
+    const usedRelativePaths = new Set(repairEntries.map((entry) => entry.relativePath.toLowerCase()))
+    const uniqueRelativePath = (relativePath, sourcePath) => {
+      let candidate = relativePath
+      if (usedRelativePaths.has(candidate.toLowerCase())) {
+        const ext = path.extname(sourcePath).replace('.', '').toLowerCase() || 'src'
+        const base = relativePath.replace(/\.[^./\\]+$/, '')
+        candidate = `${base}-${ext}.glb`
+        let suffix = 2
+        while (usedRelativePaths.has(candidate.toLowerCase())) {
+          candidate = `${base}-${ext}-${suffix}.glb`
+          suffix += 1
+        }
+      }
+      usedRelativePaths.add(candidate.toLowerCase())
+      return candidate
+    }
+
+    if (convertEntries.length > 0) {
+      // 缺后端时提前失败，错误里说清是哪一种格式缺什么（IVE 缺原生助手 / assimp 缺 wasm）
+      const missing = convertEntries.find((entry) => (
+        isIvePath(entry.inputPath) ? !iveConversionAvailable() : !assimpAvailable()
+      ))
+      if (missing) {
+        throw new Error(isIvePath(missing.inputPath) ? missingIveHelperMessage() : missingAssimpMessage())
+      }
+      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-convert-'))
+      for (const [index, entry] of convertEntries.entries()) {
         sendProgress({
           phase: 'convert-start',
           index,
-          total: iveEntries.length,
+          total: convertEntries.length,
           relativePath: entry.relativePath,
         })
-        const target = path.join(temporaryDir, entry.relativePath.replace(/\.ive$/i, '.glb'))
-        // 轴转换/贴地/归心的默认值在 src/ive.js 里，这里只做透传，便于后续把开关搬到界面上。
-        const report = convertIveToGlb(entry.inputPath, target, {
+        const relativePath = uniqueRelativePath(convertedRelativePath(entry.relativePath), entry.inputPath)
+        const target = path.join(temporaryDir, relativePath)
+        const report = await convertSourceToGlb(entry.inputPath, target, {
           keepJpeg: options.keepJpeg,
           upAxis: options.upAxis,
           ground: options.ground,
@@ -135,10 +217,11 @@ ipcMain.handle('repair-glb', async (event, payload) => {
         sendProgress({
           phase: 'convert-done',
           index,
-          total: iveEntries.length,
+          total: convertEntries.length,
           relativePath: entry.relativePath,
           status: report.status,
           error: report.error,
+          warnings: report.warnings || [],
           newBytes: report.newBytes,
           images: report.images,
           meshes: report.meshes,
@@ -149,17 +232,17 @@ ipcMain.handle('repair-glb', async (event, payload) => {
           verticesBefore: report.verticesBefore,
           triangles: report.triangles,
         })
-        // 沿用源 IVE 的 relativePath 输出，目录扫描时保留相对子目录结构。
+        // 沿用源的 relativePath 输出，目录扫描时保留相对子目录结构。
         if (report.status === 'success') {
-          repairEntries.push({ inputPath: target, relativePath: entry.relativePath.replace(/\.ive$/i, '.glb') })
+          repairEntries.push({ inputPath: target, relativePath })
         }
-      })
+      }
     }
 
-    // 只有「选了 IVE 但一个都没转成功」才需要中断；空目录仍交给 repairMany 走它原有的
+    // 只有「选了待转换格式但一个都没转成功」才需要中断；空目录仍交给 repairMany 走它原有的
     // 「未找到模型」提示，保持既有交互不变。
-    if (!repairEntries.length && iveEntries.length > 0) {
-      throw new Error('所选的 IVE 文件都未能转换成功，请查看转换错误后重试。')
+    if (!repairEntries.length && convertEntries.length > 0) {
+      throw new Error('所选的 IVE / FBX / OBJ 文件都未能转换成功，请查看转换错误后重试。')
     }
 
     return await repairMany(inputPaths, outputDir, { ...options, entries: repairEntries })
@@ -170,22 +253,23 @@ ipcMain.handle('repair-glb', async (event, payload) => {
 
 ipcMain.handle('read-glb-data-url', async (_, filePath) => {
   if (typeof filePath !== 'string') {
-    throw new Error('只能加载 GLB 或 IVE 文件。')
+    throw new Error(`只能加载 ${SOURCE_LABEL} 文件。`)
   }
 
-  // IVE 预览同样先转换成临时 GLB；data URL 读取完成后即可清理临时文件。
+  // IVE / FBX / OBJ 预览同样先转换成临时 GLB；data URL 读取完成后即可清理临时文件。
   let targetPath = filePath
   let temporaryDir = ''
+  let conversionWarnings = []
   try {
-    if (isIvePath(filePath)) {
-      if (!iveConversionAvailable()) throw new Error(missingIveHelperMessage())
-      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-ive-view-'))
-      targetPath = path.join(temporaryDir, path.basename(filePath).replace(/\.ive$/i, '.glb'))
-      const report = convertIveToGlb(filePath, targetPath, { keepJpeg: true })
+    if (needsConversion(filePath)) {
+      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-view-'))
+      targetPath = path.join(temporaryDir, convertedRelativePath(path.basename(filePath)))
+      const report = await convertSourceToGlb(filePath, targetPath, { keepJpeg: true })
       if (report.status !== 'success') throw new Error(report.error)
+      conversionWarnings = report.warnings || []
     }
     if (!targetPath.toLowerCase().endsWith('.glb')) {
-      throw new Error('只能加载 GLB 或 IVE 文件。')
+      throw new Error(`只能加载 ${SOURCE_LABEL} 文件。`)
     }
 
     const bytes = fs.readFileSync(targetPath)
@@ -198,6 +282,9 @@ ipcMain.handle('read-glb-data-url', async (_, filePath) => {
       bytes: bytes.length,
       bounds,
       metadata,
+      // 转换阶段解析不到的贴图（例如 MTL 里指向别的机器的绝对路径）要如实告诉用户，
+      // 不能因为"模型能显示"就当没发生
+      conversionWarnings,
       dataUrl: `data:model/gltf-binary;base64,${bytes.toString('base64')}`,
     }
   } finally {
@@ -210,23 +297,24 @@ ipcMain.handle('read-glb-data-url', async (_, filePath) => {
 // Cesium 预览。
 ipcMain.handle('inspect-glb', async (_, filePath) => {
   if (typeof filePath !== 'string') {
-    return { ok: false, error: '只能体检 GLB 或 IVE 文件。' }
+    return { ok: false, error: `只能体检 ${SOURCE_LABEL} 文件。` }
   }
 
-  // IVE 与预览同样先转成临时 GLB 再体检：报告里的盒/贴图规格必须是转换后的真实数据，
-  // 而 inspect() 只认 .glb。临时目录用完即删。
+  // IVE / FBX / OBJ 与预览同样先转成临时 GLB 再体检：报告里的盒/贴图规格必须是转换后的
+  // 真实数据，而 inspect() 只认 .glb。临时目录用完即删。
   let targetPath = filePath
   let temporaryDir = ''
+  let conversionWarnings = []
   try {
-    if (isIvePath(filePath)) {
-      if (!iveConversionAvailable()) throw new Error(missingIveHelperMessage())
-      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-ive-inspect-'))
-      targetPath = path.join(temporaryDir, path.basename(filePath).replace(/\.ive$/i, '.glb'))
-      const report = convertIveToGlb(filePath, targetPath, { keepJpeg: true })
+    if (needsConversion(filePath)) {
+      temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-repair-inspect-'))
+      targetPath = path.join(temporaryDir, convertedRelativePath(path.basename(filePath)))
+      const report = await convertSourceToGlb(filePath, targetPath, { keepJpeg: true })
       if (report.status !== 'success') throw new Error(report.error)
+      conversionWarnings = report.warnings || []
     }
     if (!targetPath.toLowerCase().endsWith('.glb')) {
-      throw new Error('只能体检 GLB 或 IVE 文件。')
+      throw new Error(`只能体检 ${SOURCE_LABEL} 文件。`)
     }
     // inspect() 同步读完整份文件，因此必须在 finally 删除临时目录之前调用。
     const report = inspect(targetPath)
@@ -237,9 +325,9 @@ ipcMain.handle('inspect-glb', async (_, filePath) => {
     if (report.ok !== true) {
       const firstError = (Array.isArray(report.issues) ? report.issues : [])
         .find((issue) => issue?.level === 'error')
-      return { ok: false, filePath, sourcePath: targetPath, error: firstError?.message || '体检没有产出可用报告。' }
+      return { ok: false, filePath, sourcePath: targetPath, conversionWarnings, error: firstError?.message || '体检没有产出可用报告。' }
     }
-    return { ok: true, filePath, sourcePath: targetPath, report }
+    return { ok: true, filePath, sourcePath: targetPath, conversionWarnings, report }
   } catch (error) {
     return { ok: false, filePath, error: `体检失败：${error.message}` }
   } finally {

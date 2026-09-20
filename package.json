@@ -26,7 +26,8 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "vendor/ive2glb/**"
+      "vendor/ive2glb/**",
+      "node_modules/assimpjs/dist/**"
     ],
     "files": [
       "src/**/*",
