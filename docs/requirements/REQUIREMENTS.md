@@ -108,6 +108,27 @@
   6. 常驻状态栏显示：当前预览模型名、文件大小、体检耗时与问题计数（错误/警告/提示）、批量修复进度（成功 N / 失败 M / 共 T）。键盘可达：Tab 可遍历工具栏与预览控件，焦点样式可见，主按钮可用键盘触发。
   7. 不回归：`npm test` 全绿；`test/ui-smoke.cjs` 的既有断言（面板数值/配色、拖动不刷日志、`change` 记录最终 `modelMatrix`、上轴复合矩阵、体检失败不打断预览、输入文件哈希不变）在新布局下仍全部通过。
 
+### REQ-007 多格式输入：FBX / OBJ 走 assimpjs(WASM) 转换后进入现有管线
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · sunny-zhai · 2026-09-20；待实现）
+- **优先级**：P1
+- **描述**：用户反馈"现在只支持 IVE 和 GLB 预览，其他格式如 FBX/OBJ 不支持"。现状：文件选择器只过滤 `glb`/`ive`（`src/main.js`），`collectGlbEntries(inputs, ['.glb', '.ive'])`，能力探测只报 `ive`。Cesium 不能直接读 FBX/OBJ，**任何"预览"都必须先转成 GLB**，所以"只预览"与"转换落盘"是同一条链。本需求把 FBX/OBJ 接进现有「转换 → （修复）→ 体检 → 预览」管线，后端用 **assimpjs（WASM，MIT）**：不随包分发平台相关二进制，顺带解决 Windows 没有 `ive2glb.exe` 的既有缺口。
+- **范围**：新增 `src/convert.js`（assimpjs 转换内核）；改 `src/main.js`（文件过滤器、`repair-glb`、`read-glb-data-url`、`inspect-glb` 的转换前置与能力探测）、`src/preload.js`（如需新通道）、`src/renderer.js`（提示文案与接受的扩展名）、`package.json`（`dependencies` 加 `assimpjs`、`asarUnpack`、`files`）、`scripts/`（如需 wasm 校验）、文档与台账。
+  **不做**：FBX/OBJ 之外的格式（dae/3ds/stl/ply 等本次不进选择器）；不引入前端框架；不改 Cesium 版本；不新增"上轴/贴地"开关（沿用现有预览修正三态）。
+- **验收标准**（Given/When/Then；数字来自 2026-09-20 的真机 spike，`assimpjs@0.0.10` + `o-model/蹲姿.fbx` / `蹲姿.obj`）：
+  1. Given `o-model/蹲姿.fbx`（2.5MB，含 1 蒙皮/1 动画）When 转换 Then 产出 GLB（焊接后实测 **2.32MB** / 3.9s），体检报 **18,924 三角面**、**3 张内嵌贴图**、上轴为 **Y**，世界盒与绑定姿态参考件 `o-model/蹲姿.glb` 三轴一致（**1.8937 × 1.8483 × 0.3804**，容差 0.02）；且 `asset.generator` 记录 assimp 版本。
+  2. Given `o-model/蹲姿.obj` + `蹲姿.mtl` When 转换 Then 产出 GLB（焊接后实测 0.57MB），体检报 **18,924 三角面**，世界盒 **0.5382 × 1.3643 × 1.0559 m**，与蹲姿参考件 **`model/蹲姿.glb`** 三轴一致（容差 0.02）。注意两个参考件姿态不同、不可混用：`o-model/蹲姿.glb` 是绑定/平举姿态（对应 FBX），`model/蹲姿.glb` 才是蹲姿（对应 OBJ）。
+  3. Given OBJ 的 MTL 引用外部贴图 When 转换 Then 按「相对路径 → 同级同名 → `.fbm` 目录内同名」顺序解析并内嵌；**解析不到的不得静默丢弃**：必须在日志与体检问题清单里以中文条目列出原始 `uri`（`o-model/蹲姿.mtl` 实测引用的是 `E:\zxbwork\1216…\Pistol Kneeling Idle.fbm\WuYanZu_Hat_D.jpg` 这类**乱码绝对路径**，本机无该文件）。
+  4. Given 转换产物 When 用于 Cesium 预览 Then 该临时 GLB **不得残留解析不到的外部 `uri`**（否则 Cesium 必然加载失败）；解析不到的贴图槽在预览副本里被移除，并在日志说明被移除的原因。
+  5. Given 用户在「选择文件/选择目录」里选 FBX/OBJ When 观察 Then 过滤器含这两种扩展名，且**预览、批量修复（可落盘）、体检三条路径都与 IVE 同等待遇**（IVE 的转换前置逻辑不外溢、不回归）。
+  6. Given FBX 含蒙皮与动画 When 预览或修复 Then 沿用现有管线语义：默认烘焙**绑定姿势**，勾选「带动画的蒙皮模型：烘焙为动画起始姿势」则烘焙起始帧；不新增开关。
+  7. Given 转换产物是三角汤（实测 56,772 顶点 / 18,924 面，顶点:面 = 3）When 转换 Then 复用 `src/ive.js` 已导出的 `weldVertices` 做焊接，顶点数应显著下降（参考：FBX2glTF 产物 11,516 顶点），且**面数与贴图不变**。
+  8. Given 打包分发 When 安装后运行 Then assimpjs 的 `assimpjs.wasm` 必须可加载（`asarUnpack` + 路径解析，与 `vendor/ive2glb` 的既有做法一致），且**不引入任何外部可执行程序**（不违反"不 shell 外部二进制"的仓库约定）。
+  9. 不回归：`npm test` 全绿；`test/ui-smoke.cjs` 在 GLB 与 IVE 上的既有断言全绿；`node scripts/memory.mjs check` 通过。
+  10. Given 无法转换的坏文件（非 FBX/OBJ、损坏、assimp 报错）When 转换 Then 返回**中文**错误并说明 assimp 的 error code，批量修复**不中断**（沿用 `repairMany` 的逐文件容错）。
+- **关联任务**：TASK-013、TASK-014、TASK-015
+- **关联代码/测试**：`src/convert.js`、`src/main.js`、`src/renderer.js`、`src/ive.js`（复用 `weldVertices`）、`test/convert.test.js`、`test/ui-smoke.cjs`
+- **确认**：已确认（见 `docs/approvals/APPROVALS.md`）
+
 ## 变更记录
 
 | 日期 | REQ | 变更 | 原因 |
@@ -119,3 +140,4 @@
 | 2026-09-18 | REQ-002 | 澄清验收标准 | 标准 2/3 原先把「通过数 / 跳过数 / 覆盖率」的快照钉进需求正文，用例集一增长即与 `TEST_PLAN.md` 不一致（REQ-002 的判据本是「文档与实测一致」）。改为以文档当次实测为准，并保留当时基线数字 |
 | 2026-09-18 | REQ-005 | 澄清验收标准 | ① 标准 2 的样例集数量改为「以本地实际存在为准、用例不硬编码」（样例不入库、随本地增减，曾因硬编码 ≥20 在语料裁剪后直接失败）；② 标准 3 的原判据 `triangles === Σ(indices.count)/3` 在无非索引图元时恒等、有非索引图元时必为假，冷上下文审查判定无效，已标注替换为 `mode=4` 索引数可判定的不变量 |
 | 2026-09-18 | REQ-006 | 新增 | 用户反馈界面布局"太丑"、操作不便，要求做成编辑器式；现为一列到底 + 整页滚动，3D 与体检无法并列 |
+| 2026-09-20 | REQ-007 | 新增（翻案 M3 结论） | 用户要求支持 FBX/OBJ。`docs/002-requirements.md` §6 问题 4 曾判定"本期不做、留到 M3 用 assimpjs 统一多格式"，现按用户要求**提前**到本期，后端与当时推荐的 assimpjs 一致；已按 §4 完成真机 spike（FBX 18,924 面 / 3 张内嵌贴图 / 3.9s，OBJ 世界盒与参考件一致）后再立规格 |

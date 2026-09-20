@@ -32,3 +32,5 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 2026-09-18 07:36 | architecture | approved | sunny-zhai | REQ-005 | docs/design/ADR.md (确认 ADR-001~005：世界盒自算与偏差上报、上轴保守推断、遍历跨路径共用、预览修正不写回、统计口径（默认场景可达 + 偏差含位置分量）) |
 | 2026-09-18 09:14 | spec | approved | sunny-zhai | REQ-006 | docs/requirements/REQUIREMENTS.md (确认 REQ-006 的 7 条验收标准：一屏三栏+底部日志、分栏拖拽与 3D 视口重算、折叠、窄窗降级、布局记忆、常驻状态栏与键盘可达、既有自动化不回归) |
 | 2026-09-18 09:14 | architecture | approved | sunny-zhai | REQ-006 | docs/design/ADR.md (确认 ADR-006：CSS Grid + 自绘分隔条 + localStorage 记忆 + ResizeObserver→viewer.resize()，不引入前端框架/构建步骤，窄窗降级两栏) |
+| 2026-09-20 03:12 | spec | approved | sunny-zhai | REQ-007 | — |
+| 2026-09-20 03:12 | architecture | approved | sunny-zhai | REQ-007 | — |

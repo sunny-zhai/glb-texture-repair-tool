@@ -158,6 +158,41 @@
   ③ 冒烟 GLB 与 IVE 两遍各 **34 步 / 110 条断言 / 0 失败**；`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。
   ④ 文档同步：`docs/001-code-design.md` 新增 BR-029；`docs/testing/TEST_PLAN.md` 新增 TC-017 并把 TC-015/TC-016 的步数与断言数更新为 34/110。实现说明：Chromium 121+ 只要写了标准属性 `scrollbar-width`/`scrollbar-color` 就会**整体忽略** `::-webkit-scrollbar`，故二者只取 webkit 版本（Electron 32 / Chromium 128）。
 
+### TASK-013 转换内核：assimpjs → 自包含 GLB（FBX/OBJ）
+- **关联需求**：REQ-007（验收标准 1~4、7、10）；设计决策见 ADR-008
+- **依赖**：无（REQ-007 起点）
+- **做什么**：新增 `src/convert.js`（纯 Node，CommonJS，不依赖 Electron），把 FBX/OBJ 转成**自包含** GLB：① `assimpAvailable()` / `resolveAssimpModule()`——加载 `assimpjs` 并容忍 wasm 缺失（返回中文可读原因，形如既有的 `missingIveHelperMessage()`）；② `collectSidecarFiles(inputPath)`——按扩展名收集同目录的 sidecar（`.mtl` + 贴图，含 `.fbm` 子目录），**按 basename 加入 FileList**（assimp 靠文件名互相引用）；③ `ConvertFileList(fileList, 'glb2')` 拿字节，失败时用中文包装 assimp 的 `GetErrorCode()`；④ 焊接三角汤——**复用 `src/ive.js` 已导出的 `weldVertices`**（顶点:面实测 3:1，56,772 → 目标 ~11.5k），面数与贴图必须不变；⑤ **外部贴图内嵌**——遍历产物 `images[]` 里带 `uri` 的项，用既有 `resolveExternalImage(sourceFilePath, uri)`（base 用**源文件**所在目录，而不是临时 GLB 的目录）解析后写进 bufferView；解析不到的**移除该 image 与材质贴图槽**，并把原始 `uri` 收进 `warnings` 返回（供日志/体检展示，不静默丢）。返回 `{ status, bytes, warnings, stats }`，**永不抛**（与 `repairGlbFile` 同风格）。
+- **产出**：`src/convert.js`、`test/convert.test.js`
+- **文件范围**：`src/convert.js`, `test/convert.test.js`, `package.json`（加 `dependencies.assimpjs`）, `src/repair.js`（**仅**新增 `resolveExternalImage` 导出，供转换内核复用既有贴图兜底）, `src/ive.js`（`weldVertices` 泛化到整型属性）
+- **验证方式**：`node --test test/convert.test.js`——① `o-model/蹲姿.fbx` → 18,924 面 + ≥3 张内嵌贴图 + 上轴 Y + 世界盒与 `o-model/蹲姿.glb` 一致；② `o-model/蹲姿.obj`+`.mtl` → 18,924 面 + 世界盒 `0.5382×1.3643×1.0559`（与 `model/蹲姿.glb` 一致，容差 0.02）；③ 焊接后顶点数显著下降且面数不变、文件更小；④ 产物里**不得残留** `images[].uri`，而 `o-model/蹲姿.mtl` 的乱码绝对路径必须以 `warnings` + `missing:` 占位形式出现；⑤ 坏文件返回 `status:'error'` + 中文消息且不抛。夹具缺失时按既有 `fixtureSkipReason()` 模式跳过并打印恢复命令。
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/convert.test.js` → **9 用例 / 9 通过 / 0 失败**（新增文件）；全量 `npm test` → **115 用例 / 111 通过 / 0 失败 / 4 跳过**（IVE 与 repair 无回归）。
+  ② FBX：**56,772 → 11,516 顶点**（与 FBX2glTF 参考件同量级）、18,924 面不变、**3 张内嵌贴图**、0 外部 uri、保留 1 蒙皮/1 动画、2.32MB、世界盒 1.8937×1.8483×0.3804 与 `o-model/蹲姿.glb` 一致。
+  ③ OBJ：**56,772 → 11,516 顶点**、18,924 面、0.57MB、世界盒 **0.5383×1.3643×1.0559** 与 `model/蹲姿.glb` 一致；MTL 里的乱码绝对路径被如实报成 warning 并换成 `missing:` 占位（体检识别为 `TEXTURE_1X1_PLACEHOLDER`）。
+  ④ 两个实现坑（都已修并写进注释）：**(a)** assimp 的 FBX 图元带 `JOINTS_0/WEIGHTS_0` 整型属性，原 `weldVertices` 只吃 float32 导致一个顶点都焊不动——已把该函数泛化到按 `componentType` 逐流解码/回写（默认仍是 float32，IVE 行为不变，`ive.test.js` 21 通过 0 失败），并保留 `normalized` 标志；**(b)** 焊接若"新增 accessor"而不改写原 accessor，旧 bufferView 仍被引用、压实回收不掉（实测 FBX 反而从 4.7MB 涨到 5.6MB）——改为**原地改写图元自己的 accessor**，并对被共享的 accessor 保守跳过。
+  ⑤ 参考件认错一次并已纠正：`o-model/蹲姿.glb`（1.8937×1.8483×0.3804）是**绑定/平举姿态**、对应 FBX；`model/蹲姿.glb`（0.5382×1.3643×1.0559）才是**蹲姿**、对应 OBJ。需求正文已按实测改正，两个参考件不可混用。
+
+### TASK-014 接线与打包：选择器 / 三条 IPC 路径 / 能力探测 / wasm 分发
+- **关联需求**：REQ-007（验收标准 3、5、8、9）；设计决策见 ADR-008
+- **依赖**：TASK-013
+- **做什么**：把转换内核接进产品路径，**与 IVE 完全同构**：① `src/main.js` 的 `pick-inputs` 过滤器加 `fbx`/`obj`，`collectGlbEntries` 的扩展名列表加 `['.fbx', '.obj']`；② `repair-glb`、`read-glb-data-url`、`inspect-glb` 三条 IPC 各自把 FBX/OBJ 先转成临时 GLB（沿用 IVE 的 `fs.mkdtempSync` + `finally` 清理写法，**转换失败按文件记 error 而不中断批量**）；③ `app-capabilities` 增加 `assimp` 字段与缺失时的中文原因，`src/renderer.js` 的 `capabilityHint`/帮助文案据此提示可用格式；④ `package.json`：`dependencies` 加 `assimpjs`、`asarUnpack` 加 `node_modules/assimpjs/dist/**`（wasm 必须能按 `__dirname` 读到，与 `vendor/ive2glb` 同一套路）。
+- **产出**：`src/main.js`、`src/renderer.js`、`src/preload.js`（如需）、`package.json`、`test/ui-smoke.cjs`（FBX/OBJ 各跑一遍）
+- **文件范围**：`src/main.js`, `src/renderer.js`, `src/preload.js`, `package.json`, `test/ui-smoke.cjs`
+- **验证方式**：① 冒烟 `node test/ui-smoke.cjs o-model/蹲姿.fbx --port 9333` 与 `... o-model/蹲姿.obj` 全绿（预览路径不得因外部 uri 失败）；② `node test/ui-smoke.cjs model/蹲姿.glb` 与 `o-model/蹲姿.ive` 仍全绿（不回归）；③ 手动：选择器里能看到 fbx/obj，批量修复能把 OBJ 落盘成 GLB；④ `npm run lint` + `npm test` 全绿。
+- **状态**：待开始
+- **验证结果**：（待开始）
+
+### TASK-015 文档与规则修订（含 M3 结论翻案留痕）
+- **关联需求**：REQ-007；设计决策见 ADR-008
+- **依赖**：TASK-014
+- **做什么**：① `docs/002-requirements.md` §6 问题 4 追加**翻案说明**（原"本期不做"→ 本期做，后端与当时推荐的 assimpjs 一致，附 spike 数字），并按 §4 用 `memory.mjs log --event reopened` 留痕；② `docs/001-code-design.md` 新增 **BR-030**（多格式输入的转换口径：自包含、不静默丢贴图、复用焊接、无外部二进制）并更新模块表（`src/convert.js`）；③ `CLAUDE.md`：格式清单加 FBX/OBJ，"不 shell 外部二进制"措辞澄清为"外部二进制须随包分发；本工具的图像与模型转换一律进程内完成（jpeg-js/pngjs/assimpjs WASM）"；④ `docs/testing/TEST_PLAN.md` 新增 TC-018；⑤ `docs/release/RELEASE_CHECKLIST.md` 加"assimpjs wasm 随包可加载"检查项。
+- **产出**：`docs/002-requirements.md`、`docs/001-code-design.md`、`CLAUDE.md`、`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`
+- **文件范围**：`docs/002-requirements.md`, `docs/001-code-design.md`, `CLAUDE.md`, `docs/testing/TEST_PLAN.md`, `docs/release/RELEASE_CHECKLIST.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；`docs/` 入库范围仍与既有口径一致；人工复核 BR-030 与 ADR-008 的措辞与实际实现一致。
+- **状态**：待开始
+- **验证结果**：（待开始）
+
 ## 依赖 DAG
 
 ```text
@@ -171,6 +206,10 @@ TASK-007 ──▶ TASK-008 ──▶ TASK-009（缺陷修复，依赖 TASK-008 
 TASK-010（REQ-006 界面重排，独立；与 TASK-009 的 `renderer.js` 改动串行）
 
 TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写）
+
+TASK-011 ──▶ TASK-012（体验细化：细滚动条 + 每区只留最外层滚动条）
+
+TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内核 → 接线与打包 → 文档与规则）
 ```
 
 ## 并行批次
@@ -190,6 +229,10 @@ TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写�
 | 8 | TASK-009 | 依赖 TASK-008（缺陷由它的冒烟暴露），文件范围与 TASK-008 不重叠 |
 | 9 | TASK-010 | REQ-006 界面重排；文件范围与 TASK-009 不重叠，但同在 `renderer.js`，故排在 TASK-009 之后串行 |
 | 10 | TASK-011 | REQ-006 缺陷修复，依赖 TASK-010（缺陷由它的交付暴露） |
+| 11 | TASK-012 | REQ-006 体验细化，依赖 TASK-011，文件范围与其它任务不重叠 |
+| 12 | TASK-013 | REQ-007 转换内核，无依赖（与 TASK-012 文件范围不重叠，可并行） |
+| 13 | TASK-014 | 依赖 TASK-013；改 `main.js`/`package.json`/`ui-smoke.cjs` |
+| 14 | TASK-015 | 依赖 TASK-014（文档要引用最终实现与实测数字） |
 
 ## 进度
 
@@ -207,3 +250,6 @@ TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写�
 | TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
 | TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
+| TASK-014 | REQ-007 | 待开始 | ☐ |
+| TASK-015 | REQ-007 | 待开始 | ☐ |
