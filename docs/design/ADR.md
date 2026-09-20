@@ -113,7 +113,7 @@
 ## ADR-009 贴图规格收口：非法采样器组合按既有口径退化，降采样默认关且进程内做
 
 - **日期**：2026-09-20
-- **状态**：待确认（闸门 ② 架构待 sunny-zhai 确认；实现见 TASK-017~020）
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-017~020）
 - **关联需求**：REQ-008（落地 `docs/002-requirements.md` M3「修得全（贴图规格）」的口径）
 - **背景/问题**：M3 的"贴图规格"两项一直没有实现：① 非 2 次幂（NPOT）贴图若同时用 `REPEAT` + mipmap，在 WebGL1 下是非法组合，`src/inspect.js` 已能报出 `NPOT_WITH_REPEAT_MIPMAP` 并写了中文提示"需改为 CLAMP_TO_EDGE + LINEAR"，但 `src/repair.js` **没有任何修复步骤**——能看见、修不了；② BR-002 统一 JPEG→PNG 后照片类贴图膨胀（实测 2048² 2.1MB → 10.25MB），发布说明自认"真正的解法是贴图降采样，尚未做"，`docs/002-requirements.md` §6 问题 5 早已定了"默认不降、提供 2048/1024/512/不降四档"的口径，界面上却没有这个旋钮。两者叠加的后果是：用户读了体检报告也无法消除该问题，只能忍受体积膨胀。
 - **决策**：
@@ -131,7 +131,7 @@
 ## ADR-010 Windows 的 IVE 仍走原生 OSG 助手，不改走 assimp/WASM
 
 - **日期**：2026-09-20
-- **状态**：待确认（闸门 ② 架构待 sunny-zhai 确认；实现见 TASK-021/022）
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-021/022）
 - **关联需求**：REQ-009（订正 REQ-007 描述里"顺带解决 Windows 没有 ive2glb.exe 的既有缺口"这一设想）
 - **背景/问题**：决定 v0.1.1 暂不发布、等补齐 Windows 支持后，必须回答"Windows 上的 IVE 怎么办"。REQ-007 的描述曾设想"用 assimpjs 统一多格式与 Windows 分发，顺带解决 Windows 没有 `ive2glb.exe` 的缺口"。但 `assimp` **没有 IVE importer**（IVE 是 OpenSceneGraph 的私有序列化格式），npm 生态也没有 JS/WASM 的 IVE 解析器（只有 `.osgb/.osgt` 序列化库）——该设想不成立。当前事实：`vendor/ive2glb/` 只有 `darwin-arm64`；`dist/` 里的产物是 2026-09-15 的 `0.1.0` 旧包。
 - **决策**：(a) Windows 的 IVE 能力**继续用原生 OSG 助手**：在 Windows x64 上构建 `ive2glb.exe`，把可执行文件与其依赖闭包 vendoring 到 `vendor/ive2glb/win32-x64/`，目录结构与 darwin 同构；(b) 打包沿用既有约定（`asarUnpack: vendor/ive2glb/**` + `resolveIveHelper` 的平台目录解析 + `app.asar` → `app.asar.unpacked` 回退），**不改解析逻辑**；(c) 找不到助手时仍按 BR-012 给中文降级提示并列已查找路径，不静默。

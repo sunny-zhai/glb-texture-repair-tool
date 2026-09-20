@@ -131,7 +131,7 @@
 - **确认**：已确认（见 `docs/approvals/APPROVALS.md`）
 
 ### REQ-008 贴图规格收口：采样器规范化 + 贴图降采样 + `KHR_texture_transform` 漏报修复（M3）
-- **状态**：待确认（闸门 ① 规格待 sunny-zhai 确认；本文档即规格，确认后才进入实现）
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；实现见 TASK-017~020）
 - **优先级**：P1
 - **描述**：`docs/002-requirements.md` 的 M3「修得全（贴图规格）」里，**采样器规范化**与**贴图降采样**两项至今没有任何任务承载：体检能报出 `NPOT_WITH_REPEAT_MIPMAP` 却修不了（`src/repair.js` 里只有动画 sampler，没有贴图采样器规范化步骤）；`BR-002` 把 JPEG 统一转 PNG 后照片类贴图明显膨胀（实测 2048² 2.1MB → 10.25MB），发布说明自己写着"真正的解法是贴图降采样，尚未做"，却没有降采样旋钮。另外 TASK-007 留下的"已知遗留"——体检与修复都忽略了 `KHR_texture_transform.texCoord` 覆盖，导致 `MISSING_TEXCOORD` 可能**漏报**，而漏报的后果是 Cesium 因着色器编译失败连整个场景都不渲染——也一直没有登记任务。本需求把这三件事一次收口，让"贴图规格"从只能看见变成能修。
 - **范围**：`src/repair.js`（新增采样器规范化步骤 + 降采样步骤 + `collectMaterialTexCoords` 读扩展覆盖）、`src/inspect.js`（`collectTextureSlots` 读扩展覆盖）、`src/renderer.js` + `src/index.html`（贴图降采样档位下拉与中文提示）、`test/repair.test.js`、`test/inspect.test.js`、`src/001-code-design.md`（BR 回填，见任务）、`docs/testing/TEST_PLAN.md`。
@@ -150,10 +150,10 @@
   11. **不回归**：`npm run lint` + `npm test` 全绿；`test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四个格式上仍全绿（含"预览产物不得残留外部 uri"断言）；`node scripts/memory.mjs check` 通过；本地语料的体检"内嵌贴图宽高可读"比例不回退。
 - **关联任务**：TASK-017、TASK-018、TASK-019、TASK-020（文档与规则回填）
 - **关联代码/测试**：`src/repair.js`、`src/inspect.js`、`src/renderer.js`、`src/index.html`、`test/repair.test.js`、`test/inspect.test.js`、`test/ui-smoke.cjs`；ADR-009；规则 BR-031 / BR-032
-- **确认**：待确认
+- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20，见 `docs/approvals/APPROVALS.md`）
 
 ### REQ-009 Windows 分发可用性：IVE 助手入库 + 安装包重打与冒烟
-- **状态**：待确认（闸门 ① 规格待 sunny-zhai 确认；已决定"暂不发布，等补齐 Windows 支持"）
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；**待实现**，TASK-021 需外部 Windows x64 环境，发布时点由人决定）
 - **优先级**：P0（发布前置）
 - **描述**：v0.1.1 决定**暂不发布**，原因是 Windows 侧不完整：① `vendor/ive2glb/` 只有 `darwin-arm64`，Windows 安装包里没有 `ive2glb.exe`，用户打开 `.ive` 只能拿到 BR-012 的中文降级提示（不静默，但功能不可用）；② `dist/` 里现有产物是 **2026-09-15** 构建的 `0.1.0` 包，早于 REQ-005/006/007，不含体检面板、编辑器式布局与 FBX/OBJ 链路，不能代表当前代码。本需求把"能发"变成可核验的目标：Windows 助手入库、安装包重打、冒烟表逐行回填。
 - **范围**：`native/ive2glb/`（Windows 构建与 `README.md` 补 Windows 步骤）、`vendor/ive2glb/win32-x64/`（构建产物入库，与既有的 `vendor/ive2glb/**` 打包约定一致）、`package.json`（`files` / `asarUnpack` 如需）、`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`。
@@ -167,10 +167,10 @@
   6. Given 由于环境原因无法完成 Windows 构建，When 决定只发 GLB/FBX/OBJ 能力，Then 必须在发布说明中显式声明"Windows 上 `.ive` 不可用、降级为 BR-012 中文提示"，并把该声明本身作为验收证据（**不得**以沉默略过，也不得让清单里那条保持在含糊状态）。
 - **关联任务**：TASK-021、TASK-022
 - **关联代码/测试**：`native/ive2glb/`、`vendor/ive2glb/win32-x64/`、`scripts/build-ive2glb.sh`、`package.json`、`docs/release/RELEASE_CHECKLIST.md`；ADR-010
-- **确认**：待确认（发布时点由人决定）
+- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20，见 `docs/approvals/APPROVALS.md`；发布时点仍由人决定）
 
 ### REQ-010 预览修正的记忆：上轴/方向/缩放选择在重启后保持
-- **状态**：待确认（闸门 ① 规格待 sunny-zhai 确认）
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；实现见 TASK-023）
 - **优先级**：P2
 - **描述**：`docs/002-requirements.md` §6 问题 3 的默认口径是"置信度不足弹手动三态并**记住**选择"，但实现里只有**布局**进了 `localStorage`（键 `glb-repair.layout`），上轴三态、偏航与缩放都是每次启动回到默认（`auto` / 0° / 1.00×），换一个模型也要重设。对批量看同一批 Z-up 资产的用户，这是每次都要重做的动作。本需求把这三个"用户意图"持久化，并明确**感知提示**：记住的是**用户显式选过**的值，`auto` 与"从未选过"必须可区分，避免把一次误拖当成长期偏好。
 - **范围**：`src/renderer.js`（预览三态的读写与提示）、`src/index.html`（如需提示文案容器）、`test/ui-smoke.cjs`（重启后恢复的断言）。
@@ -183,7 +183,7 @@
   5. Given 记忆生效，When 检查模型文件，Then 文件 `shasum` 前后不变（记忆只影响预览，不写回文件，ADR-004/BR-024 不回归）。
 - **关联任务**：TASK-023
 - **关联代码/测试**：`src/renderer.js`、`src/preview-transform.js`（复用其 clamp/默认值）、`test/ui-smoke.cjs`
-- **确认**：待确认
+- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20，见 `docs/approvals/APPROVALS.md`）
 
 ## 变更记录
 
