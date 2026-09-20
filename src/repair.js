@@ -1367,6 +1367,9 @@ module.exports = {
   readGlb,
   repairGlbFile,
   repairMany,
+  // REQ-007：FBX/OBJ 转换产物里的外部贴图复用同一套解析兜底（相对路径 / 同级同名 /
+  // .fbm 目录 / 乱码绝对路径），不为多格式另写一份
+  resolveExternalImage,
   stripSpecularExtensions,
   transformPoint,
   transformVector,
