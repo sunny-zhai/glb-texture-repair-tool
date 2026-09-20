@@ -589,6 +589,75 @@ test('inspect: 同一文件里 NPOT 贴图逐个绑定判定，只报真正非�
   }
 })
 
+// 图元只有 TEXCOORD_0，而材质经 KHR_texture_transform 以 texCoord: 1 采样贴图。
+// 这类文件在旧口径下"看着没问题"（检查的是 TEXCOORD_0，它存在），实际 Cesium 会因为缺
+// TEXCOORD_1 让着色器编译失败并停止整个场景渲染——正是要钉住的漏报（REQ-008 验收标准 9）。
+function glbWithTextureTransform(extensions) {
+  const bin = Buffer.concat([Buffer.alloc(72), TINY_PNG])
+  const json = glb({
+    accessors: [triangleAccessor(), { count: 3, type: 'VEC2', componentType: 5126 }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: 36 },
+      { buffer: 0, byteOffset: 36, byteLength: 24 },
+      { buffer: 0, byteOffset: 72, byteLength: TINY_PNG.length },
+    ],
+    buffers: [{ byteLength: bin.length }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 0 }] }],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorTexture: extensions ? { index: 0, extensions } : { index: 0 },
+      },
+    }],
+    textures: [{ source: 0 }],
+    images: [{ bufferView: 2, mimeType: 'image/png' }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+  })
+  return { json, bin }
+}
+
+test('inspect: KHR_texture_transform.texCoord 覆盖必须被采纳，漏报会让整个场景不渲染', () => {
+  const workDir = makeTempDir()
+  try {
+    const overridden = glbWithTextureTransform({ KHR_texture_transform: { texCoord: 1 } })
+    const file = writeTemp(workDir, 'transform-texcoord-1.glb', overridden.json, overridden.bin)
+
+    const report = inspect(file)
+    const issue = report.issues.find((entry) => entry.code === 'MISSING_TEXCOORD')
+
+    assert.ok(issue, '实际采样 TEXCOORD_1 而图元只有 TEXCOORD_0，必须报 MISSING_TEXCOORD')
+    assert.equal(issue.level, 'error')
+    assert.match(issue.message, /TEXCOORD_1/)
+
+    // 对照：同一模型去掉扩展覆盖后，采样的就是存在的 TEXCOORD_0，不得报（防止断言恒真）
+    const plain = glbWithTextureTransform(null)
+    const plainFile = writeTemp(workDir, 'transform-plain.glb', plain.json, plain.bin)
+    assert.equal(
+      inspect(plainFile).issues.some((entry) => entry.code === 'MISSING_TEXCOORD'),
+      false,
+    )
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 槽位自身 texCoord 存在但没有扩展覆盖时，报的是槽位那个通道', () => {
+  const workDir = makeTempDir()
+  try {
+    // 槽位写 texCoord: 1（无扩展），图元只有 TEXCOORD_0 → 同样要报 TEXCOORD_1
+    const { json, bin } = glbWithTextureTransform(null)
+    json.materials[0].pbrMetallicRoughness.baseColorTexture.texCoord = 1
+    const file = writeTemp(workDir, 'slot-texcoord-1.glb', json, bin)
+
+    const report = inspect(file)
+    const issue = report.issues.find((entry) => entry.code === 'MISSING_TEXCOORD')
+    assert.ok(issue)
+    assert.match(issue.message, /TEXCOORD_1/)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
 test('inspect: 外部贴图文件存在时读出宽高，缺失时报错', () => {
   const workDir = makeTempDir()
   try {

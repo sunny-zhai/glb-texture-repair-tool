@@ -714,12 +714,22 @@ function rebuildBinary(json, bin, replacements) {
   return newBin
 }
 
+// 贴图槽实际采样的 UV 通道（REQ-008 / BR-033）：`KHR_texture_transform` 挂在 textureInfo 上，
+// 它的 `texCoord` **覆盖**槽位自身的 `texCoord`（glTF 规范：扩展值优先）。忽略它会把"实际采样
+// TEXCOORD_1"误判成 TEXCOORD_0，于是 MISSING_TEXCOORD 漏报——漏报的后果是 Cesium 因着色器
+// 编译失败连整个场景都不渲染。inspect 与 repair 必须共用这一个口径（inspect 从这里 require）。
+function textureTexCoordOf(reference) {
+  const override = reference?.extensions?.KHR_texture_transform?.texCoord
+  if (typeof override === 'number') return override
+  return typeof reference?.texCoord === 'number' ? reference.texCoord : 0
+}
+
 // 收集材质引用的全部 texCoord 索引（含扩展里的贴图槽）。
 function collectMaterialTexCoords(material) {
   const coords = new Set()
   if (!material) return coords
   const add = (reference) => {
-    if (reference && typeof reference.index === 'number') coords.add(reference.texCoord || 0)
+    if (reference && typeof reference.index === 'number') coords.add(textureTexCoordOf(reference))
   }
   const pbr = material.pbrMetallicRoughness || {}
   add(pbr.baseColorTexture)
@@ -1592,6 +1602,8 @@ module.exports = {
   // .fbm 目录 / 乱码绝对路径），不为多格式另写一份
   resolveExternalImage,
   stripSpecularExtensions,
+  // REQ-008/BR-033：贴图槽的 UV 通道判定（KHR_texture_transform 覆盖优先），inspect 复用同一口径
+  textureTexCoordOf,
   transformPoint,
   transformVector,
   writeGlb,

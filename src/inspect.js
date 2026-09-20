@@ -20,6 +20,8 @@ const {
   identityMatrix,
   multiplyMatrix,
   readGlb,
+  // REQ-008/BR-033：槽位实际采样的 UV 通道（KHR_texture_transform 覆盖优先）与 repair 同源
+  textureTexCoordOf,
 } = require('./repair')
 const {
   boundsSize,
@@ -160,7 +162,8 @@ function collectTextureSlots(material) {
     if (!holder || typeof holder !== 'object' || depth > 3) return
     for (const [key, value] of Object.entries(holder)) {
       if (/Texture$/.test(key) && value && typeof value.index === 'number') {
-        const texCoord = value.texCoord ?? 0
+        // 槽位自身的 texCoord 会被 KHR_texture_transform.texCoord 覆盖（同一口径见 repair.js）
+        const texCoord = textureTexCoordOf(value)
         const identity = `${key}:${value.index}:${texCoord}`
         if (seen.has(identity)) continue
         seen.add(identity)
@@ -348,6 +351,7 @@ function analyze(report, json, bin, filePath) {
   let nonIndexed = 0
   let nonTrianglePrimitives = 0
   let missingTexCoordPrimitives = 0
+  const missingTexCoordSlots = new Set()
   let missingPositionBounds = 0
   const modeHistogram = {}
   for (const primitive of primitives) {
@@ -369,7 +373,11 @@ function analyze(report, json, bin, filePath) {
     }
     if (!Array.isArray(position?.min) || !Array.isArray(position?.max)) missingPositionBounds += 1
     const material = json?.materials?.[primitive?.material]
-    // 按**图元**计数（同一图元的多个纹理槽共用 UV，按槽位计数会重复报数）
+    // 按**图元**计数（同一图元的多个纹理槽共用 UV，按槽数计数会重复报数），
+    // 同时记下缺失的语义名，好让问题清单点名到底是哪一个（REQ-008 验收标准 9）
+    for (const slot of collectTextureSlots(material)) {
+      if (!primitive?.attributes?.[`TEXCOORD_${slot.texCoord}`]) missingTexCoordSlots.add(`TEXCOORD_${slot.texCoord}`)
+    }
     if (collectTextureSlots(material).some((slot) => !primitive?.attributes?.[`TEXCOORD_${slot.texCoord}`])) {
       missingTexCoordPrimitives += 1
     }
@@ -517,8 +525,11 @@ function analyze(report, json, bin, filePath) {
       'WebGL1 下这种组合不合法（Cesium 可能显示异常）；修复会按本仓既有口径退化为 CLAMP_TO_EDGE + LINEAR，POT 贴图不动')
   }
   if (missingTexCoordPrimitives > 0) {
+    // 点名到底缺哪个语义：`KHR_texture_transform.texCoord` 覆盖可能让材质实际采样 TEXCOORD_1，
+    // 只写「TEXCOORD_n」会让用户去补错通道（REQ-008 验收标准 9）
+    const names = [...missingTexCoordSlots].sort().join('、')
     addIssue(issues, 'error', 'MISSING_TEXCOORD',
-      `${missingTexCoordPrimitives} 个图元采样了贴图但缺少对应 TEXCOORD_n`,
+      `${missingTexCoordPrimitives} 个图元采样了贴图但缺少对应 UV（缺 ${names}）`,
       'Cesium 会因着色器编译失败而停止整个场景的渲染，必须补零 UV（本工具可自动修复）')
   }
   if (report.counts.skins) {
