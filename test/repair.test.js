@@ -4,7 +4,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { align4, collectGlbEntries, collectGlbFiles, encodePng, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
+const { align4, collectGlbEntries, collectGlbFiles, encodePng, mergeUniquePaths, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -61,6 +61,21 @@ test('readGlb and writeGlb preserve a valid GLB container', { skip: fixtureSkipR
   assert.ok(fs.existsSync(output))
   const stat = fs.statSync(output)
   assert.ok(stat.size > 0)
+})
+
+test('mergeUniquePaths 累加去重并保序（界面「选择文件」不会顶掉上次选择）', () => {
+  // 这是「选择文件」逐个点选的行为基础：后一次选择必须叠加，而不是替换，
+  // 否则用户看到的现象就是"一次只能选一个模型"
+  assert.deepEqual(mergeUniquePaths(['a.glb'], ['b.glb']), ['a.glb', 'b.glb'])
+  assert.deepEqual(mergeUniquePaths(['a.glb'], ['a.glb', 'b.glb']), ['a.glb', 'b.glb'], '重复路径不应出现两次')
+  assert.deepEqual(mergeUniquePaths([], ['a.glb']), ['a.glb'])
+  assert.deepEqual(mergeUniquePaths(['a.glb'], []), ['a.glb'], '取消对话框应保留原选择')
+  // 保序：先选的在前
+  assert.deepEqual(mergeUniquePaths(['b.glb', 'a.glb'], ['c.glb']), ['b.glb', 'a.glb', 'c.glb'])
+  // 容错：非数组与空值被忽略
+  assert.deepEqual(mergeUniquePaths(null, ['a.glb']), ['a.glb'])
+  assert.deepEqual(mergeUniquePaths(['a.glb'], undefined), ['a.glb'])
+  assert.deepEqual(mergeUniquePaths(['a.glb', ''], ['', null, 'b.glb']), ['a.glb', 'b.glb'])
 })
 
 test('collectGlbFiles finds nested glb files', { skip: fixtureSkipReason() }, () => {

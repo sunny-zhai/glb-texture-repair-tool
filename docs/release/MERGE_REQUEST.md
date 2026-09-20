@@ -1,0 +1,90 @@
+# release: v0.1.1 → main
+
+- version branch: `release/v0.1.1`
+- target: `main`（受保护分支，需人工合并）
+- commits: 77
+
+## 变更
+- c31feb3 docs(platform): 修正 .gitignore 口径与 docs 入库份数
+- 876dd32 chore(release): request the merge of release/v0.1.1 into main
+- cb13998 chore(platform): declare docs/coding-standard not applicable and track the remaining seeds
+- 19236d3 chore(memory): resync the structure snapshot from tracked content
+- 3e8fbc9 chore(platform): sync platform fixes so the version only changes on an explicit bump
+- b938aed chore(platform): anchor packaging ignores so the release skill is tracked
+- 60e7b27 chore(REQ-007/TASK-016): 回填任务完成线
+- 2fb84e6 Merge branch 'feature/REQ-007_review-fixes' into release/v0.1.1
+- 3c2b574 docs(REQ-007/TASK-016): 回填冷审修复证据与口径修正
+- 0546a85 fix(REQ-007/TASK-016): 修掉冷审 6 条重要项（含 3 条可复现反例）
+- af0a3ab chore(platform): track the workflow engine and entry points
+- abb9c9c chore(REQ-007/TASK-015): 回填任务完成线
+- 36502c3 Merge branch 'feature/REQ-007_docs' into release/v0.1.1
+- 960decd docs(REQ-007/TASK-015): 登记 BR-030/TC-018、修订规则与 M3 结论翻案留痕
+- 99792b1 chore(REQ-007/TASK-014): 回填任务完成线
+- dd21377 Merge branch 'feature/REQ-007_wiring' into release/v0.1.1
+- 2d29b72 docs(REQ-007/TASK-014): 回填接线证据与撞名缺陷修复
+- 7d13c0a feat(REQ-007/TASK-014): 把 FBX/OBJ 接进三条 IPC 路径与打包
+- 07cc48e chore(REQ-007/TASK-013): 回填任务完成线
+- 8c27cb2 Merge branch 'feature/REQ-007_multi-format-input' into release/v0.1.1
+- 1729aa9 docs(REQ-007/TASK-013): 回填转换内核证据并改正参考件名
+- f4854ae feat(REQ-007/TASK-013): FBX/OBJ 转换内核（assimpjs → 自包含 GLB）
+- 6203f0f chore(REQ-007): 登记多格式输入需求与 TASK-013~015，并留痕闸门①②
+- ea95ef8 chore(REQ-006/TASK-012): 回填任务完成线
+- 9e7a4e0 Merge branch 'feature/REQ-006_scrollbar-and-single-scroll' into release/v0.1.1
+- 2390811 docs(REQ-006/TASK-012): 登记 BR-029 / TC-017 与滚动条审计证据
+- b306433 fix(REQ-006/TASK-012): 自绘细滚动条，并让每个区域只留最外层滚动条
+- 0d1a5d4 chore(REQ-006/TASK-011): 回填任务完成线
+- 87e73b4 Merge branch 'feature/REQ-006_layout-data-independence' into release/v0.1.1
+- 2e70587 docs(REQ-006/TASK-011): 登记 ADR-007 / BR-028 / TC-016 与修复证据
+- 105b40a fix(REQ-006/TASK-011): 栏位尺寸与内容解耦，用户设定不再被数据改写
+- af6a5a9 chore(REQ-006/TASK-010): 回填任务完成线
+- b8bdddc Merge branch 'feature/REQ-006_editor-layout' into release/v0.1.1
+- edc6117 docs(REQ-006/TASK-010): 回填第二轮冷审的修复证据与实测数字
+- bd6f714 fix(REQ-006/TASK-010): 兑现画布最小高度 160px，并给冒烟补假绿防线
+- 86eaa37 docs(REQ-006/TASK-010): 登记布局验收证据 TC-015，并回填任务结果
+- a988135 feat(REQ-006/TASK-010): 界面重排为编辑器式三栏 + 底部日志 + 状态栏
+- d94e69f chore(REQ-006): 登记编辑器式界面重排需求与 TASK-010，并留痕闸门
+- f940400 chore(REQ-005/TASK-009): 回填完成线与验收条款④的最终状态
+- caa812e Merge branch 'feature/REQ-005_defect-fix' into release/v0.1.1
+- fddd38a fix(REQ-005/TASK-009): 补上"晚到就绪"的补跑，并按冷审修证据
+- a5b7f01 docs(REQ-005/TASK-009): 回填缺陷修复的证据与 BR-026
+- 6901b7b fix(REQ-005/TASK-009): 修 UNREFERENCED_MESHES 误报与窗口不可见时的预览挂起
+- 68c0c25 chore(REQ-005/TASK-008): 回填完成线与发布检查清单
+- 858b49a Merge branch 'feature/REQ-005_inspect-panel' into release/v0.1.1
+- 1507272 fix(REQ-005/TASK-008): 第二轮冷审的残留项（含两处台账证据错误）
+- 7ab78fe docs(REQ-005/TASK-008): 登记面板/预览控件的验收证据，并登记缺陷任务 TASK-009
+- 847db26 feat(REQ-005/TASK-008): 界面体检面板 + 预览方向/缩放/上轴三态
+- 8b197a9 docs(release): 版本号口径改为「本轮不升，产物保持 0.1.0」
+- 6bbca36 docs(release): 标出 package.json 版本号与版本分支不一致
+- 3b6a96a docs: 修正 CLAUDE.md 里 docs/ 入库范围的过时描述
+- 5541e01 docs(release): 发布检查清单按 v0.1.1 实况回填
+- 95a200e docs: 样例集不入库，数量口径改为随语料伸缩；澄清两条失效判据
+- f10cb1d test: 样例集被裁剪后让用例按实际规模自适应，并解开蹲姿用例的错误耦合
+- 052f402 docs: 记录 TC-012 人工验收通过，并填入发布冒烟结果
+- b3420a7 fix: 「选择文件」改为累加去重，一次可选多个模型
+- ae1352e chore(REQ-005): 留痕规格与架构闸门，ADR 状态改为已采纳
+- 33a09a4 chore(REQ-005/TASK-007): 同步进度表的任务状态
+- 5845196 chore(REQ-005/TASK-007): 回填任务状态与验证结果并关闭
+- 6837856 Merge branch 'feature/REQ-005_inspect-hardening' into release/v0.1.1
+- 8239db1 docs: BR-018/020/022 补复审后的判定细节
+- e01d9cd test(REQ-005/TASK-007): 补复审复现用例并修掉两处空断言
+- 5c816b7 fix(REQ-005/TASK-007): 修复复审列出的残留缺陷
+- 3095a70 Merge branch 'feature/REQ-005_inspect-rework' into release/v0.1.1
+- cb6aa13 chore(REQ-005/TASK-007): 依独立审查结论重开任务
+- 47ec8f1 docs: 记录审查后的口径修正（BR-018/020/022/023 与 ADR-005）
+- 466726b test(REQ-005/TASK-007): 补审查复现用例与之前零覆盖的单元
+- 2927ece fix(REQ-005/TASK-007): 修独立审查发现的阻塞与口径问题
+- bddd6b8 docs: 测试计划补登 REQ-005 的用例（TC-013）
+- c75b511 docs: 补 REQ-005 的架构决策记录（ADR-001~004）
+- 99daa2d chore(REQ-005/TASK-007): 回填任务状态与完成线
+- 767aa63 Merge branch 'feature/REQ-005_inspect-core' into release/v0.1.1
+- f6d2abe feat(REQ-005/TASK-007): 模型体检核心（inspect.js + transform.js）
+- 433f0b5 chore(REQ-005): 登记模型体检需求与两个任务
+- 3dd8356 chore(version): track version state on version branch
+- 39408df docs: 追溯登记平台采纳前已交付的功能（REQ-003/REQ-004）
+- 3bad6dd chore: 记录第二批完整交付的闸门留痕
+
+## 验收前请确认
+- [ ] 版本分支上的测试/门禁全绿（`docs/testing/TEST_PLAN.md`）
+- [ ] 发布预检与回滚预案已就绪（`docs/release/RELEASE_CHECKLIST.md`）
+- [ ] 人工闸门已留痕（`docs/approvals/APPROVALS.md`）
+

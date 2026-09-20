@@ -30,10 +30,11 @@ function fixtureSkipReason() {
   return false
 }
 
+// 蹲姿相关用例只依赖蹲姿.ive —— 不要复用 fixtureSkipReason()（那个查的是 person-move.ive），
+// 否则样例被局部清理时，明明还在的蹲姿金标准用例也会被一起跳过
 function crouchSkipReason() {
-  const reason = fixtureSkipReason()
-  if (reason) return reason
   if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}`
+  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）`
   return false
 }
 

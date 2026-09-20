@@ -7,6 +7,22 @@ function align4(value) {
   return (value + 3) & ~3
 }
 
+/**
+ * @description 合并两次选择的输入路径：**累加并去重**（保序）。
+ *   界面上的「选择文件」是累加语义——批量修复时逐个点选不该把之前选中的顶掉，
+ *   否则用户看到的现象就是"一次只能选一个模型"。
+ * @param {string[]} existing 已有选择。
+ * @param {string[]} incoming 本次对话框返回的路径。
+ * @returns {string[]} 合并结果（去重、保持先来后到）。
+ */
+function mergeUniquePaths(existing, incoming) {
+  const merged = []
+  for (const candidate of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]) {
+    if (typeof candidate === 'string' && candidate && !merged.includes(candidate)) merged.push(candidate)
+  }
+  return merged
+}
+
 function identityMatrix() {
   return [
     1, 0, 0, 0,
@@ -1346,10 +1362,14 @@ module.exports = {
   getNodeLocalMatrix,
   identityMatrix,
   mergePrimitivesByMaterial,
+  mergeUniquePaths,
   multiplyMatrix,
   readGlb,
   repairGlbFile,
   repairMany,
+  // REQ-007：FBX/OBJ 转换产物里的外部贴图复用同一套解析兜底（相对路径 / 同级同名 /
+  // .fbm 目录 / 乱码绝对路径），不为多格式另写一份
+  resolveExternalImage,
   stripSpecularExtensions,
   transformPoint,
   transformVector,

@@ -50,7 +50,13 @@ document:
 | MOD-003 | 批处理队列 | 单文件/目录扫描、任务串行执行、失败继续 |
 | MOD-004 | 结果面板 | 展示输入、输出、大小变化、错误信息 |
 | MOD-005 | IVE 原生助手（C++） | 用 OpenSceneGraph 读取 IVE，导出 `scene.json` + `data.bin` 中间产物；不链接 Qt/Assimp/渲染模块 |
-| MOD-006 | IVE→GLB 组装器（`src/ive.js`） | 解析中间产物、编码贴图、组装并写出自包含 GLB |
+| MOD-006 | IVE→GLB 组装器（`src/ive.js`） | 解析中间产物、编码贴图、组装并写出自包含 GLB；含上轴转换、贴地归心、顶点焊接 |
+| MOD-007 | 模型体检（`src/inspect.js`） | 只读产出参数报告：体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴推断、比例尺、问题清单；支持 `node src/inspect.js <file.glb>` |
+| MOD-008 | 世界盒与矩阵工具（`src/transform.js`） | 沿节点链累乘矩阵求世界包围盒；GLB 路径与 IVE 路径共用同一份遍历实现 |
+| MOD-009 | 体检报告格式化（`src/report-format.js`） | 把 `inspect.js` 的机器报告转成界面用的中文键值行与偏差文案；纯函数，可在 `node --test` 里直接覆盖 |
+| MOD-010 | 预览方向/缩放（`src/preview-transform.js`） | 把方向/缩放换算成 Cesium `modelMatrix`（列主序 16 元素）；纯函数，无 Cesium 依赖 |
+| MOD-011 | 体检面板与预览控件（`src/renderer.js`/`index.html`/`styles.css`） | 双列展示世界盒与 accessor 盒、偏差告警、事实行与问题清单；方向/缩放滑块只改预览矩阵并记日志 |
+| MOD-012 | 多格式转换内核（`src/convert.js`） | FBX/OBJ → 自包含 GLB：assimpjs(WASM) 进程内转换、复用 `ive.js::weldVertices` 焊接三角汤、复用 `repair.js::resolveExternalImage` 内嵌外部贴图（解析不到的换 1×1 占位并记 warning）；永不抛，返回 `{status, bytes, warnings, stats}` |
 
 ### 3.1 关键规则
 
@@ -73,6 +79,19 @@ document:
 | BR-015 | 轴转换与归心的落地方式：节点线性部分全为单位阵时**烘焙进顶点**（POSITION 施加旋转+平移，NORMAL/TANGENT 只旋转，节点平移量跟着转轴），使 accessor min/max 与真实盒一致；一旦有节点带旋转/缩放则退化为**挂一个带转换矩阵的根节点**、不改顶点。两种模式渲染结果一致，`conversion.mode` 取 `bake` / `root` / `none` | P0 |
 | BR-016 | 助手中间产物只在矩阵非单位时输出 `matrix` 字段，**从不输出 `hasMatrix`**；JS 侧判定一律以字段存在为准。曾因误用 `node.hasMatrix` 把全部节点平移丢弃，导致帽子等部件挂在身体下方（实测部件世界 Y 由 `-0.81..-0.54` 修正为 `1.06..1.36`） | P0 |
 | BR-017 | 转换时**焊接顶点**（默认开，`weldVertices:false` 关闭）：IVE 几何是三角汤，只有**全部属性逐个数值相同**的顶点才归并，UV 接缝与硬边必须保留。实测蹲姿 56,772 → 11,516 顶点（-79.7%，与 FBX2glTF 参考件顶点数完全相同），面数 18,924 与贴图 3 张不变，体积 3.81 MB → 2.43 MB。合并以 `String()` 比较，-0 与 0 视为同值（轴转换会引入 -0，按位比较会白白多出顶点） | P0 |
+| BR-018 | 体检必须**自算世界盒**（沿节点链累乘矩阵后重新包角点），并同时给出 accessor 并集盒与两者的偏差倍数。偏差倍数 = `max(逐轴尺寸比的最坏值, 1 + 中心偏移 ÷ 体对角线)`，> 10 倍即告警——只比尺寸会漏掉「纯平移」这种取景同样会错的情形（审查实测：整体平移 1000 时旧实现恒为 1）。**两个盒都只统计默认场景可达的网格**，否则未引用的大网格会制造假偏差。`UNREFERENCED_MESHES` 的判定必须把**默认场景**传给 `reachableMeshIndexes(nodes, scene)`——曾漏传第二个参数而恒为空集，导致任何含网格的文件都误报（本地样例 4/4），回归用例（旧代码上会红）与调用点注释已就位。实测装甲救护车 229,713 倍（尺寸比 229,713 / 偏移比 0.05）、运输车 4,461 倍、person-move 485 倍。中心偏移单独超过 1 倍体对角线时另发 `ACCESSOR_BOUNDS_OFFSET`——细长资产（如 1000×1×1 平移 8000）合并倍数可能仍 <10 而被静默放过 | P0 |
+| BR-019 | 上轴只做**保守推断**并给出置信度与依据：有导出器签名（FBX2glTF/assimp/Khronos/Blender）→ Y 轴 medium；仅凭包围盒 → unknown/low 并交人工确认。绝不静默改写模型朝向 | P0 |
+| BR-020 | 体检**只读**且**不抛异常**：文件不可读、非 GLB、解析失败、**结构畸形**（`meshes:[null]`、`materials:{}`、`samplers:[null]` 之类）、缺 accessor `min`/`max`、外部贴图缺失等一律转成报告里的中文问题条目（`level`/`code`/`message`），命令行退出码反映成败。分析段整体包在 try/catch 内并标记 `partial`，**元素级访问一律走 `asArray()`/可选链**（`?? []` 只兜 null/undefined，遇到 `scenes:[{nodes:5}]` 这类非数组会抛 `is not iterable`——审查实测 400 次 fuzz 中 66 次 partial 全因此）。缺 `POSITION` accessor 的 `min`/`max` 发 `POSITION_MINMAX_MISSING`；`json.scene` 越界发 `SCENE_INDEX_OUT_OF_RANGE`（与「文件里没有 scene」的 `NO_DEFAULT_SCENE` 区分）；CLI 在 `partial` 或存在 error 级问题时退非 0 | P0 |
+| BR-021 | 世界盒的节点遍历与矩阵累乘在 GLB 路径与 IVE 路径之间**共用一份实现**（`src/transform.js::worldBounds`），只有局部盒来源不同（accessor `min`/`max` vs 裸 float 区段）——两处各写一遍必然漂移 | P1 |
+| BR-022 | 贴图头解析**不得截断**：JPEG 的 SOF 段常位于 APP1/Exif 之后（实测某样例 APP1 段就有 3221 字节），把扫描截到 1 KB 会让样例集 62% 的内嵌贴图读不到宽高，使 NPOT 与 1×1 占位检测**静默失效**。按段长前进扫描直至 SOF；data URI 需解码前缀后同样解析。图片头必须**结构自洽**（PNG 校验 `IHDR` 标记；JPEG 校验 `SOF` 段长 = 8+3N 且 N∈{1,3,4}）且宽高在 1..65535 内，否则返回 null——只看魔数或 `mimeType` 会把垃圾字节当图片并给出荒诞宽高。仍读不出宽高时必须发 `TEXTURE_DIMENSIONS_UNKNOWN`，不得静默 | P1 |
+| BR-023 | 节点「几何塌陷」用**列长度比**判定（最短列 ÷ 最长列 < 1e-6），不用 `\|det\|`：行列式是体积量纲，`\|det\| < 1e-12` 会把正常的微小均匀缩放（1e-5 → det=1e-15）误报，又会漏掉单轴压扁（det=1e-9） | P2 |
+| BR-024 | 预览侧的方向/缩放/上轴修正**只作用于预览**（改 Cesium `modelMatrix`）并且**不写回任何文件**（ADR-004），日志必须记录最终矩阵；写回只能是另一个显式操作（当前不存在）。矩阵 = 均匀缩放 × 绕 Y 轴旋转，唯一例外是 ADR-002 要求由人工点一次的上轴三态：用户显式选 `Z-up → Y-up` 时先叠一层绕 X 轴 −90°（与 `src/ive.js` 的轴转换同向），**绝不由推断自动施加**。矩阵无平移分量——模型已在体检/转换阶段贴地并水平归心。日志策略：拖动（`input`）只实时改矩阵不记行，松手（`change`）与重置才各记一行，否则一次拖动会刷出几十行把"最终 `modelMatrix`"这条验收证据淹掉 | P0 |
+| BR-025 | 体检面板必须**可降级**：报告残缺、字段类型错误、`inspect()` 返回 `ok:false` 或 `partial` 时，界面只显示中文占位与失败原因，**绝不抛异常、绝不渲染 `undefined`/`NaN`**，并且**不得打断 Cesium 预览**（体检与预览并行发起，互不依赖）。偏差的**配色与文案必须同档**：`deviationLevel` 为 `ok`（<10 倍）时文案只能说"未到告警门槛"，不得写"会错位"——**包括只有总量、没有 `deviationParts` 的兜底分支**（冷审实测这一支曾漏判）；文案只对报告**实际给出**的分量下判断，缺一个分量时既不替它编数字、也不把"两个盒一致"的结论推广过去；`min > max` 的畸形盒尺寸与中心都给占位符而不是负尺寸/无意义中心 | P1 |
+| BR-026 | 预览渲染**不得被后台节流卡住**：窗口被遮挡/在后台时页面若被判为 hidden，`requestAnimationFrame` 几乎不跑，Cesium 一帧都不渲染（实测渲染帧计数 `scene.frameState.frameNumber` 停在 0、`resourcesLoaded` 仍为 false；注意 `scene.frameNumber` 在 1.128 里并不存在），「置 `_ready` 并发 `readyEvent`」的 `afterRender` 回调于是永不执行——`validateModel` 会一直挂在等就绪上：`#validationStatus` 永远停在「正在加载…」，包围盒诊断与默认取景也都不跑。因此 `BrowserWindow` 必须 `backgroundThrottling: false`（桌面工具无省电必要），且 `waitForModelReady` 必须带超时并把超时结果与「已加载」**在状态与日志上区分开**（「已创建模型，但当前未渲染…」），否则窗口仍不可见时会被假绿。超时后**保留** ready 监听，等窗口恢复真的渲染出第一帧时补跑诊断与取景（否则画面会停在按 accessor 盒回退的错误取景上）。代价：`backgroundThrottling: false` 叠加 `requestRenderMode: false` 会在窗口被遮挡/最小化时持续出帧（桌面工具可接受的 CPU/电量开销，换成 `requestRenderMode: true` 需要把所有 `appendLog`/取景路径都补 `requestRender`，不在本期范围） | P1 |
+| BR-027 | 主界面为**编辑器式三栏 + 底部日志**：页面本身不得整页滚动（`document.scrollingElement.scrollHeight <= innerHeight + 1`），滚动只发生在面板内部；各栏有最小尺寸、分隔条可拖拽，布局状态写 `localStorage` 并在读取时 clamp；**3D 容器尺寸变化必须调 `viewer.resize()`**（Cesium 只监听 window resize，分隔条拖动它感知不到，不处理会被拉伸/裁剪），并节流到下一帧；窄窗口（<1100px）降级为两栏 + 右栏抽屉，不得出现横向滚动 | P1 |
+| BR-028 | 栏位尺寸与**内容解耦**（ADR-007）：面板宽高只由**用户操作**与**窗口尺寸**决定，任何内容/临时面板都不得改变它——① 高度预算不得读入随内容变化的实时高度（模型信息行固定单行省略号 + `title`，帮助面板限高且**不参与预算**）；② **用户意图与生效值分离**：`layoutDesired`（唯一落盘对象）是用户设定的尺寸，`layout` 是当前窗口夹取后的**生效值**（仅用于渲染），窗口缩放/跨窄断点等非用户事件只 `refitLayout()` 重算生效值、**绝不落盘**，故窗口恢复后用户尺寸自行回来；③ 中栏网格必须显式 `grid-template-columns: minmax(0, 1fr)`，否则 nowrap 内容会把列撑开（实测 2994px）。**反例（修复前实测）**：超长模型路径让预览条 126→189px，重算时把日志从 380px 夹到 290px **并写进 `localStorage`**，换回短路径也不恢复 | P1 |
+| BR-029 | 滚动条**自绘细条**，且每个区域**只留最外层一个滚动容器**：① 全局用 `::-webkit-scrollbar`（8px 轨道 + 2px 透明描边内缩 = 视觉 4px 圆角细条）替代系统默认样式，**不得同时写标准属性** `scrollbar-width`/`scrollbar-color`——Chromium 121+ 只要看到标准属性就会**整体忽略** webkit 伪元素，两个都写等于没写；② 滚动职责按区域唯一化：左栏与右栏**只有 `.pane-body` 可滚**（`.list`、`.inspect-issues` 等**不得**自带 `max-height` + `overflow` 自成滚动条），日志区只有 `.log` 可滚（父级 `.pane-body` 已 `overflow: hidden`），帮助面板限高自滚但它是独立网格行、不与其它滚动容器嵌套。**反例（修复前实测）**：左栏一个面板里同时存在 `.pane-body` + `#inputList` + `#resultList` **三个**滚动条，右栏 `.pane-body` 内还嵌 `#inspectIssues` 第二层 | P2 |
+| BR-030 | 多格式输入（FBX/OBJ）的转换口径（ADR-008）：① 用 **assimpjs(WASM)** 在进程内转换，**不引入外部可执行程序**、不按平台分发二进制；② 产物必须**自包含**——`images[].uri` 一律内嵌（OBJ 的贴图 assimp 只写 uri 不内嵌，连相对路径也如此，必须在转换阶段用 `resolveExternalImage` 补齐）；③ 解析不到的贴图**不得静默丢**：换 1×1 占位并留 `missing:<原始 uri>` 名字 + warning，日志与体检都要能看到原始路径；④ 三角汤必须焊接（复用 `ive.js::weldVertices`，键覆盖全部属性含 JOINTS/WEIGHTS），**面数与贴图不得改变**；⑤ 同名不同扩展名的源（`蹲姿.fbx` + `蹲姿.obj`、`蹲姿.ive` + `蹲姿.glb`）转换后会同名，必须按源扩展名区分，否则临时文件与输出双双互相覆盖而两条都报成功 | P1 |
 
 ## 4. 接口设计
 
@@ -81,6 +100,7 @@ document:
 | 接口ID | 提供方 | 调用方 | 说明 |
 |---|---|---|---|
 | API-IN-001 | 主进程 | 渲染进程 | 选择目录、启动修复、返回进度 |
+| API-IN-002 | 主进程 | 渲染进程 | `inspect-glb`：对单个 GLB（`.ive` 先转临时 GLB）跑体检并返回报告。**永不 reject**——成功 `{ ok: true, filePath, sourcePath, report }`，失败 `{ ok: false, filePath, error }`（中文原因），因此体检失败不会连带打断 Cesium 预览 |
 
 #### 4.1.1 批处理进度事件
 

@@ -4,14 +4,17 @@
   "private": true,
   "description": "Electron desktop tool for repairing Cesium-incompatible GLB textures, materials, and skinned meshes",
   "main": "src/main.js",
+  "engines": {
+    "node": ">=21"
+  },
   "scripts": {
     "ensure:cesium": "node scripts/ensure-cesium.js",
     "build:ive2glb": "bash scripts/build-ive2glb.sh",
     "dev": "npm run ensure:cesium && electron .",
     "start": "npm run ensure:cesium && electron .",
     "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
-    "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/repair.js && node --check src/ive.js",
-    "test": "node --test"
+    "lint": "for f in src/*.js; do node --check \"$f\" || exit 1; done",
+    "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {
     "electron": "^32.0.0",
@@ -23,7 +26,8 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "vendor/ive2glb/**"
+      "vendor/ive2glb/**",
+      "node_modules/assimpjs/dist/**"
     ],
     "files": [
       "src/**/*",
@@ -66,6 +70,7 @@
     }
   },
   "dependencies": {
+    "assimpjs": "^0.0.10",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0"
   }

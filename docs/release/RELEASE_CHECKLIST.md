@@ -1,19 +1,19 @@
 # 发布检查清单（RELEASE CHECKLIST）
 
 > 由 `release` 技能维护。**预检未全绿不得发布**；发布后回填证据。
-> 关联需求：REQ-002 ｜ 发布版本：v0.1.0 ｜ 责任人：@sunny-zhai
+> 关联需求：REQ-002（验证基线）、REQ-005（模型体检） ｜ 发布版本：v0.1.1（版本分支）｜ 产品版本（`package.json`）：`0.1.0`——**本次决定不升**，见 §3 ｜ 责任人：@sunny-zhai
 
 本清单只写**本项目真实可执行**的项。桌面单机工具没有服务端概念，凡不适用的项都显式标注
 "不适用"而不是留空——留空会让评审人误以为漏做。
 
 ## 1. 预检（Preflight）
 
-- [x] 关联 REQ 已验收：REQ-001（文档一致性）TASK-001/002/003 已完成并记录在完成线；REQ-002（验证基线）由本任务关闭
-- [x] 全量测试通过：`npm test` → **43 通过 / 0 失败 / 0 跳过**（夹具在位）；`npm run lint` 五文件通过
-- [x] 覆盖率已**实测并记录**：`all files` 行 92.29% / 分支 66.25% / 函数 93.70%。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
-- [ ] 独立审查（reviewer 冷上下文）—— **待人工**：本项目目前单人开发，需由 @sunny-zhai 指定审查人或自行复核
+- [x] 关联 REQ 已验收：REQ-001（文档一致性）TASK-001/002/003 已完成并记录在完成线；REQ-002（验证基线）由本任务关闭；REQ-005（模型体检）TASK-007 经两轮独立复审关闭，TASK-008 待开始
+- [x] 全量测试通过：`npm test` → **76 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；全新克隆无任何夹具时实测 66 通过 / 14 跳过 / 0 失败）；`npm run lint` 通过
+- [x] 覆盖率已**实测并记录**：`all files` 行 92.97% / 分支 73.76% / 函数 94.82%（样例集裁剪后复测，含新增的 `inspect.js` 93.57% 与 `transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
+- [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮独立上下文 subagent 复审**（第一轮不通过 → 修复 → 第二轮「有条件通过」），发现并修掉 2 个阻塞级 + 11 项残留缺陷；见 `docs/requirements/TASKS.md` 的 TASK-007 返工记录与完成线
 - [x] 无未解决的阻断级缺陷：已知问题见 §6「已知问题」，均不阻断发布但必须在发布说明中写明
-- [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖仅 `jpeg-js@^0.4.4`、`pngjs@^7.0.0`（均为 MIT，无原生扩展）；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
+- [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖为 `jpeg-js@^0.4.4`（**BSD-3-Clause**）、`pngjs@^7.0.0`（MIT）、`assimpjs@^0.0.10`（MIT，内含 assimp 本体 **BSD-3-Clause**；`node_modules/assimpjs/dist/license.assimp.txt` 与 `license.assimpjs.txt` 随包分发）；几者均无原生扩展；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
 - [x] 无明文凭证入库：对 `src/`、`scripts/`、`package.json` 做过关键词扫描，未发现密钥/令牌；仓库内无 `.env`
 
 ## 2. 迁移（Migration）
@@ -29,11 +29,13 @@
 ## 3. 发布（Release）
 
 - [ ] 目标环境：最终用户 **Windows x64**（NSIS 安装包 + 便携版）；开发/自用 **macOS arm64**（`npm run dev`）
+- [ ] **版本号口径（已决定，无需再改）**：平台版本分支是 `release/v0.1.1`，但 `package.json` 的 `version` **保持 `0.1.0`**——本轮内容整体仍按 0.1.0 交付。注意 `electron-builder` 的 `artifactName` 取自 `package.json`，所以产物名是 `0.1.0`；将来真正升版本时必须同步改 `package.json`（`version.mjs bump` 只管版本分支，不会动它），否则产物名会与版本分支长期不一致
 - [ ] 发布产物（`electron-builder` 按 `artifactName` 模板生成，输出目录 `dist/`）：
   - `GLB Texture Repair Tool-Setup-0.1.0.exe`（NSIS，可选安装目录、桌面/开始菜单快捷方式）
   - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
 - [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
+- [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`（该探测会真正加载一次 wasm——只查 JS 模块会有假阳性）、`o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）；dist 里必须能看到 `assimpjs/dist/license.assimp.txt`、`license.assimpjs.txt` 两份许可证文件
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
 - [ ] 观测就绪：无遥测、无服务端指标。用户侧可见：界面日志面板（含 `坐标 …/尺寸 …/顶点 …` 行）+ 主进程控制台
 
@@ -46,9 +48,9 @@
 
 | 关键路径 | 命令 / 步骤 | 期望 | 实际 | 结果 |
 | :-- | :-- | :-- | :-- | :-- |
-| 应用启动 | `npm run dev` | 窗口出现，自定义标题栏（最小化/最大化/关闭）可用，启动日志出现 IVE 能力探测结果 | | ☐ |
+| 应用启动 | `npm run dev` | 窗口出现，自定义标题栏（最小化/最大化/关闭）可用，启动日志出现 IVE 能力探测结果 | 主进程 + 渲染进程均起，`Cesium 1.128 is already available locally` | ☑ |
 | IVE 转换 | 选 `o-model/蹲姿.ive` → 批量修复 | 日志出现 `坐标 Z-up→Y-up + 贴地 + 水平归心`、`尺寸 0.54 × 1.36 × 1.06 m`、`顶点 11516（同类合并前 56772）`、`三角面 18924` | | ☐ |
-| Cesium 预览 | 修复完成后右侧视图自动校验 | 模型**直立、落地、居中**，贴图无倒置/无缺失 | | ☐ |
+| Cesium 预览 | 修复完成后右侧视图自动校验 | 模型**直立、落地、居中**，贴图无倒置/无缺失 | 人工验收：IVE 转换产物与 GLB 均正常渲染（sunny-zhai，2026-09-18）；直立/落地由世界盒断言兜底 | ☑ |
 | 嵌套目录结构 | 选含子目录的输入目录 | 输出保留相对子目录结构（不是全部平铺到输出根） | | ☐ |
 | 输出体积 | 对比源与产物 | 蹲姿 27.25 MB → 2.43 MB；修复后体积不变 | | ☐ |
 | 坏输入不阻断 | 目录内混入损坏 GLB | 该项失败并计入 `failed`，后续文件继续处理 | | ☐ |
@@ -81,7 +83,9 @@
   - JPEG → PNG 导致输出体积变大，依赖"修完还是小体积"的用户需重新评估
 - **已知问题**：
   - Windows 安装包不含 IVE 助手（见 §3），Windows 用户只能使用 GLB 修复能力
-  - 渲染结果未经人眼确认（`TEST_PLAN.md` TC-012 待执行）
+  - 渲染结果的人眼确认仅覆盖「能否渲染」这一路径（TC-012 已由 sunny-zhai 于 2026-09-18 人工验收通过）；朝向/落地/贴图方向由自动化世界盒断言兜底，未经人眼逐项确认
+  - 模型体检：`src/inspect.js` 报告 + 界面体检面板（世界盒/accessor 盒双列、偏差告警、事实行、问题清单）与预览方向/缩放/上轴控件均已实现（TASK-008 已完成并合入）；TASK-009 已修掉 `UNREFERENCED_MESHES` 误报与"窗口不可见时预览不落定"（后者根因是后台节流导致 Cesium 一帧未渲染）
+  - `KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报（TASK-007 已知遗留）
   - 无 CI：门禁（lint/test/memory check）依赖本地手工执行
   - 覆盖率未设门槛，Electron 壳层未纳入插桩
   - `npm audit` 在当前 registry 下不可用（见 §1）
@@ -90,4 +94,5 @@
 
 | 日期 | 版本 | 环境 | 结果 | 证据 | 回滚? |
 | :-- | :-- | :-- | :-- | :-- | :-- |
-| 待发布 | v0.1.0 | Windows x64 / macOS arm64 | 待执行 | `npm test` 43/43；`docs/testing/TEST_PLAN.md` | 否 |
+| 2026-09-18 | v0.1.0 | — | 代码并入 `main`（PR #6 → `3506327`、PR #7 → `0063590`），**安装包未产出**（§3 全未勾选） | `docs/approvals/APPROVALS.md` 的两条 delivery 记录 + `docs/testing/TEST_PLAN.md` | 否 |
+| 待发布 | v0.1.1 | Windows x64 / macOS arm64 | 待执行 | `npm test` 76 通过 / 0 失败 / 4 跳过；`docs/testing/TEST_PLAN.md` 结果汇总；`node scripts/memory.mjs check` 通过 | 否 |

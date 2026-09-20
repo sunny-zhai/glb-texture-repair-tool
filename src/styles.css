@@ -2,12 +2,50 @@
   box-sizing: border-box;
 }
 
+/* ---------------------------------------------------------------- 滚动条（BR-029）
+   自绘细滚动条：系统默认样式又宽又亮，和深色界面不搭。只写 `::-webkit-scrollbar` 系列
+   ——Chromium 121+ 起，只要指定了标准属性 `scrollbar-width`/`scrollbar-color`，webkit
+   伪元素就会被**整体忽略**，所以两者只能取一，这里取可控性更好的 webkit 版本。
+   8px 轨道 + 2px 透明描边内缩，视觉上是 4px 的圆角细条。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #475569;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- 外壳（BR-027 / BR-029）
+   整页不滚动：body 高 100vh、overflow hidden，滚动只发生在**每栏最外层的**滚动容器里
+   （左右栏 = `.pane-body`，日志区 = `.log`；面板内部的列表/问题清单**不再各自滚动**）。
+   网格行：操作栏 · 帮助面板 · 工作区(minmax(0,1fr)) · 分隔条 · 日志 · 状态栏。
+   minmax(0,1fr) 与 min-height:0 是必需的，否则网格子项会拒绝收缩、把页面顶出滚动条。 */
+
 body {
   margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #0f172a;
   color: #e5e7eb;
-  overflow-y: auto;
 }
 
 .titlebar {
@@ -15,11 +53,11 @@ body {
   align-items: stretch;
   justify-content: space-between;
   height: 44px;
+  flex: none;
   border-bottom: 1px solid #334155;
   background: #0b1220;
   user-select: none;
-  position: fixed;
-  inset: 0 0 auto 0;
+  position: relative;
   z-index: 100;
 }
 
@@ -27,6 +65,7 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 0 16px;
   -webkit-app-region: drag;
 }
@@ -35,6 +74,11 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: #e2e8f0;
+}
+
+.app-subtitle {
+  font-size: 11px;
+  color: #64748b;
 }
 
 .window-controls {
@@ -63,45 +107,91 @@ body {
   color: #fff;
 }
 
-.app {
-  padding: 64px 20px 20px;
+.app-shell {
+  --pane-left: 260px;
+  --pane-right: 340px;
+  --pane-bottom: 200px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) 4px var(--pane-bottom) auto;
+  overflow: hidden;
 }
 
-.panel {
-  border: 1px solid #334155;
-  background: #111827;
-  border-radius: 8px;
-  padding: 16px;
-}
+/* ---------------------------------------------------------------- 操作栏 */
 
-.toolbar {
+.action-bar {
+  grid-row: 1;
   display: flex;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #334155;
+  background: #0b1220;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.action-sep {
+  width: 1px;
+  height: 22px;
+  flex: none;
+  background: #334155;
+}
+
+.action-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.help-panel {
+  grid-row: 2;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid #334155;
+  background: #111827;
+  /* 帮助是**临时**面板（TASK-011）：限高并内部滚动，绝不参与栏位尺寸预算——
+     打开/收起它都不得改写用户设定的日志高度（只临时占用工作区高度）。 */
+  max-height: 26vh;
+  overflow: auto;
+}
+
+.help-panel[hidden] {
+  display: none;
 }
 
 .hint {
-  margin: -8px 0 14px;
+  margin: 0 0 8px;
   font-size: 12px;
   line-height: 1.5;
   color: #93c5fd;
 }
 
+.hint:last-child {
+  margin-bottom: 0;
+}
+
 .options {
-  margin: -8px 0 16px;
   font-size: 12px;
   color: #94a3b8;
 }
 
 .options label {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   cursor: pointer;
+  line-height: 1.4;
 }
 
 .options input {
+  margin-top: 2px;
   accent-color: #3b82f6;
 }
 
@@ -112,6 +202,23 @@ button {
   padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+button:hover {
+  background: #273449;
+  border-color: #64748b;
+}
+
+button:active {
+  background: #0f172a;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 button.primary {
@@ -119,12 +226,240 @@ button.primary {
   border-color: #2563eb;
 }
 
-.progress-wrap {
-  margin: 0 0 16px;
-  padding: 10px 12px;
+button.primary:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: #334155;
+  color: #cbd5e1;
+  padding: 8px 10px;
+}
+
+button.ghost:hover {
+  background: #1e293b;
+}
+
+button.ghost[aria-expanded="true"] {
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+
+:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------- 工作区三栏 */
+
+/* 显式网格位置：折叠起来的行（display:none）不会把后面的子项整体上移一格 */
+.workspace {
+  grid-row: 3;
+  position: relative;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--pane-left) 4px minmax(0, 1fr) 4px var(--pane-right);
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #111827;
+}
+
+.pane-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #334155;
+  background: #0b1220;
+  min-height: 34px;
+}
+
+.pane-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+
+.pane-header .status {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 面板标题行里的折叠/关闭按钮要比操作栏的更紧凑：标题行高度必须恒为 34px，
+   折叠日志后整行才刚好等于 --pane-bottom 的折叠高度，不会被裁掉 */
+.pane-header button {
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.pane-badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 14px;
+}
+
+.pane-section + .pane-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #1f2937;
+}
+
+.pane-subhead {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.pane-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed #334155;
+  border-radius: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pane-left {
+  grid-column: 1;
+}
+
+.pane-center {
+  grid-column: 3;
+  display: grid;
+  /* 显式写 minmax(0, 1fr)：只写 grid-template-rows 时隐式列是 `auto`，会被内容的
+     min-content 撑开——模型信息行改成 nowrap 后实测把这一列顶到 2994px（视觉被
+     overflow:hidden 裁掉，但宽度已爆、连带拖拽宽度断言偏 4px）。TASK-011 */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: #0f172a;
+}
+
+.pane-center .pane-header {
+  grid-row: 1;
+}
+
+.pane-right {
+  grid-column: 5;
+  z-index: 20;
+}
+
+.pane-bottom {
+  grid-row: 5;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-top: 1px solid #334155;
+}
+
+.pane-bottom .pane-body {
+  padding: 8px 10px 10px;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ---------------------------------------------------------------- 分隔条 */
+
+.splitter {
+  position: relative;
+  background: #1f2937;
+  touch-action: none;
+  user-select: none;
+}
+
+.splitter-col {
+  cursor: col-resize;
+}
+
+#splitterLeft {
+  grid-column: 2;
+}
+
+#splitterRight {
+  grid-column: 4;
+}
+
+.splitter-row {
+  grid-row: 4;
+  cursor: row-resize;
+}
+
+.splitter:hover,
+.splitter.dragging {
+  background: #3b82f6;
+}
+
+.splitter:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 0;
+}
+
+/* ---------------------------------------------------------------- 输入队列 / 结果 */
+
+.summary {
+  min-height: 34px;
+  padding: 8px 10px;
   border: 1px solid #334155;
   border-radius: 6px;
   background: #0f172a;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 输入/结果列表：**不再自己滚动**（BR-029）。列表随内容长高，由所属栏的 .pane-body
+   作为该区域**唯一**的滚动容器——一个面板里出现两层滚动条既难用也难看。 */
+.list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+}
+
+.list:empty::after {
+  content: "（空）";
+  display: block;
+  margin-left: -12px;
+  color: #475569;
+  list-style: none;
+}
+
+.progress-wrap {
+  flex: none;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #334155;
+  background: #0b1220;
 }
 
 .progress-wrap[hidden] {
@@ -170,85 +505,79 @@ button.primary {
   font-variant-numeric: tabular-nums;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
 h2 {
   margin: 0 0 8px;
   font-size: 16px;
 }
 
-.summary {
-  min-height: 40px;
-  padding: 10px;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  background: #0f172a;
-  word-break: break-word;
-}
+/* ---------------------------------------------------------------- 中栏：预览 */
 
-.list {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  max-height: 280px;
-  overflow: auto;
-}
-
-.log {
-  margin: 0;
-  min-height: 140px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  background: #020617;
-  white-space: pre-wrap;
-}
-
-.preview-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.preview-heading h2 {
-  margin-bottom: 0;
-}
-
-.status {
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-.status.ok {
-  color: #86efac;
-}
-
-.status.error {
-  color: #fca5a5;
+.preview-bar {
+  min-width: 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid #1f2937;
+  background: #111827;
 }
 
 .validation-model-summary {
-  margin-top: 8px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
-  overflow-wrap: anywhere;
+  /* 单行省略号（TASK-011）：这一行**绝不能换行**。它换行就会把预览条顶高 18px，
+     进而顶掉 3D 画布、并让日志上限变小——实测"路径变长 → 画布 161→143px →
+     重算时把日志从 313px 夹到 295px 并写进 localStorage，换回短路径也不恢复"。
+     完整路径挂 title，信息不丢。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.preview-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preview-controls input[type="range"] {
+  width: 140px;
+  accent-color: #3b82f6;
+}
+
+.preview-controls select {
+  max-width: 240px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: #e2e8f0;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+}
+
+.preview-controls button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.hint-inline {
+  color: #64748b;
 }
 
 .cesium-container {
-  height: 360px;
-  margin-top: 8px;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
-  border: 1px solid #334155;
-  border-radius: 6px;
   background: #eaf1f5;
 }
 
@@ -267,4 +596,285 @@ h2 {
 
 .error {
   color: #fca5a5;
+}
+
+/* 日志「警告」级：例如预览只取第一个文件时的提示 */
+.warn {
+  color: #fcd34d;
+}
+
+.status {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.status.ok {
+  color: #86efac;
+}
+
+.status.error {
+  color: #fca5a5;
+}
+
+.status.warn {
+  color: #fcd34d;
+}
+
+/* ---------------------------------------------------------------- 模型体检面板 */
+
+.inspect-panel {
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.inspect-panel[hidden] {
+  display: none;
+}
+
+.inspect-boxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.inspect-box {
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+  min-width: 0;
+}
+
+.inspect-box h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.inspect-value {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.inspect-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.inspect-deviation {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+/* 比 .warn/.error 更高特异性，避免被文件末尾的同名工具类覆盖 */
+.inspect-deviation.warn {
+  color: #fcd34d;
+}
+
+.inspect-deviation.error {
+  color: #fca5a5;
+}
+
+.inspect-facts {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.inspect-facts li {
+  display: flex;
+  gap: 8px;
+}
+
+.inspect-facts .fact-label {
+  flex: none;
+  width: 3.5em;
+  color: #94a3b8;
+}
+
+.inspect-facts .fact-value {
+  overflow-wrap: anywhere;
+}
+
+/* 体检问题清单同理：不再限高自滚，交给右栏 .pane-body 这唯一滚动容器（BR-029） */
+.inspect-issues {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.issue-error {
+  color: #fca5a5;
+}
+
+.issue-warn {
+  color: #fcd34d;
+}
+
+.issue-info {
+  color: #93c5fd;
+}
+
+/* ---------------------------------------------------------------- 底部日志 */
+
+.log {
+  flex: 1 1 auto;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #020617;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #cbd5e1;
+}
+
+/* ---------------------------------------------------------------- 状态栏 */
+
+.statusbar {
+  grid-row: 6;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+  height: 28px;
+  border-top: 1px solid #334155;
+  background: #0b1220;
+  font-size: 12px;
+  color: #cbd5e1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.status-item:first-child {
+  flex: 0 1 auto;
+}
+
+.status-item:last-child {
+  margin-left: auto;
+}
+
+.status-label {
+  color: #64748b;
+  flex: none;
+}
+
+#statusModel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+}
+
+#statusModelSize,
+#statusInspect,
+#statusProgress {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 窄布局会把 #inspectStatus 收进抽屉并隐藏，配色线索由状态栏这一格接力（同一组档位类） */
+#statusInspect.ok {
+  color: #34d399;
+}
+
+#statusInspect.warn {
+  color: #fcd34d;
+}
+
+#statusInspect.error {
+  color: #fca5a5;
+}
+
+/* ---------------------------------------------------------------- 折叠态 */
+
+/* 日志折叠：只留标题行，腾出的高度给中栏 */
+.app-shell.log-collapsed #logBody {
+  display: none;
+}
+
+.app-shell.log-collapsed .pane-bottom {
+  grid-template-rows: auto;
+}
+
+.app-shell.log-collapsed #splitterBottom {
+  cursor: default;
+  background: #1f2937;
+}
+
+/* 宽屏隐藏右栏 */
+.app-shell.right-collapsed .workspace {
+  grid-template-columns: var(--pane-left) 4px minmax(0, 1fr) 0 0;
+}
+
+.app-shell.right-collapsed .pane-right,
+.app-shell.right-collapsed #splitterRight {
+  display: none;
+}
+
+/* 窄窗口（<1100px）降级两栏：右栏变浮层抽屉，绝不出现横向滚动 */
+.app-shell.narrow .workspace {
+  grid-template-columns: var(--pane-left) 4px minmax(0, 1fr);
+}
+
+.app-shell.narrow #splitterRight {
+  display: none;
+}
+
+.app-shell.narrow .pane-right {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 78%);
+  border-left: 1px solid #334155;
+  box-shadow: -12px 0 24px rgba(2, 6, 23, 0.55);
+  transform: translateX(102%);
+  visibility: hidden;
+  transition: transform 0.16s ease;
+}
+
+.app-shell.narrow.drawer-open .pane-right {
+  transform: none;
+  visibility: visible;
+}
+
+.drawer-close {
+  display: none;
+  padding: 2px 8px;
+  font-size: 14px;
+  margin-left: auto;
+}
+
+.app-shell.narrow .drawer-close {
+  display: inline-block;
+}
+
+.app-shell.narrow .pane-header #inspectStatus {
+  display: none;
+}
+
+.app-shell.narrow .inspect-boxes {
+  grid-template-columns: 1fr;
 }

@@ -13,6 +13,7 @@
   <header class="titlebar">
     <div class="titlebar-drag">
       <div class="app-title">GLB 贴图修复桌面工具</div>
+      <div class="app-subtitle">左队列 · 中预览 · 右体检</div>
     </div>
     <div class="window-controls">
       <button id="minimizeWindow" class="window-control" aria-label="最小化">−</button>
@@ -20,63 +21,152 @@
       <button id="closeWindow" class="window-control close" aria-label="关闭">×</button>
     </div>
   </header>
-  <main class="app">
-    <section class="panel">
-      <div class="toolbar">
+
+  <!-- 编辑器式外壳：整屏不滚动（BR-027），滚动只发生在各面板内部 -->
+  <main class="app-shell" id="appShell">
+    <div class="action-bar" role="toolbar" aria-label="主操作栏">
+      <div class="action-group">
         <button id="pickFiles">选择文件</button>
         <button id="pickDir">选择目录</button>
+        <button id="clearInputs">清空选择</button>
+      </div>
+      <span class="action-sep" aria-hidden="true"></span>
+      <div class="action-group">
         <button id="pickOutput">选择输出目录</button>
-        <button id="pickValidation">选择验证模型</button>
+      </div>
+      <span class="action-sep" aria-hidden="true"></span>
+      <div class="action-group">
+        <button id="pickValidation">选择预览模型（单个）</button>
         <button id="resetView">重置视角</button>
+      </div>
+      <div class="action-spacer"></div>
+      <div class="action-group">
+        <button id="toggleHelp" class="ghost" aria-expanded="false" aria-controls="helpPanel">帮助</button>
+        <button id="toggleDrawer" class="ghost" aria-expanded="true" aria-controls="paneRight">隐藏体检</button>
         <button id="runRepair" class="primary">开始修复</button>
       </div>
+    </div>
 
+    <div id="helpPanel" class="help-panel" hidden>
+      <div class="hint">「选择目录」一次收录整个目录下的 GLB/IVE（推荐批量用）；「选择文件」支持多选（⌘/Shift 点选），多次选择会<strong>累加</strong>而不是替换；「选择预览模型」只取单个文件，用于中间栏的 Cesium 预览。</div>
       <div id="capabilityHint" class="hint" hidden></div>
+    </div>
 
-      <div class="options">
-        <label><input type="checkbox" id="freezePose" checked /> 带动画的蒙皮模型：烘焙为动画起始姿势（不勾选则烘焙为绑定站姿）</label>
-      </div>
+    <div class="workspace" id="workspace">
+      <aside class="pane pane-left" id="paneLeft" aria-label="输入队列">
+        <div class="pane-header">
+          <h2>输入队列</h2>
+          <span id="inputBadge" class="pane-badge">0</span>
+        </div>
+        <div class="pane-body">
+          <div class="pane-section">
+            <h3 class="pane-subhead">输入</h3>
+            <div id="inputSummary" class="summary">未选择</div>
+            <ul id="inputList" class="list"></ul>
+          </div>
+          <div class="pane-section">
+            <h3 class="pane-subhead">输出目录</h3>
+            <div id="outputSummary" class="summary">未选择</div>
+          </div>
+          <div class="pane-section">
+            <h3 class="pane-subhead">结果</h3>
+            <ul id="resultList" class="list"></ul>
+          </div>
+        </div>
+        <div id="progressWrap" class="progress-wrap" hidden>
+          <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+          <div class="progress-text">
+            <span id="progressText">准备中…</span>
+            <span id="progressCounter" class="progress-counter"></span>
+          </div>
+        </div>
+      </aside>
 
-      <div id="progressWrap" class="progress-wrap" hidden>
-        <div class="progress-track">
-          <div id="progressFill" class="progress-fill"></div>
-        </div>
-        <div class="progress-text">
-          <span id="progressText">准备中…</span>
-          <span id="progressCounter" class="progress-counter"></span>
-        </div>
-      </div>
+      <div class="splitter splitter-col" id="splitterLeft" role="separator" aria-orientation="vertical" aria-label="调整左栏宽度" tabindex="0" data-splitter="left"></div>
 
-      <div class="grid">
-        <div>
-          <h2>输入</h2>
-          <div id="inputSummary" class="summary">未选择</div>
-          <ul id="inputList" class="list"></ul>
-        </div>
-        <div>
-          <h2>输出目录</h2>
-          <div id="outputSummary" class="summary">未选择</div>
-          <h2>结果</h2>
-          <ul id="resultList" class="list"></ul>
-        </div>
-      </div>
-
-      <section>
-        <div class="preview-heading">
-          <h2>Cesium 模型验证</h2>
+      <section class="pane pane-center" id="paneCenter" aria-label="Cesium 3D 预览">
+        <div class="pane-header">
+          <h2>Cesium 3D 预览</h2>
           <span id="validationStatus" class="status">未加载模型</span>
         </div>
-        <div id="validationModelSummary" class="validation-model-summary">当前验证模型：未选择</div>
+        <div class="preview-bar">
+          <div id="validationModelSummary" class="validation-model-summary">当前验证模型：未选择</div>
+          <div class="preview-controls">
+            <label>预览方向 <input type="range" id="previewYaw" min="0" max="355" step="5" value="0" /> <span id="previewYawValue">0°</span></label>
+            <label>预览缩放 <input type="range" id="previewScale" min="0.1" max="5" step="0.1" value="1" /> <span id="previewScaleValue">1.00×</span></label>
+            <label>上轴 <select id="previewAxis"></select></label>
+            <button id="resetPreview">重置预览修正</button>
+            <span id="previewHint" class="hint-inline">仅影响预览，不写入输出文件</span>
+          </div>
+        </div>
         <div id="cesiumContainer" class="cesium-container"></div>
       </section>
 
-      <section>
+      <div class="splitter splitter-col" id="splitterRight" role="separator" aria-orientation="vertical" aria-label="调整右栏宽度" tabindex="0" data-splitter="right"></div>
+
+      <aside class="pane pane-right" id="paneRight" aria-label="模型体检与修复选项">
+        <div class="pane-header">
+          <h2>模型体检</h2>
+          <span id="inspectStatus" class="status">未体检</span>
+          <button id="closeDrawer" class="ghost drawer-close" aria-label="关闭体检面板">×</button>
+        </div>
+        <div class="pane-body">
+          <div class="pane-section">
+            <h3 class="pane-subhead">修复选项</h3>
+            <div class="options">
+              <label><input type="checkbox" id="freezePose" checked /> 带动画的蒙皮模型：烘焙为动画起始姿势（不勾选则烘焙为绑定站姿）</label>
+            </div>
+          </div>
+          <div class="pane-section">
+            <h3 class="pane-subhead">体检结果</h3>
+            <p id="inspectEmpty" class="pane-empty">选择预览模型后显示体检结果</p>
+            <div id="inspectPanel" class="inspect-panel" hidden>
+              <div class="inspect-boxes">
+                <div class="inspect-box">
+                  <h3>世界盒（Cesium 取景口径）</h3>
+                  <div id="inspectWorldBox" class="inspect-value">—</div>
+                  <div id="inspectWorldCenter" class="inspect-sub">—</div>
+                </div>
+                <div class="inspect-box">
+                  <h3>accessor 盒（顶点数据范围）</h3>
+                  <div id="inspectAccessorBox" class="inspect-value">—</div>
+                  <div id="inspectAccessorCenter" class="inspect-sub">—</div>
+                </div>
+              </div>
+              <div id="inspectDeviation" class="inspect-deviation"></div>
+              <ul id="inspectFacts" class="inspect-facts"></ul>
+              <ul id="inspectIssues" class="list inspect-issues"></ul>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="splitter splitter-row" id="splitterBottom" role="separator" aria-orientation="horizontal" aria-label="调整日志高度" tabindex="0" data-splitter="bottom"></div>
+
+    <section class="pane pane-bottom" id="paneBottom" aria-label="日志">
+      <div class="pane-header">
         <h2>日志</h2>
+        <button id="toggleLog" class="ghost" aria-expanded="true" aria-controls="logBody">折叠</button>
+      </div>
+      <div class="pane-body" id="logBody">
         <pre id="log" class="log"></pre>
-      </section>
+      </div>
     </section>
+
+    <div class="statusbar" id="statusBar" role="status" aria-live="polite">
+      <span class="status-item"><span class="status-label">模型</span><span id="statusModel">未选择</span></span>
+      <span class="status-item"><span class="status-label">大小</span><span id="statusModelSize">—</span></span>
+      <span class="status-item"><span class="status-label">体检</span><span id="statusInspect">未体检</span></span>
+      <span class="status-item"><span class="status-label">修复</span><span id="statusProgress">未开始</span></span>
+    </div>
   </main>
+
   <script src="../vendor/cesium/1.128/Build/Cesium/Cesium.js"></script>
+  <script src="./report-format.js"></script>
+  <script src="./preview-transform.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

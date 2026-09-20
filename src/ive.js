@@ -12,12 +12,11 @@ const jpeg = require('jpeg-js')
 const { PNG } = require('pngjs')
 const {
   align4,
-  getNodeLocalMatrix,
   identityMatrix,
-  multiplyMatrix,
   transformPoint,
   writeGlb,
 } = require('./repair')
+const { worldBounds: transformWorldBounds } = require('./transform')
 
 // ---------------------------------------------------------------- 常量
 
@@ -332,43 +331,14 @@ function meshLocalBounds(intermediate) {
 }
 
 /**
- * @description 沿节点链累乘矩阵求世界包围盒。
+ * @description 沿节点链累乘矩阵求世界包围盒（局部盒来自 IVE 中间产物的裸 float 区段）。
  *   工具里的 getPositionBounds 用的是 accessor 并集（不含节点矩阵），实测最大偏差可达
  *   9 万倍，所以贴地/归心必须自己走一遍场景图，不能复用那个结果。
+ *   遍历与矩阵累乘收敛在 src/transform.js —— GLB 路径（体检）用的是同一份实现，
+ *   只是局部盒来自 accessor min/max。两处各写一遍迟早漂移。
  */
 function worldBounds(intermediate, nodes, scenes) {
-  const boxes = meshLocalBounds(intermediate)
-  const min = [Infinity, Infinity, Infinity]
-  const max = [-Infinity, -Infinity, -Infinity]
-  const visiting = new Set()
-
-  const walk = (index, parent) => {
-    const node = nodes[index]
-    if (!node || visiting.has(index)) return
-    visiting.add(index)
-    const world = multiplyMatrix(parent, getNodeLocalMatrix(node))
-    const box = typeof node.mesh === 'number' ? boxes[node.mesh] : null
-    if (box) {
-      for (let corner = 0; corner < 8; corner += 1) {
-        const point = transformPoint(world, [
-          corner & 1 ? box.max[0] : box.min[0],
-          corner & 2 ? box.max[1] : box.min[1],
-          corner & 4 ? box.max[2] : box.min[2],
-        ])
-        for (let c = 0; c < 3; c += 1) {
-          if (!Number.isFinite(point[c])) continue
-          min[c] = Math.min(min[c], point[c])
-          max[c] = Math.max(max[c], point[c])
-        }
-      }
-    }
-    for (const child of node.children || []) walk(child, world)
-    visiting.delete(index)
-  }
-
-  for (const scene of scenes || []) for (const root of scene.nodes || []) walk(root, IDENTITY_MATRIX)
-  if (!Number.isFinite(min[0])) return null
-  return { min, max }
+  return transformWorldBounds(nodes, scenes, meshLocalBounds(intermediate))
 }
 
 /**
@@ -478,20 +448,37 @@ function transformVectorArray(bytes, rotation, translation, withTranslation, com
  *   只有**全部属性逐个数值相同**的顶点才归并，`String()` 比较同时把 -0 与 0 视为同一个值
  *   （否则旋转产生的 -0 会把本该合并的顶点分成两份）。UV 接缝、硬边（法线不同）因此都不会被破坏，
  *   合并前后渲染结果完全一致。
- * @param {{name: string, components: number, count: number, bytes: Buffer}[]} streams
+ *
+ *   REQ-007：assimp（FBX/OBJ）的产物同样是三角汤，但它的图元还带 `JOINTS_0`/`WEIGHTS_0`
+ *   这类**整型**属性。所以这里按 `componentType` 逐流解码（默认 5126 = float32，与既有行为
+ *   完全一致），输出也保持原类型——键仍覆盖**全部**属性，蒙皮接缝因此不会被错误合并。
+ * @param {{name: string, components: number, count: number, bytes: Buffer, componentType?: number}[]} streams
  * @param {Buffer} indexBytes
  * @param {number} indexCount
  * @returns {{attributes: object[], indices: {bytes: Buffer, count: number}, before: number, after: number}|null}
- *   没有可合并的顶点、或索引越界时返回 null，调用方按原样输出。
+ *   没有可合并的顶点、索引越界、或出现不支持的 componentType 时返回 null，调用方按原样输出。
  */
+const COMPONENT_ARRAYS = {
+  5120: Int8Array,
+  5121: Uint8Array,
+  5122: Int16Array,
+  5123: Uint16Array,
+  5125: Uint32Array,
+  5126: Float32Array,
+}
+
 function weldVertices(streams, indexBytes, indexCount) {
   const count = streams.length ? streams[0].count : 0
   if (!count || !indexCount) return null
   if (streams.some((stream) => stream.count !== count)) return null
+  if (streams.some((stream) => !COMPONENT_ARRAYS[stream.componentType || 5126])) return null
 
-  const values = streams.map((stream) => new Float32Array(
-    stream.bytes.buffer.slice(stream.bytes.byteOffset, stream.bytes.byteOffset + stream.bytes.byteLength),
-  ))
+  const values = streams.map((stream) => {
+    const Ctor = COMPONENT_ARRAYS[stream.componentType || 5126]
+    return new Ctor(
+      stream.bytes.buffer.slice(stream.bytes.byteOffset, stream.bytes.byteOffset + stream.bytes.byteLength),
+    )
+  })
   const indices = new Uint32Array(
     indexBytes.buffer.slice(indexBytes.byteOffset, indexBytes.byteOffset + indexBytes.byteLength),
   )
@@ -522,14 +509,15 @@ function weldVertices(streams, indexBytes, indexCount) {
 
   const attributes = streams.map((stream, attribute) => {
     const stride = stream.components
-    const out = new Float32Array(picked.length * stride)
+    const componentType = stream.componentType || 5126
+    const out = new COMPONENT_ARRAYS[componentType](picked.length * stride)
     for (let vertex = 0; vertex < picked.length; vertex += 1) {
       const source = picked[vertex] * stride
       for (let component = 0; component < stride; component += 1) {
         out[vertex * stride + component] = values[attribute][source + component]
       }
     }
-    return { name: stream.name, components: stride, count: picked.length, bytes: Buffer.from(out.buffer) }
+    return { name: stream.name, components: stride, count: picked.length, bytes: Buffer.from(out.buffer), componentType }
   })
   const remapped = new Uint32Array(indices.length)
   for (let index = 0; index < indices.length; index += 1) remapped[index] = oldToNew[indices[index]]

@@ -201,7 +201,7 @@ src/repair.js ──(C1/C2/C6)─┴─→ 输出 GLB ─→ read-glb-data-url �
 交付：`src/inspect.js`、`src/transform.js::worldBounds`、UI 报告面板 + 实时控件。
 **退出标准**：
 1. `node -e "inspect('o-model/运输车.glb')"` 输出 `bounds.world ≈ 2.59×4.10×5.98`，`boundsDeviationFactor > 1000`，并列出荒谬的 `accessorUnion`。
-2. 24 个 GLB 体检全跑通（0 崩溃），单文件 ≤ 2s（以 M1A2 174,937 顶点为上限样本）。
+2. 样例集 GLB 体检全跑通（0 崩溃），单文件 ≤ 2s（以 M1A2 174,937 顶点为上限样本）。样本数为实测 **21 个**（`o-model/*.glb` 18 + `model/*.glb` 3；此前写的 24 是估计值）。
 3. `triangles` 与 `Σ(indices.count)/3` 全等；`vertexReuseRatio` 对 person 参考件 = 0.61。
 4. 预览拖方向/缩放，人物与车辆同框可见，日志记录最终 `modelMatrix`。
 
@@ -236,5 +236,5 @@ src/repair.js ──(C1/C2/C6)─┴─→ 输出 GLB ─→ read-glb-data-url �
 | 1 | 模型在 Cesium 里按真实米制贴地，还是放大到可视？ | **真实米制 + 贴地 + 水平中心归零**，另给"放大显示"开关 |
 | 2 | 方向/缩放修正写回文件还是只在预览？ | **预览即时生效 + 显式"应用到输出"**，不静默改源资产 |
 | 3 | 上轴无法判定时怎么办？ | **先按节点矩阵 + 生成器推断**，置信度不足弹手动三态并记住 |
-| 4 | FBX/OBJ 转换本期做吗？ | **本期不做**（IVE 已闭环），M3 用 assimpjs 统一多格式与 Windows 分发 |
+| 4 | FBX/OBJ 转换本期做吗？ | ~~**本期不做**（IVE 已闭环），M3 用 assimpjs 统一多格式与 Windows 分发~~ → **已翻案（2026-09-20，REQ-007）：本期就做**。用户明确要求支持 FBX/OBJ；后端仍是当时推荐的 `assimpjs`（WASM，MIT），真机 spike 通过（`蹲姿.fbx` → 18,924 面 / 3 张内嵌贴图；`蹲姿.obj` → 世界盒与参考件 `model/蹲姿.glb` 三轴一致），实现见 `src/convert.js`、TASK-013~015 与 ADR-008 |
 | 5 | 贴图降采样是否接受画质损失？阈值？ | **默认不降**，提供 2048/1024/512/不降 四档；贴图占比 >60% 时给提示 |
