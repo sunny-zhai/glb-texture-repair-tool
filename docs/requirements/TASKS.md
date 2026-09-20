@@ -303,7 +303,12 @@
 - **产出**：`vendor/ive2glb/win32-x64/`、`native/ive2glb/README.md`、`package.json`（如 `files`/`asarUnpack` 需调整）
 - **文件范围**：`vendor/ive2glb/win32-x64/`, `native/ive2glb/README.md`, `package.json`
 - **验证方式**：① `dumpbin /dependents vendor/ive2glb/win32-x64/ive2glb.exe`（或等价）证明无第三方非系统依赖；② 在 Windows 上运行应用 → `app-capabilities` 报 `ive: true`、选 `.ive` 能转换/预览/落盘，世界盒与 darwin 产出一致（容差 0.02）；③ `npm test` 不回归
-- **状态**：待开始（等待 Windows 构建环境）
+- **状态**：进行中（**环境无关部分已完成**：Windows 构建配方、vendoring 约定与自检步骤；待外部 Windows x64 环境执行构建与入库）
+- **验证结果（部分交付，2026-09-20）**：
+  ① `native/ive2glb/README.md` 的 Windows 章节从"一段命令 + 一句话"扩成可照做的配方：vcpkg 静态三元组构建命令、目标目录结构、以及三条**由源码推出**的硬约束——(a) 可执行文件必须叫 `ive2glb.exe` 且放在 `vendor/ive2glb/win32-x64/`（`src/ive.js::resolveIveHelper()` 只按这个路径找）；(b) 插件目录名只能是 `osgPlugins` 或 `osgPlugins-3.6.5` 且必须在 exe **同级**（`native/ive2glb/src/main.cpp::registerLocalPluginPath()` 只认这两个名字，并把它们插到插件搜索路径最前面）；(c) **Windows 没有 `@rpath/@executable_path/lib`**，所以动态三元组必须把 `osg*/zlib*/libpng*/freetype*` 等 DLL 放在 **exe 同目录**，不能照搬 macOS 的 `lib/` 约定（推荐静态三元组）。
+  ② 新增「依赖闭包自检」（对 `ive2glb.exe` 与 `osgdb_ive.dll` 各跑一次 `dumpbin /dependents`，只剩系统 DLL 为通过，并列出需要警惕的第三方 DLL 名单）与「不依赖 GUI 的自检」（助手裸跑 + `convertIveToGlb` 全链路，附期望值 `success / [0.538,1.364,1.056] / 11516 / 18924`），并明确标注**未在本仓库验证过**。
+  ③ **打包配置静态核对**：`package.json` 的 `files` 已含 `vendor/ive2glb/**/*`、`asarUnpack` 已含 `vendor/ive2glb/**`；`.gitignore` 没有 `*.exe`/`*.dll` 之类的一刀切规则，`win32-x64/` 产物可正常入库。这部分**无需 Windows 即已满足**，但"包内实际含有助手"仍待 TASK-022 在 Windows 上验证。
+  ④ **仍未完成**：`ive2glb.exe` 尚未构建与入库（本机 macOS、无 wine，无法交叉构建），因此 REQ-009 验收标准 1、2 未判定，任务不能关闭。
 
 ### TASK-022 重打 Windows 安装包并回填发布清单与冒烟
 - **关联需求**：REQ-009（验收标准 3、4、5）
@@ -312,7 +317,11 @@
 - **产出**：`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、（本地产物 `dist/`，不入库）
 - **文件范围**：`docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`
 - **验证方式**：安装包时间戳新于本次提交且包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；§4 每行都有实际值与结果；`RELEASE_CHECKLIST.md` 预检除显式"不适用"外全勾；`node scripts/memory.mjs check` 通过
-- **状态**：待开始（等待 TASK-021）
+- **状态**：进行中（**环境无关部分已完成**：发布冒烟表补成可执行清单、人工目视清单；待 TASK-021 完成后在 Windows 上执行 `dist:win` 与回填）
+- **验证结果（部分交付，2026-09-20）**：
+  ① `docs/release/RELEASE_CHECKLIST.md` §4 从 **7 行扩到 15 行**：补上此前缺失的「GLB 修复」「FBX 转换」「OBJ 转换」「贴图降采样（REQ-008）」「预览修正记忆（REQ-010）」「布局占比（REQ-011）」以及「包内容」「依赖闭包」「助手自检」三行；**Windows-only 的行首标 `★`**（包内容 / 依赖闭包 / 助手自检 / Windows 安装包），其余行在 macOS 开发机上即可执行并回填——这样 Windows 环境到位时只剩"填实际值与勾选"。
+  ② `docs/testing/TEST_PLAN.md` 新增「人工目视清单」（M-1~M-8）：把 TC-014~TC-018 与 REQ-009/010/011 的人工部分写成可复制的步骤与判定口径（含 OBJ 那张 1×1 占位贴图属预期的说明），确认后即可把台账里的"待人工"改为"已确认"。
+  ③ **仍未完成**：`npm run dist:win` 未执行（本机无 wine，无法产出 NSIS/portable 包；`dist/` 里现存的是 2026-09-15 的旧 `0.1.0` 包）；§4 的"实际/结果"列、§3 的打包勾选与发布记录都还等 Windows 环境回填。
 
 ### TASK-023 预览三态记忆：上轴/方向/缩放重启后保持
 - **关联需求**：REQ-010（验收标准 1~5）
@@ -472,6 +481,6 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-024 | REQ-011 | 已完成 | ☑ 自动 |
 | TASK-025 | REQ-011 | 已完成（矩阵普查未发现缺陷，留回归网） | ☑ 自动 |
 | TASK-026 | REQ-011 | 已完成 | ☑ 自动 |
-| TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
-| TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
+| TASK-021 | REQ-009 | 进行中（README 配方/自检/打包核对已就绪；待 Windows 环境构建入库） | ☐ |
+| TASK-022 | REQ-009 | 进行中（冒烟表与人工目视清单已就绪；待 `dist:win` 与回填） | ☐ |
 | TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
