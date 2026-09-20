@@ -141,7 +141,7 @@
   1. `node test/ui-smoke.cjs model/蹲姿.glb --port 9333`，再用 `o-model/蹲姿.ive` 跑一遍
   2. 人工：1280×800 与把窗口缩到 900px 各看一遍（拖三根分隔条、折叠日志、开关抽屉、Tab 走一遍工具栏与预览控件）
 - **期望**：① 页面本身不滚动（`scrollHeight <= innerHeight + 1`，横向同理），三栏 + 底部日志 + 状态栏同屏且**3D 视口最宽**；② 三根分隔条各自能拖动、有最小尺寸、中栏恒为最宽，且**每次拖拽都真实调用 `viewer.resize()`**（Cesium 只监听 window resize），画布绘图缓冲随容器变化；③ 折叠日志后 3D 画布变高、展开精确复原；④ 900px 宽降级两栏 + 右栏抽屉，抽屉开关皆无横向滚动；⑤ 布局写 `localStorage['glb-repair.layout']` 并在重载后恢复（种入非默认值必须真的生效），垃圾/越界/未知版本载荷不得让应用异常或滚出屏外；⑥ 状态栏四项（模型/大小/体检计数/批量进度）齐全；⑦ 既有冒烟断言（体检数值与配色、拖动不刷日志而 `change` 记矩阵、上轴复合矩阵、体检失败不打断预览、输入文件哈希不变）一条不落
-- **实际/证据**：`node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 33 步 / 105 条断言 / 0 项失败**（既有 36 条 check 一条未删）。默认 1100×760 实测：左 260 / **中 492（最宽）** / 右 340，底部 200，3D 画布 492×274，`scrollWidth=1100=clientWidth`、`scrollHeight=760=innerHeight`。独立冷审复核：1280×800 下 360/473/439（中栏最宽）；拖左分隔条 `--pane-left` 349→389（中栏 578→538）、拖右 312→352、拖底 230→270（画布 226→186），**每次真实 `state.viewer.resize()` 被包裹计数 +2**，画布绘图缓冲 639→719；折叠日志画布 204→440、展开精确回到 204；注入破坏性 CSS 后 `scrollHeight` 760→1026，证明"不整页滚动"断言非空；11 组垃圾 `localStorage` 载荷（`not json`/`{}`/越界/`version:99`/`null`/`[]`/布尔串…）与把 `localStorage` 存取改成 throw 后，页面异常 0、布局一律落回合法区间；50 次 `pointermove` 爆发期间 0 次 resize、下一帧 2 次（`applyLayout` 的 rAF 与 `ResizeObserver` 回调各 1，仍在同一帧内合并，非缺陷）；900×700 下 `scrollWidth==clientWidth`（抽屉开/关皆然）、抽屉可键盘开关。**第二轮冷审（交付前）**把"画布最小高度"从写死的 `>120` 改成引用模块常量 `window.__layout.limits.canvasMinHeight`，并新增"日志拖到上限后画布仍 ≥ 常量"的断言；种入 `bottom:99999` 重载后实测 **画布 161px ≥ 160、中栏标题行 34px**（旧代码漏算这 34px，同口径只有 127，故该断言在旧代码上为红）。同轮加**假绿防线**：任一步骤超时/未返回即红 + 已执行断言数下限（新增断言后须同步抬高 `EXPECTED_CHECK_COUNT`，TASK-011 后为 105）+ 真正安装页面错误采集（`window.__smokeErrors` 此前是死字段）。`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。人工目视（拖拽手感、配色层级）**待 sunny-zhai 确认**。
+- **实际/证据**：`node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 34 步 / 110 条断言 / 0 项失败**（既有 36 条 check 一条未删）。默认 1100×760 实测：左 260 / **中 492（最宽）** / 右 340，底部 200，3D 画布 492×274，`scrollWidth=1100=clientWidth`、`scrollHeight=760=innerHeight`。独立冷审复核：1280×800 下 360/473/439（中栏最宽）；拖左分隔条 `--pane-left` 349→389（中栏 578→538）、拖右 312→352、拖底 230→270（画布 226→186），**每次真实 `state.viewer.resize()` 被包裹计数 +2**，画布绘图缓冲 639→719；折叠日志画布 204→440、展开精确回到 204；注入破坏性 CSS 后 `scrollHeight` 760→1026，证明"不整页滚动"断言非空；11 组垃圾 `localStorage` 载荷（`not json`/`{}`/越界/`version:99`/`null`/`[]`/布尔串…）与把 `localStorage` 存取改成 throw 后，页面异常 0、布局一律落回合法区间；50 次 `pointermove` 爆发期间 0 次 resize、下一帧 2 次（`applyLayout` 的 rAF 与 `ResizeObserver` 回调各 1，仍在同一帧内合并，非缺陷）；900×700 下 `scrollWidth==clientWidth`（抽屉开/关皆然）、抽屉可键盘开关。**第二轮冷审（交付前）**把"画布最小高度"从写死的 `>120` 改成引用模块常量 `window.__layout.limits.canvasMinHeight`，并新增"日志拖到上限后画布仍 ≥ 常量"的断言；种入 `bottom:99999` 重载后实测 **画布 161px ≥ 160、中栏标题行 34px**（旧代码漏算这 34px，同口径只有 127，故该断言在旧代码上为红）。同轮加**假绿防线**：任一步骤超时/未返回即红 + 已执行断言数下限（新增断言后须同步抬高 `EXPECTED_CHECK_COUNT`，TASK-012 后为 110）+ 真正安装页面错误采集（`window.__smokeErrors` 此前是死字段）。`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。人工目视（拖拽手感、配色层级）**待 sunny-zhai 确认**。
 
 ### TC-016 栏位尺寸不得被数据/临时面板改写（REQ-006 缺陷回归，TASK-011）
 - **关联需求**：REQ-006（回归验收标准 2/3/5）；设计决策见 `docs/design/ADR.md` 的 ADR-007 与 `docs/001-code-design.md` 的 BR-028
@@ -153,7 +153,18 @@
   3. 换回原文本再重算一次
   4. 在帮助关闭状态下把日志重新顶到上限并保存，打开帮助面板 → 重算，再收起 → 重算
 - **期望**：① 步骤 2 后预览条高度、`--pane-bottom`、`localStorage.bottom` **三者都不得变化**；② 步骤 3 后预览条/画布/日志高度与基线**逐像素一致**（不许有残留偏移）；③ 步骤 4 打开与收起帮助都不得改 `--pane-bottom` 与落盘值（帮助只允许临时占用工作区高度，因此画布可能临时变矮，这是有意的）
-- **实际/证据**：修复后 `node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 33 步 / 105 条断言 / 0 项失败**。**这 6 条断言在修复前的代码（`b8bdddc`）上实测全红**：预览条 99→189px、`summary` 18→108px（3 行）、日志 380→290px **且 `localStorage.bottom` 380→290**、换回短文本后仍是 290（画布 160→250 残留偏移）、打开/收起帮助同样改写日志高度与落盘值；修复后同一场景实测：预览条 126 恒定、画布 161 恒定、日志 313 恒定、`localStorage` 里用户设定的 367 **未被改写**。另修掉一个连带问题：`white-space: nowrap` 曾把 `.pane-center` 的隐式网格列撑到 2994px（`grid-template-columns: minmax(0, 1fr)` 修复），这也是拖拽宽度断言偏 4px 的根因。`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。
+- **实际/证据**：修复后 `node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 34 步 / 110 条断言 / 0 项失败**。**这 6 条断言在修复前的代码（`b8bdddc`）上实测全红**：预览条 99→189px、`summary` 18→108px（3 行）、日志 380→290px **且 `localStorage.bottom` 380→290**、换回短文本后仍是 290（画布 160→250 残留偏移）、打开/收起帮助同样改写日志高度与落盘值；修复后同一场景实测：预览条 126 恒定、画布 161 恒定、日志 313 恒定、`localStorage` 里用户设定的 367 **未被改写**。另修掉一个连带问题：`white-space: nowrap` 曾把 `.pane-center` 的隐式网格列撑到 2994px（`grid-template-columns: minmax(0, 1fr)` 修复），这也是拖拽宽度断言偏 4px 的根因。`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。
+
+### TC-017 细滚动条 + 每区只留最外层滚动条（REQ-006 体验细化，TASK-012）
+- **关联需求**：REQ-006；设计判据见 `docs/001-code-design.md` 的 BR-029
+- **层级**：集成（CDP 驱动真实渲染进程：读样式表规则 + 灌满内容后数各区域的滚动容器）
+- **前置**：同 TC-015（`npx electron . --remote-debugging-port=9333`；沙箱/无 GPU 环境加 `--no-sandbox --disable-gpu-sandbox --user-data-dir=/tmp/glb-smoke`）
+- **步骤**：
+  1. 遍历 `document.styleSheets`，找 `::-webkit-scrollbar`（非 thumb/track/corner）规则并读其 `width`
+  2. 用**真实渲染函数**把内容灌满：`state.inputPaths` 60 条超长路径 + `renderInputs()`、`renderResults()` 40 条、`renderInspectIssues()` 40 条问题 + 显示 `#inspectPanel`、`appendLog()` 500 行
+  3. 对 `#paneLeft` / `#paneRight` / `#paneBottom` 各自枚举 `[自身, ...后代]`，统计 `overflow-y` 为 `auto|scroll` 的元素个数，以及其中"实际已出现滚动条"（`scrollHeight > clientHeight + 1`）的个数
+- **期望**：① 存在 `::-webkit-scrollbar` 且 `width === '8px'`；② 三个区域**各恰好 1 个**滚动容器且它已真的滚起来（左/右栏是 `.pane-body`，日志区是 `.log`）；③ 内容灌满后页面本身仍不整页滚动
+- **实际/证据**：修复前审计（运行中实例）：左栏 `div.pane-body` + `ul#inputList` + `ul#resultList` **3 个**滚动条，右栏 `div.pane-body` + `ul#inspectIssues` **2 个**，日志区 `pre#log` **1 个**（本就合规）。**新增 5 条断言在旧样式（HEAD）上实测 3 红 2 绿**——红的是"细滚动条规则缺失（null）"、"左栏非 1 个"、"右栏非 1 个"，绿的两条（日志区唯一、页面不整页滚动）本来就成立，说明断言与真实差异同向。修复后：三区域各恰好 1 个滚动容器且都有滚动条，页面无整页滚动；冒烟 `node test/ui-smoke.cjs` 在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上**各 34 步 / 110 条断言 / 0 项失败**；`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。
 
 ## 必测维度勾选
 
@@ -203,8 +214,9 @@
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
 | TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 35 通过 / 1 跳过（缺样例 `o-model/运输车.glb`）/ 0 失败；本地 4 个 GLB 0 崩溃、最慢 1ms、三角面数 4/4 全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 
-| TC-016 | REQ-006 | 通过（自动）/ 待人工 | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 33 步 / 105 条断言 0 失败 |
-| TC-015 | REQ-006 | 通过（自动）/ 待人工 | 冒烟 33 步 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
+| TC-017 | REQ-006 | 通过（自动）/ 待人工 | TASK-012：自绘 8px 细滚动条规则存在；内容灌满后左/右/日志三区各恰好 1 个滚动容器且都真滚动、页面仍不整页滚动。旧样式上这 5 条中 3 条实测红（细条规则缺失、左栏 3 个、右栏 2 个）；修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
+| TC-016 | REQ-006 | 通过（自动）/ 待人工 | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
+| TC-015 | REQ-006 | 通过（自动）/ 待人工 | 冒烟 34 步 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
 | TC-014 | REQ-005 | 通过（自动）/ 待人工 | 纯函数 24/24；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
 
 **总计**：`npm test` → **102 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；共 106 个用例）。全新克隆无任何夹具时为 **92 通过 / 14 跳过 / 0 失败**（14 = 6 个 `refs/models/*` + 5 个 `o-model/*.ive` + 3 个样例语料门控用例）。
