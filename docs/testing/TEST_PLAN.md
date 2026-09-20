@@ -189,18 +189,18 @@
 
 ## 覆盖率
 
-`node --test --experimental-test-coverage "test/*.test.js"` 实测（**2026-09-20 复测**，本地夹具齐备；此时 `convert.js` 已加入，`inspect.js`/`transform.js`/`report-format.js`/`preview-transform.js` 已在）：
+`node --test --experimental-test-coverage "test/*.test.js"` 实测（**2026-09-20 REQ-008 实现后复测**，本地夹具齐备；含 `convert.js` 与 `repair.js` 的采样器规范化/降采样、`inspect.js` 的逐绑定 NPOT 判定）：
 
 | 文件 | 行 % | 分支 % | 函数 % |
 | :-- | --: | --: | --: |
 | `src/convert.js` | 94.55 | 74.50 | 93.10 |
 | `src/ive.js` | 96.07 | 70.19 | 98.21 |
-| `src/repair.js` | 89.32 | 64.29 | 90.28 |
-| `src/inspect.js` | 94.02 | 83.39 | 94.87 |
+| `src/repair.js` | 90.87 | 69.98 | 91.76 |
+| `src/inspect.js` | 94.31 | 85.05 | 94.87 |
 | `src/transform.js` | 100.00 | 93.80 | 100.00 |
 | `src/report-format.js` | 99.35 | 95.86 | 100.00 |
 | `src/preview-transform.js` | 100.00 | 97.30 | 100.00 |
-| **all files** | **94.00** | **77.75** | **95.56** |
+| **all files** | **94.35** | **79.03** | **95.76** |
 
 说明：
 
@@ -213,7 +213,7 @@
 
 | 用例 | 关联 REQ | 结果 | 证据 |
 | :-- | :-- | :-- | :-- |
-| TC-001 | REQ-002 | 通过 | `node --test test/repair.test.js` → `pass 20 / fail 0`（夹具缺失时 6 跳过） |
+| TC-001 | REQ-002 | 通过 | `node --test test/repair.test.js` → 36 用例，本地 `pass 36 / fail 0`（夹具缺失时 7 跳过） |
 | TC-002 | REQ-002 | 通过 | `node --test test/ive.test.js` → 24 用例，本地 `pass 21 / skip 3 / fail 0`（缺 `o-model/person-move.ive`） |
 | TC-003 | REQ-002 | 通过 | 世界盒 `0.538 × 1.364 × 1.056`，`min.y = 0` |
 | TC-004 | REQ-002 | 通过 | 56,772 → 11,516 顶点；18,924 面逐三角形等价 |
@@ -225,21 +225,23 @@
 | TC-010 | REQ-002 | 通过 | 异常路径全部有断言 |
 | TC-011 | REQ-002 | 通过 | 嵌套相对路径保留 |
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
-| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` → 38 用例，本地 `pass 37 / skip 1（缺 o-model/运输车.glb）/ fail 0`；本地语料 0 崩溃、最慢 1ms、三角面数全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
+| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` → 44 用例，本地 `pass 43 / skip 1（缺 o-model/运输车.glb）/ fail 0`；本地语料 0 崩溃、最慢 1ms、三角面数全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 | TC-014 | REQ-005 | 通过（自动）/ 待人工 | 纯函数 24/24（`report-format` 16 + `preview-transform` 8）；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
 | TC-015 | REQ-006 | 通过（自动）/ 待人工 | 冒烟 34 步 / 110 条断言 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
 | TC-016 | REQ-006 | 通过（自动）/ 待人工 | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
 | TC-017 | REQ-006 | 通过（自动）/ 待人工 | TASK-012：自绘 8px 细滚动条规则存在；内容灌满后左/右/日志三区各恰好 1 个滚动容器且都真滚动、页面仍不整页滚动。旧样式上这 5 条中 3 条实测红（细条规则缺失、左栏 3 个、右栏 2 个）；修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
 | TC-018 | REQ-007 | 通过（自动）/ 待人工 | 多格式输入：FBX 18,924 面/3 张内嵌贴图/保留蒙皮动画、OBJ 世界盒与 `model/蹲姿.glb` 一致；焊接 56,772→11,516 面数不变；解析不到的贴图以 warning+占位如实上报；撞名不再互相覆盖；`test/convert.test.js` 13 用例（本地全跑，缺夹具时 5 跳过） |
+| TC-019 | REQ-008 | 通过（自动） | TASK-017 采样器规范化（BR-031）：NPOT(512×341)+`REPEAT`+`9987` → `CLAMP_TO_EDGE`+`9729` 且体检不再报；POT 与已合法组合逐字段不变；共用采样器时复制一份（原采样器不动）；缺省采样器 / 漏写 `minFilter` 两种情况必报（旧口径漏报）；POT 共用场景不得误报（旧口径误报）；`model/person-stand.glb`（采样器 `{}` + 3 张 POT）修复后 `samplersNormalized = 0` |
+| TC-020 | REQ-008 | 通过（自动） | TASK-018 贴图降采样（BR-032）：2048²→1024² 逐像素等于 2×2 盒式平均（期望值由解码后源像素独立算出，mismatches=0）；透明像素 alpha 预乘；3000×1000+1024→1024×341；不传/0/负数都不降且字节不变；几何 bufferView 逐字节不变；外部 `uri` 贴图落盘缩小字节；降采样造出 NPOT 后采样器同趟退化（顺序证明）；person-stand 本地基线 14.31MB(不降) → 4.95MB(1024,2 张) → 1.86MB(512,3 张) |
+| TC-021 | REQ-008 | 通过（自动） | TASK-019 `KHR_texture_transform.texCoord` 覆盖（BR-033）：图元有 `TEXCOORD_0`、扩展指向 `TEXCOORD_1` 时体检报 `MISSING_TEXCOORD`（error）并点名 `TEXCOORD_1`，修复补出全零 `VEC2 TEXCOORD_1` 且原 `TEXCOORD_0` 保留；对照（无扩展）不报。**改动前的代码上这 4 条实测 3 红 1 绿** |
 
-**总计**（2026-09-20 实测）：`npm test` → **119 用例 / 115 通过 / 0 失败 / 4 跳过**。4 个跳过均为夹具门控（1 个需 `o-model/运输车.glb` 的体检真值用例 + 3 个需 `o-model/person-move.ive` 的 IVE 用例）。全新克隆（无任何夹具）为 **119 用例 / 100 通过 / 0 失败 / 19 跳过**（19 = `repair` 6 + `ive` 5 + `inspect` 3 + `convert` 5；用 `git worktree add --detach` 的干净检出实测）。
+**总计**（2026-09-20 REQ-008 实现后实测）：`npm test` → **141 用例 / 137 通过 / 0 失败 / 4 跳过**。4 个跳过均为夹具门控（1 个需 `o-model/运输车.glb` 的体检真值用例 + 3 个需 `o-model/person-move.ive` 的 IVE 用例）。全新克隆（无任何夹具）为 **141 用例 / 121 通过 / 0 失败 / 20 跳过**（20 = `repair` 7 + `ive` 5 + `inspect` 3 + `convert` 5；用 `git worktree add --detach HEAD` 的干净检出逐文件实测）。冒烟另计：`node test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 上各 **36 步 / 114 条断言 / 0 失败**。
 
-## 待执行（REQ-008 / REQ-009 / REQ-010，2026-09-20 登记，尚未实现）
+## 待执行（REQ-009 / REQ-010，2026-09-20 登记，尚未实现）
+
+> REQ-008 的 TC-019~TC-021 已执行完毕，见上方结果汇总。
 
 | 用例 | 关联 REQ | 状态 | 覆盖内容 |
 | :-- | :-- | :-- | :-- |
-| TC-019 | REQ-008 | 待执行（TASK-017） | 采样器规范化：NPOT × `REPEAT` × mipmap 退化为 `CLAMP_TO_EDGE` + `LINEAR`；POT 与已合法组合**一字不改**；产物全量不变量（无 NPOT 且 REPEAT+mipmap） |
-| TC-020 | REQ-008 | 待执行（TASK-018） | 降采样四档：2048² → 1024² 逐像素盒式平均；3000×1000 → 1024×341；「不降」档字节与现状一致；几何 bufferView 逐字节不变；体积目标（person-stand 9.74MB → ≤4MB，夹具缺失时门控） |
-| TC-021 | REQ-008 | 待执行（TASK-019） | `KHR_texture_transform.texCoord` 覆盖：体检报 `MISSING_TEXCOORD` 并点名 `TEXCOORD_1`（**该用例在旧代码上必须为红**）；修复补出全零 `TEXCOORD_1` |
 | TC-022 | REQ-009 | 待执行（需 Windows x64 环境） | Windows：`ive2glb.exe` 依赖闭包无第三方非系统 DLL；`app-capabilities` 报 `ive: true` 且 `.ive` 世界盒与 darwin 一致；`dist:win` 包内含助手 + wasm + 两份许可证；§4 冒烟逐行回填 |
 | TC-023 | REQ-010 | 待执行（TASK-023） | 预览三态记忆：重启恢复 `Z-up/90°/2×` 且提示可见；从未动过不落盘；显式选回 `auto` 被记住；垃圾载荷落回默认且页面异常 0；输入文件哈希不变 |
