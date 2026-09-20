@@ -41,7 +41,7 @@ const failures = []
 // 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
 let checksRun = 0
 // 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
-const EXPECTED_CHECK_COUNT = 105
+const EXPECTED_CHECK_COUNT = 110
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -412,6 +412,59 @@ async function main() {
     check('收起帮助面板后日志高度与落盘布局保持不变',
       helpClosed.bottom === helpBefore.bottom && helpClosed.savedBottom === helpBefore.savedBottom,
       JSON.stringify({ helpBefore, helpClosed }))
+  }
+
+  // ---------------------------------------------------------------- 细滚动条 + 单层滚动（TASK-012 / BR-029）
+  // 用户要求：滚动条自绘细条；一个区域内只留**最外层**滚动条。先把内容灌满（否则
+  // "内部没有滚动条"是空断言），再数每个区域里 overflow 为 auto|scroll 的元素个数。
+  const scrollbars = await run('细滚动条与单层滚动（每区只留最外层滚动条）', `(() => {
+    // 1) 自绘细滚动条规则必须真的在样式表里（Chromium 下 ::-webkit-scrollbar 生效）
+    let thin = null;
+    for (const sheet of document.styleSheets) {
+      let rules; try { rules = sheet.cssRules } catch (e) { continue }
+      for (const rule of rules) {
+        const sel = rule.selectorText || '';
+        if (sel.includes('::-webkit-scrollbar') && !sel.includes('thumb') && !sel.includes('track') && !sel.includes('corner')) {
+          thin = { selector: sel, width: rule.style.width, height: rule.style.height };
+        }
+      }
+    }
+    const desc = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
+    const scrollersIn = (root) => {
+      const out = [];
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        const cs = getComputedStyle(el);
+        if (/auto|scroll/.test(cs.overflowY)) out.push({ el: desc(el), bar: el.scrollHeight > el.clientHeight + 1 });
+      }
+      return out;
+    };
+    // 2) 灌满内容（全部走真实渲染路径）
+    state.inputPaths = Array.from({ length: 60 }, (_, i) => '/很长的目录名/'.repeat(10) + 'model-' + i + '.glb');
+    renderInputs();
+    renderResults(Array.from({ length: 40 }, (_, i) => ({ status: 'success', inputPath: '/x/'.repeat(20) + 'm' + i + '.glb', outputPath: '/x/'.repeat(20) + 'o' + i + '.glb', oldBytes: 12345678, newBytes: 2345678, imagesConverted: 3, externalImagesEmbedded: 1, texCoordsFilled: 2, primitivesMerged: 4 })));
+    renderInspectIssues({ issues: Array.from({ length: 40 }, (_, i) => ({ level: 'warn', code: 'X' + i, message: '很长的说明文字 '.repeat(20) })) });
+    document.getElementById('inspectPanel').hidden = false;
+    for (let i = 0; i < 500; i++) appendLog('日志行 ' + i + ' ' + 'x'.repeat(80));
+    const result = { thin, panes: {}, pageScrolls: document.scrollingElement.scrollHeight > window.innerHeight + 1 };
+    for (const [name, id] of [['left', 'paneLeft'], ['right', 'paneRight'], ['bottom', 'paneBottom']]) {
+      const scrollers = scrollersIn(document.getElementById(id));
+      result.panes[name] = { count: scrollers.length, scrollers: scrollers.map((s) => s.el), withBar: scrollers.filter((s) => s.bar).map((s) => s.el) };
+    }
+    return result;
+  })()`, true)
+  if (scrollbars) {
+    check('必须存在自绘的细滚动条规则（::-webkit-scrollbar，8px，而非系统默认样式）',
+      Boolean(scrollbars.thin) && scrollbars.thin.width === '8px', JSON.stringify(scrollbars.thin))
+    check('左栏区域必须恰好一个滚动容器（列表不得再各自滚动）',
+      scrollbars.panes.left.count === 1 && scrollbars.panes.left.withBar.length === 1,
+      JSON.stringify(scrollbars.panes.left))
+    check('右栏区域必须恰好一个滚动容器（问题清单不得再自己滚动）',
+      scrollbars.panes.right.count === 1 && scrollbars.panes.right.withBar.length === 1,
+      JSON.stringify(scrollbars.panes.right))
+    check('日志区域必须恰好一个滚动容器',
+      scrollbars.panes.bottom.count === 1 && scrollbars.panes.bottom.withBar.length === 1,
+      JSON.stringify(scrollbars.panes.bottom))
+    check('内容灌满后页面本身仍不得整页滚动', scrollbars.pageScrolls === false, String(scrollbars.pageScrolls))
   }
 
   // 种入一组**与默认值和 styles.css 初值都不同**的布局并重载：只有真的走了

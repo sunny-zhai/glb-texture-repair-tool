@@ -2,8 +2,38 @@
   box-sizing: border-box;
 }
 
-/* ---------------------------------------------------------------- 外壳（BR-027）
-   整页不滚动：body 高 100vh、overflow hidden，滚动只发生在 .pane-body / .list / .log 内部。
+/* ---------------------------------------------------------------- 滚动条（BR-029）
+   自绘细滚动条：系统默认样式又宽又亮，和深色界面不搭。只写 `::-webkit-scrollbar` 系列
+   ——Chromium 121+ 起，只要指定了标准属性 `scrollbar-width`/`scrollbar-color`，webkit
+   伪元素就会被**整体忽略**，所以两者只能取一，这里取可控性更好的 webkit 版本。
+   8px 轨道 + 2px 透明描边内缩，视觉上是 4px 的圆角细条。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #475569;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- 外壳（BR-027 / BR-029）
+   整页不滚动：body 高 100vh、overflow hidden，滚动只发生在**每栏最外层的**滚动容器里
+   （左右栏 = `.pane-body`，日志区 = `.log`；面板内部的列表/问题清单**不再各自滚动**）。
    网格行：操作栏 · 帮助面板 · 工作区(minmax(0,1fr)) · 分隔条 · 日志 · 状态栏。
    minmax(0,1fr) 与 min-height:0 是必需的，否则网格子项会拒绝收缩、把页面顶出滚动条。 */
 
@@ -405,11 +435,11 @@ button.ghost[aria-expanded="true"] {
   line-height: 1.5;
 }
 
+/* 输入/结果列表：**不再自己滚动**（BR-029）。列表随内容长高，由所属栏的 .pane-body
+   作为该区域**唯一**的滚动容器——一个面板里出现两层滚动条既难用也难看。 */
 .list {
   margin: 8px 0 0;
   padding-left: 18px;
-  max-height: 200px;
-  overflow: auto;
   font-size: 12px;
   line-height: 1.6;
   color: #cbd5e1;
@@ -678,9 +708,9 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+/* 体检问题清单同理：不再限高自滚，交给右栏 .pane-body 这唯一滚动容器（BR-029） */
 .inspect-issues {
   margin-top: 10px;
-  max-height: 260px;
   font-size: 12px;
   line-height: 1.5;
 }
