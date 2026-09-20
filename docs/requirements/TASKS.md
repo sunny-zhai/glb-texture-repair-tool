@@ -144,6 +144,20 @@
   ③ 连带修掉一个更严重的隐性问题：`white-space: nowrap` 让 `.pane-center` 的隐式网格列被内容撑到 **2994px**（视觉被 `overflow:hidden` 裁掉、宽度已爆，也是拖拽宽度断言偏 4px 的根因）——由 `grid-template-columns: minmax(0, 1fr)` 修复。
   ④ `npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。设计/测试文档同步：`docs/design/ADR.md` 新增 ADR-007、`docs/001-code-design.md` 新增 BR-028、`docs/testing/TEST_PLAN.md` 新增 TC-016。
 
+### TASK-012 细滚动条 + 单层滚动（一个区域内只留最外层滚动条）
+- **关联需求**：REQ-006（界面体验细化；不改写 TASK-010/011 的历史结论）
+- **依赖**：TASK-011
+- **做什么**：用户要求 ①**滚动条改成细条、不要系统默认样式**；②**一个区域内只能最外层有滚动条，内部不要再有**。审计（运行中实例实测）确认现状：左栏一个 `.pane-body` 里**挤了 3 个滚动条**（`.pane-body` + `#inputList` + `#resultList`，后两者各带 `max-height: 200px; overflow: auto`），右栏 `.pane-body` 内还有 `#inspectIssues`（`max-height: 260px`）第二层；日志区只有 `#log` 一个（父级 `.pane-body` 已 `overflow: hidden`），本就合规。**修法**：① 全局自绘细滚动条（8px、圆角、描边内缩），只写 `::-webkit-scrollbar` 系列——Chromium 121+ 里若同时写标准属性 `scrollbar-width/color` 会**忽略** webkit 伪元素，故二者只能取一；② 去掉 `.list` 与 `.inspect-issues` 的 `max-height` + `overflow`，让每栏**只有 `.pane-body` 一个滚动容器**（日志区保留 `.log` 这唯一滚动条：它是该区域的内容框，父级已 hidden，不存在嵌套）。
+- **产出**：`src/styles.css`、`test/ui-smoke.cjs`（回归断言）
+- **文件范围**：`src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：① 冒烟新增断言——样式表里必须存在 `::-webkit-scrollbar` 且宽度为 8px；**先把内容灌满**（60 条超长路径输入 + 40 条结果 + 40 条体检问题 + 500 行日志，全部走真实渲染函数）再断言左/右/日志三个区域内"overflow 为 auto|scroll 的元素"各**恰好 1 个**且都真有滚动条，且页面仍不得整页滚动；② `npm run lint` + `npm test` 全绿；③ 冒烟 GLB 与 IVE 两遍全绿。
+- **状态**：已完成
+- **验证结果**：
+  ① 修复前审计（运行中实例逐个枚举滚动容器）：左栏 `div.pane-body` + `ul#inputList` + `ul#resultList` **3 个**滚动条；右栏 `div.pane-body` + `ul#inspectIssues` **2 个**；日志区 `pre#log` **1 个**（父级已 `overflow:hidden`，本就合规）。修复后（内容灌满：60 条超长路径输入 + 40 条结果 + 40 条体检问题 + 500 行日志，全部走真实渲染函数）：左/右/日志三区**各恰好 1 个**滚动容器且都真的滚起来，页面仍不整页滚动。
+  ② 新增 5 条断言，**在旧样式（HEAD）上实测 3 红 2 绿**：红的是"细滚动条规则缺失（`null`）"、"左栏非 1 个"、"右栏非 1 个"；绿的两条（日志区唯一、页面不整页滚动）本来就成立——断言与真实差异同向，不存在自我满足。
+  ③ 冒烟 GLB 与 IVE 两遍各 **34 步 / 110 条断言 / 0 失败**；`npm run lint` 通过；`npm test` → **106 用例 / 102 通过 / 0 失败 / 4 跳过**。
+  ④ 文档同步：`docs/001-code-design.md` 新增 BR-029；`docs/testing/TEST_PLAN.md` 新增 TC-017 并把 TC-015/TC-016 的步数与断言数更新为 34/110。实现说明：Chromium 121+ 只要写了标准属性 `scrollbar-width`/`scrollbar-color` 就会**整体忽略** `::-webkit-scrollbar`，故二者只取 webkit 版本（Electron 32 / Chromium 128）。
+
 ## 依赖 DAG
 
 ```text
@@ -192,3 +206,4 @@ TASK-010 ──▶ TASK-011（缺陷修复：栏位尺寸不得被数据改写�
 | TASK-009 | REQ-005 | 已完成（待冷审查与人工目视） | ☑ |
 | TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
 | TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
