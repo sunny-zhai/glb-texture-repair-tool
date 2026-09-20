@@ -233,10 +233,17 @@
 - **关联需求**：REQ-008（验收标准 1、2、3）
 - **依赖**：无
 - **做什么**：在 `src/repair.js` 新增采样器规范化步骤——对每个"贴图 + 采样器"对，若贴图任一维非 2 次幂且采样器同时使用 `REPEAT`（wrapS/wrapT）与 mipmap 过滤（minFilter 含 `MIPMAP`），则改为 `CLAMP_TO_EDGE` + `LINEAR`（**与 `src/ive.js` 既有 NPOT 退化规则、以及 `inspect.js` 那条问题的既有中文提示保持一致**，见 ADR-009）。判定必须按"贴图维度 × 采样器"逐对进行：采样器被多材质共用时不得因共用而漏改或误改；POT 与已合法的组合**一个字段都不改**。步骤位置在贴图内嵌与降采样之后（降采样可能产生新的 NPOT，见 TASK-018）。
-- **产出**：`src/repair.js`、`test/repair.test.js`
-- **文件范围**：`src/repair.js`, `test/repair.test.js`
-- **验证方式**：`node --test test/repair.test.js`——① 合成 NPOT(512×341)+REPEAT+mipmap 修复后采样器为 `CLAMP_TO_EDGE`+`LINEAR` 且 `inspect()` 不再报 `NPOT_WITH_REPEAT_MIPMAP`；② POT+REPEAT+mipmap 与 NPOT+CLAMP+LINEAR 修复前后采样器 JSON **逐字段相同**；③ 对产物全量断言"任一维 NPOT 的贴图不得同时 REPEAT+mipmap"；本地语料按 `fixtureSkipReason()` 门控扫描（不硬编码数量）
-- **状态**：待开始
+  **实现中追加的范围（2026-09-20）**：体检那侧的 NPOT 判定也必须改成同一口径，否则验收标准 1 无法判定——旧实现是"文件里有 NPOT 图像"×"文件里有 REPEAT+mipmap 采样器"两条独立事实相乘，**既会误报**（REPEAT+mipmap 属于另一张 POT 贴图）**也会漏报**（glTF 规范里 sampler 缺省即 `REPEAT` + `LINEAR_MIPMAP_LINEAR`，`report.samplers` 为空时整条检查被跳过）。因此本任务同时把 `src/inspect.js` 的该判定改为按"贴图 × 采样器"逐绑定，并新增 `report.npotSamplerBindings` 作为可断言的结构化证据。
+- **产出**：`src/repair.js`、`src/inspect.js`、`test/repair.test.js`、`test/inspect.test.js`
+- **文件范围**：`src/repair.js`, `src/inspect.js`, `test/repair.test.js`, `test/inspect.test.js`
+- **验证方式**：`node --test test/repair.test.js test/inspect.test.js`——① 合成 NPOT(512×341)+REPEAT+mipmap 修复后采样器为 `CLAMP_TO_EDGE`+`LINEAR` 且 `inspect()` 不再报 `NPOT_WITH_REPEAT_MIPMAP`（且修复前**必须**报，证明夹具有效）；② POT+REPEAT+mipmap 与 NPOT+CLAMP+LINEAR 修复前后采样器 JSON **逐字段相同**；③ 采样器被 POT 贴图共用时**复制**退化采样器、POT 那条仍指向原采样器；④ 缺省采样器与漏写 minFilter 两种"规范默认"都要被判为 mipmap 并新建显式采样器（这两条在旧代码上必红）；⑤ POT 贴图用 REPEAT+mipmap + NPOT 贴图已退化时**不得**误报（旧代码必红）
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js test/inspect.test.js` → **68 用例 / 67 通过 / 1 跳过（缺 `o-model/运输车.glb`）/ 0 失败**；全量 `npm test` → **129 用例 / 125 通过 / 0 失败 / 4 跳过**（TASK-016 时基线为 119/115/0/4，净增 10 条用例）。
+  ② 修复侧 6 条新用例：NPOT 独占采样器退化为 `{wrapS:33071, wrapT:33071, minFilter:9729}` 且 `samplersNormalized === 1`、产物 `npotSamplerBindings` 为空；POT(256×256) 采样器 JSON 逐字段不变（`samplersNormalized === 0`）；NPOT 已是 `CLAMP+LINEAR` 时不动；共用采样器时**复制**一份退化采样器（`samplersCloned === 1`），`json.samplers[0]` 仍是原 `REPEAT+mipmap`、`textures[0].sampler` 仍指 0；缺省采样器与"多张 NPOT 共用一份退化采样器（去重，`samplers.length === 1`）"各一条。
+  ③ 体检侧 4 条新用例：完全没写 `samplers` 的 NPOT 贴图报出问题且 `npotSamplerBindings === [{texture:0,image:0,sampler:null}]`（旧代码漏报）；写了采样器但漏写 `minFilter` 的同样报出（`report.samplers[0].mipmapped === true`，旧代码漏报）；REPEAT+mipmap 属于另一张 POT 贴图时**不报**（旧代码误报）；同一文件两张 NPOT 贴图只报真正非法的 `texture 0`。**旧口径的两处偏差（一误报一漏报）各有一条断言钉住。**
+  ④ 真实模型不误伤：`model/person-stand.glb`（采样器是空对象 `{}`，即全默认；3 张贴图 1024×1024 POT）修复后 `samplersNormalized === 0`、`json.samplers` 仍为 `[{}]`、`textures[].sampler` 全部不变。本地语料 4 个 GLB 均无 NPOT 贴图，故不变量断言（"产物中不存在 NPOT 且 REPEAT+mipmap 的绑定"）由合成夹具承担，语料未提供额外覆盖。
+  ⑤ `npm run lint` 通过；`node scripts/memory.mjs check` 通过。
 
 ### TASK-018 贴图降采样四档 + 选项接线
 - **关联需求**：REQ-008（验收标准 4、5、6、7、8）
@@ -341,7 +348,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 13 | TASK-014 | 依赖 TASK-013；改 `main.js`/`package.json`/`ui-smoke.cjs` |
 | 14 | TASK-015 | 依赖 TASK-014（文档要引用最终实现与实测数字） |
 | 15 | TASK-016 | 依赖 TASK-015（缺陷由冷审暴露） |
-| 16 | TASK-017, TASK-021 | TASK-017 无依赖（REQ-008 起点）；TASK-021 无依赖但需外部 Windows 环境；二者文件范围不重叠（`src/repair.js`+`test/repair.test.js` vs `native/`、`vendor/`） |
+| 16 | TASK-017, TASK-021 | TASK-017 无依赖（REQ-008 起点）；TASK-021 无依赖但需外部 Windows 环境；二者文件范围不重叠（`src/repair.js`+`src/inspect.js`+两个单测文件 vs `native/`、`vendor/`） |
 | 17 | TASK-018 | 依赖 TASK-017；改 `repair.js`/`renderer.js`/`index.html`/`ui-smoke.cjs`，与 TASK-023 的 `renderer.js` 重叠，故与 TASK-023 分属不同批次 |
 | 18 | TASK-019, TASK-023 | TASK-019 依赖 TASK-018（同改 `repair.js`）；TASK-023 无依赖且只改 `renderer.js`/`ui-smoke.cjs`，与 TASK-019 的 `inspect.js`/`repair.js` 不重叠，可并行 |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
@@ -367,7 +374,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-017 | REQ-008 | 待开始 | ☐ |
+| TASK-017 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-018 | REQ-008 | 待开始 | ☐ |
 | TASK-019 | REQ-008 | 待开始 | ☐ |
 | TASK-020 | REQ-008 | 待开始 | ☐ |
