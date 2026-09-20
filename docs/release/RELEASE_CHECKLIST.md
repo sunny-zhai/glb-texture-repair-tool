@@ -1,19 +1,21 @@
 # 发布检查清单（RELEASE CHECKLIST）
 
 > 由 `release` 技能维护。**预检未全绿不得发布**；发布后回填证据。
-> 关联需求：REQ-002（验证基线）、REQ-005（模型体检） ｜ 发布版本：v0.1.1（版本分支）｜ 产品版本（`package.json`）：`0.1.0`——**本次决定不升**，见 §3 ｜ 责任人：@sunny-zhai
+> 关联需求：REQ-002（验证基线）、REQ-005（模型体检）、REQ-007（多格式输入）、REQ-009（Windows 分发，发布前置） ｜ 发布版本：v0.1.1（版本分支）｜ 产品版本（`package.json`）：`0.1.0`——**本次决定不升**，见 §3 ｜ 责任人：@sunny-zhai
+>
+> **状态（2026-09-20）**：预检（§1）已全绿，但 **§3 发布与 §4 冒烟整体未执行——发布已决定推迟**，等 Windows IVE 助手补齐（REQ-009 / TASK-021、TASK-022）后再走一遍本清单。
 
 本清单只写**本项目真实可执行**的项。桌面单机工具没有服务端概念，凡不适用的项都显式标注
 "不适用"而不是留空——留空会让评审人误以为漏做。
 
 ## 1. 预检（Preflight）
 
-- [x] 关联 REQ 已验收：REQ-001（文档一致性）TASK-001/002/003 已完成并记录在完成线；REQ-002（验证基线）由本任务关闭；REQ-005（模型体检）TASK-007 经两轮独立复审关闭，TASK-008 待开始
-- [x] 全量测试通过：`npm test` → **76 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；全新克隆无任何夹具时实测 66 通过 / 14 跳过 / 0 失败）；`npm run lint` 通过
-- [x] 覆盖率已**实测并记录**：`all files` 行 92.97% / 分支 73.76% / 函数 94.82%（样例集裁剪后复测，含新增的 `inspect.js` 93.57% 与 `transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
-- [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮独立上下文 subagent 复审**（第一轮不通过 → 修复 → 第二轮「有条件通过」），发现并修掉 2 个阻塞级 + 11 项残留缺陷；见 `docs/requirements/TASKS.md` 的 TASK-007 返工记录与完成线
+- [x] 关联 REQ 已验收：REQ-001（TASK-001/002/003）、REQ-002（TASK-004）、REQ-003/REQ-004（追溯登记）、REQ-005（TASK-007 经两轮独立复审关闭，TASK-008/009 已完成，**人工目视待确认**）、REQ-006（TASK-010~012 已完成，**人工目视待确认**）、REQ-007（TASK-013~016 已完成，**人工目视待确认**）。REQ-008/REQ-009/REQ-010 已于 2026-09-20 登记但**尚未实现**（见 §6）
+- [x] 全量测试通过：`npm test` → **119 用例 / 115 通过 / 0 失败 / 4 跳过**（本地夹具：4 个跳过均为夹具门控——1 个需 `o-model/运输车.glb` 的体检真值用例 + 3 个需 `o-model/person-move.ive` 的 IVE 用例）；**全新克隆（无任何夹具）实测 119 用例 / 100 通过 / 0 失败 / 19 跳过**（`git worktree add --detach` 干净检出，跳过 19 = `repair` 6 + `ive` 5 + `inspect` 3 + `convert` 5）；`npm run lint` 通过
+- [x] 覆盖率已**实测并记录**：`all files` 行 94.00% / 分支 77.75% / 函数 95.56%（**2026-09-20 复测**，含新增的 `convert.js` 94.55%、`inspect.js` 94.02%、`transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
+- [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮**独立复审（第一轮不通过 → 修复 → 第二轮「有条件通过」，2 个阻塞级 + 11 项残留缺陷已修）、REQ-006 的 TASK-010 经**两轮**冷审（画布最小高度未兑现等已修）、REQ-007 的 TASK-016 修掉冷审 6 条重要项（含 3 条可复现反例）；见 `docs/requirements/TASKS.md` 的返工记录与完成线。**REQ-008/REQ-009 的规格闸门 ① 与架构闸门 ② 待确认**（ADR-009/ADR-010）
 - [x] 无未解决的阻断级缺陷：已知问题见 §6「已知问题」，均不阻断发布但必须在发布说明中写明
-- [ ] 依赖与许可证检查 —— **部分阻塞**：生产依赖为 `jpeg-js@^0.4.4`（**BSD-3-Clause**）、`pngjs@^7.0.0`（MIT）、`assimpjs@^0.0.10`（MIT，内含 assimp 本体 **BSD-3-Clause**；`node_modules/assimpjs/dist/license.assimp.txt` 与 `license.assimpjs.txt` 随包分发）；几者均无原生扩展；但 `npm audit` 在本机**跑不了**（当前 registry 指向镜像源，未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）。需换官方 registry 或在 CI 上执行后再勾选
+- [x] 依赖与许可证检查（**2026-09-20 解除阻塞**）：生产依赖为 `jpeg-js@^0.4.4`（**BSD-3-Clause**）、`pngjs@^7.0.0`（MIT）、`assimpjs@^0.0.10`（MIT，内含 assimp 本体 **BSD-3-Clause**；`node_modules/assimpjs/dist/license.assimp.txt` 与 `license.assimpjs.txt` 随包分发）；几者均无原生扩展。此前记录的"`npm audit` 在本机跑不了"是**默认镜像源**的问题（未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）；换官方源实测通过：`npm audit --registry=https://registry.npmjs.org --omit=dev` → **found 0 vulnerabilities**
 - [x] 无明文凭证入库：对 `src/`、`scripts/`、`package.json` 做过关键词扫描，未发现密钥/令牌；仓库内无 `.env`
 
 ## 2. 迁移（Migration）
@@ -23,7 +25,7 @@
 | DB schema | **不适用**（无数据库、无服务端） | — | — | — |
 | 数据回填 | **不适用** | — | — | — |
 | 配置变更 | `npm run ensure:cesium` 下载并解包 Cesium **1.128** 到 `vendor/cesium/`（幂等：已存在则跳过）；`index.html` 以相对路径加载该版本，升版本必须同步改路径与 CSP | ☑ | ☑ | ☐ |
-| 依赖升级 | `electron` / `electron-builder` 为 devDependencies；业务运行时依赖只有 `jpeg-js` + `pngjs` | ☑ | ☑ | ☐ |
+| 依赖升级 | `electron` / `electron-builder` 为 devDependencies；业务运行时依赖只有 `jpeg-js`（BSD-3）+ `pngjs`（MIT）+ `assimpjs`（MIT，wasm 需 `asarUnpack`） | ☑ | ☑ | ☐ |
 | **产物兼容性** | v0.1.0 起转换产物的**轴位/落地/顶点数**都变了（见 §6 破坏性变更）。用旧版工具转换过的 GLB 若要与新产物同场景摆放，必须**用新版重新转换**；原始 `.ive/.glb` 源文件本身不受影响 | ☑ | ☑ | ☐ |
 
 ## 3. 发布（Release）
@@ -39,10 +41,11 @@
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
 - [ ] 观测就绪：无遥测、无服务端指标。用户侧可见：界面日志面板（含 `坐标 …/尺寸 …/顶点 …` 行）+ 主进程控制台
 
-> ⚠️ **发布前必须处理的前提**：`vendor/ive2glb/` 目前**只有 `darwin-arm64`**，没有 `win32-x64/ive2glb.exe`。
+> ⚠️ **发布前必须处理的前提（当前正是"推迟发布"的原因）**：`vendor/ive2glb/` 目前**只有 `darwin-arm64`**，没有 `win32-x64/ive2glb.exe`。
 > 这意味着 Windows 安装包里**不含 IVE 转换助手**，用户打开 `.ive` 会得到 BR-012 的中文降级提示（应用不会崩，
-> 但 IVE 功能不可用）。两条路：① 按 `native/ive2glb/README.md` 在 Windows 上构建并入库 `win32-x64/`；
-> ② 若本次只发 GLB 修复能力，则在发布说明中明确声明该限制。
+> 但 IVE 功能不可用）。两条路：① 按 `native/ive2glb/README.md` 在 Windows 上构建并入库 `win32-x64/`（**已选**：见
+> REQ-009 / ADR-010 / TASK-021）；② 若最终只能发 GLB 修复能力，则在发布说明中明确声明该限制（REQ-009 验收标准 6）。
+> 另外 `dist/` 里现存产物是 **2026-09-15** 构建的 `0.1.0` 旧包，早于 REQ-005/006/007，**不代表当前代码**，发布前必须重打。
 
 ## 4. 冒烟（Smoke）
 
@@ -77,22 +80,25 @@
   - 顶点焊接：三角汤 56,772 → 11,516 顶点（与参考件顶点数一致）
   - 进度事件新增 `convert-start`/`convert-done`，日志输出坐标、米制尺寸、顶点/面数
 - **变更**：
-  - **JPEG 一律转 PNG**（撤销此前的「保留 JPEG 贴图原格式」）：照片类贴图约膨胀 5 倍（实测 2048² 2.1 MB → 10.25 MB）。这是为换取 Cesium 侧稳定性；真正的解法是贴图降采样，尚未做
+  - **JPEG 一律转 PNG**（撤销此前的「保留 JPEG 贴图原格式」）：照片类贴图约膨胀 5 倍（实测 2048² 2.1 MB → 10.25 MB）。这是为换取 Cesium 侧稳定性；**真正的解法是贴图降采样，目前仍未实现**（已登记为 REQ-008 / TASK-018，默认不降、可选 2048/1024/512 三档）
 - **破坏性变更与兼容期**：
   - 转换产物的**朝向与落地位置体系变了**（旧产物会"躺倒"且悬空）。与旧版本产出的模型混放在同一场景会明显错位，需用 v0.1.0 重新转换。**无兼容期**——旧 GLB 不会被自动迁移
   - JPEG → PNG 导致输出体积变大，依赖"修完还是小体积"的用户需重新评估
 - **已知问题**：
+  - **发布已决定推迟**（2026-09-20，sunny-zhai）：Windows 侧的 IVE 助手缺失（见 §3 的警告块）在补齐前不发布，由 **REQ-009 / TASK-021、TASK-022** 承载（构建并 vendoring `vendor/ive2glb/win32-x64/` → 重打安装包 → 逐行冒烟回填）。在此之前 §3/§4 保持未勾
   - Windows 安装包不含 IVE 助手（见 §3），Windows 用户只能使用 GLB 修复能力
-  - 渲染结果的人眼确认仅覆盖「能否渲染」这一路径（TC-012 已由 sunny-zhai 于 2026-09-18 人工验收通过）；朝向/落地/贴图方向由自动化世界盒断言兜底，未经人眼逐项确认
+  - 渲染结果的人眼确认仅覆盖「能否渲染」这一路径（TC-012 已由 sunny-zhai 于 2026-09-18 人工验收通过）；朝向/落地/贴图方向由自动化世界盒断言兜底，**TC-014~TC-018 的人工目视项仍待确认**（REQ-005/006/007 因此尚未关闭）
   - 模型体检：`src/inspect.js` 报告 + 界面体检面板（世界盒/accessor 盒双列、偏差告警、事实行、问题清单）与预览方向/缩放/上轴控件均已实现（TASK-008 已完成并合入）；TASK-009 已修掉 `UNREFERENCED_MESHES` 误报与"窗口不可见时预览不落定"（后者根因是后台节流导致 Cesium 一帧未渲染）
-  - `KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报（TASK-007 已知遗留）
+  - **贴图采样器规范化与贴图降采样尚未实现**（REQ-008 / TASK-017~020）：体检能报 `NPOT_WITH_REPEAT_MIPMAP` 但修不了；JPEG→PNG 造成的体积膨胀目前没有降采样旋钮（见 §6「变更」）。这是本次登记的**已知能力缺口**，不是缺陷
+  - `KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报（TASK-007 已知遗留，由 REQ-008 / TASK-019 承载）
+  - **预览三态（上轴/方向/缩放）不持久化**：`localStorage` 只记布局，重启后回到 `auto/0°/1.00×`（`docs/002-requirements.md` §6 问题 3 的"记住选择"未实现，由 REQ-010 / TASK-023 承载）
   - 无 CI：门禁（lint/test/memory check）依赖本地手工执行
   - 覆盖率未设门槛，Electron 壳层未纳入插桩
-  - `npm audit` 在当前 registry 下不可用（见 §1）
+  - `npm audit` 需换官方源执行（见 §1；本次已用 `--registry=https://registry.npmjs.org` 实测 0 漏洞）
 
 ## 发布记录
 
 | 日期 | 版本 | 环境 | 结果 | 证据 | 回滚? |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | 2026-09-18 | v0.1.0 | — | 代码并入 `main`（PR #6 → `3506327`、PR #7 → `0063590`），**安装包未产出**（§3 全未勾选） | `docs/approvals/APPROVALS.md` 的两条 delivery 记录 + `docs/testing/TEST_PLAN.md` | 否 |
-| 待发布 | v0.1.1 | Windows x64 / macOS arm64 | 待执行 | `npm test` 76 通过 / 0 失败 / 4 跳过；`docs/testing/TEST_PLAN.md` 结果汇总；`node scripts/memory.mjs check` 通过 | 否 |
+| 2026-09-20 | v0.1.1 | — | **推迟发布**（决定人 sunny-zhai）：等 Windows IVE 助手补齐（REQ-009 / TASK-021、TASK-022）；`dist/` 现有产物是 2026-09-15 的 `0.1.0` 旧包，**不代表当前代码** | §1 预检已全勾（含 `npm audit --registry=https://registry.npmjs.org --omit=dev` → 0 漏洞）；`npm test` 119 用例 / 115 通过 / 0 失败 / 4 跳过；`docs/testing/TEST_PLAN.md` 结果汇总 | 否 |

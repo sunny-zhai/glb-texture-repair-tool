@@ -35,3 +35,7 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 2026-09-20 03:12 | spec | approved | sunny-zhai | REQ-007 | — |
 | 2026-09-20 03:12 | architecture | approved | sunny-zhai | REQ-007 | — |
 | 2026-09-20 07:21 | delivery | approved | sunny-zhai | v0.1.1 | PR #9 https://github.com/sunny-zhai/glb-texture-repair-tool/pull/9 merged into main as b155d0e (release/v0.1.1 全量交付：平台骨架入库与 .gitignore 根锚定、CLAUDE.md 口径校正、MERGE_REQUEST 重发；合并后 tree(release/v0.1.1) 与 tree(main) 完全相同，本地与远端均无差异) |
+| 2026-09-20 08:28 | spec | approved | sunny-zhai | REQ-008 | docs/requirements/REQUIREMENTS.md（确认 REQ-008 的 11 条验收标准：采样器规范化逐"贴图×采样器"判定且 POT 不改、降采样默认不降四档且只动贴图字节、KHR_texture_transform.texCoord 覆盖两处同源） |
+| 2026-09-20 08:28 | spec | approved | sunny-zhai | REQ-009 | docs/requirements/REQUIREMENTS.md（确认 REQ-009 的 6 条：win32-x64 助手入库与依赖闭包、capabilities ive:true 与世界盒一致、dist 包内容、§4 冒烟逐行回填、清单全勾、只能声明时的显式兜底） |
+| 2026-09-20 08:28 | spec | approved | sunny-zhai | REQ-010 | docs/requirements/REQUIREMENTS.md（确认 REQ-010 的 5 条：重启恢复三态、从未动过不落盘、显式 auto 被记住、垃圾载荷降级、不写回文件） |
+| 2026-09-20 08:28 | architecture | approved | sunny-zhai | ADR-009 | docs/design/ADR.md（采纳\“按贴图退化\”：NPOT×REPEAT×mipmap → CLAMP_TO_EDGE+LINEAR，与 inspect.js 提示与 ive.js 规则一致；降采样进程内 pngjs 盒式平均、默认不降；管线顺序内嵌→降采样→采样器规范化。ADR-010 原生 win32-x64 助手同批确认） |

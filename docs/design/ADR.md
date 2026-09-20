@@ -109,3 +109,34 @@
 - **替代方案**：① 原生 `FBX2glTF`（官方链、质量高）：否决为主后端，它只支持 FBX 且每平台一个二进制；若日后 assimp 在同名 FBX 上出现质量回归，可作为**双备**再引入。② 扩写 `native/ive2glb` 链 assimp：每平台一个二进制，Windows 继续卡住。③ `osgconv`→OBJ→`assimp export`：**实测否决**（600,680B 空壳 GLB、MTL 内是 `images\…tga` 反斜杠路径、贴图全丢）。④ 要求用户自备 assimp：违背"开箱即用"，Windows 基本不可用。
 - **影响面**：新增 `src/convert.js`（`convertToGlb` / `convertManyToGlb` / `assimpAvailable` / `collectSidecarFiles`）、`test/convert.test.js`；`src/main.js`（过滤器加 `fbx`/`obj`、三条 IPC 的转换前置、`app-capabilities` 增加 `assimp`）、`src/renderer.js`（提示文案）、`package.json`（`dependencies.assimpjs`、`asarUnpack`）、`src/ive.js`（只复用其导出，不改）、`docs/001-code-design.md` 新增 BR-030、`docs/002-requirements.md` §6 问题 4 追加翻案说明、`CLAUDE.md`（"不 shell 外部二进制"→"外部二进制须随包分发；本需求不引入外部二进制"的措辞澄清）。
 - **验证方式**：`node --test test/convert.test.js`——FBX 面数 18,924 且 ≥3 张内嵌贴图、OBJ 世界盒 0.54×1.36×1.06（容差 0.02）、焊接后顶点数显著下降而面数不变、坏文件返回中文错误且 `repairMany` 不中断；`node test/ui-smoke.cjs` 在 FBX 与 OBJ 上各跑一遍（预览路径无外部 `uri` 残留）；外加人工目视（FBX/OBJ 模型在 Cesium 里直立贴地、贴图正确）。
+
+## ADR-009 贴图规格收口：非法采样器组合按既有口径退化，降采样默认关且进程内做
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-017~020）
+- **关联需求**：REQ-008（落地 `docs/002-requirements.md` M3「修得全（贴图规格）」的口径）
+- **背景/问题**：M3 的"贴图规格"两项一直没有实现：① 非 2 次幂（NPOT）贴图若同时用 `REPEAT` + mipmap，在 WebGL1 下是非法组合，`src/inspect.js` 已能报出 `NPOT_WITH_REPEAT_MIPMAP` 并写了中文提示"需改为 CLAMP_TO_EDGE + LINEAR"，但 `src/repair.js` **没有任何修复步骤**——能看见、修不了；② BR-002 统一 JPEG→PNG 后照片类贴图膨胀（实测 2048² 2.1MB → 10.25MB），发布说明自认"真正的解法是贴图降采样，尚未做"，`docs/002-requirements.md` §6 问题 5 早已定了"默认不降、提供 2048/1024/512/不降四档"的口径，界面上却没有这个旋钮。两者叠加的后果是：用户读了体检报告也无法消除该问题，只能忍受体积膨胀。
+- **决策**：
+  (a) **非法组合的修法 = `CLAMP_TO_EDGE`（wrapS/wrapT）+ `LINEAR`（minFilter）**——即"按贴图退化"，与 `src/ive.js` 既有的 NPOT 退化规则、以及 `inspect.js` 那条问题的既有中文提示**完全一致**。同一工具的两条路径（IVE 转换产物 vs GLB 修复产物）不允许给出不同口径。
+  (b) **判定粒度是"贴图维度 × 采样器"逐个材质/贴图对**，不是"文件里存在 NPOT 就整体退化"：采样器被多材质共用时要逐个判定；**POT 贴图与已经合法的组合一个字段都不改**（不做无差别重写，避免把用户原本正确的素材改坏）。
+  (c) **降采样在进程内用 `pngjs` 做盒式平均**（box filter），按最长边目标值等比缩放，**默认不降**（`maxTextureSize: 0`），可选 `2048/1024/512`。不引入 `sharp`/`canvas` 等原生依赖——本仓"转码自包含、不按平台分发二进制"的约定（REQ-007/ADR-008 与 `jpeg-js`/`pngjs` 的既有教训）不变。
+  (d) **管线顺序固定为"贴图内嵌（PNG）→ 降采样 → 采样器规范化"**：降采样可能把 POT 变成 NPOT（例如 3000×1000 → 1024×341），所以采样器规范化必须在降采样**之后**跑，否则判定的是过期维度。该顺序由不变量断言守住。
+  (e) `KHR_texture_transform.texCoord` 的覆盖在 `src/inspect.js` 与 `src/repair.js` 两处**同源读取**（扩展里的 `texCoord` 优先于槽位自身），消除 TASK-007 挂账的 `MISSING_TEXCOORD` 漏报——体检与修复不允许有两套口径。
+- **理由**：`CLAMP_TO_EDGE + LINEAR` 是**已被本仓两次选定**的口径（`ive.js` 生成侧 + `inspect.js` 提示侧），跟着既有口径走才能让"体检提示 → 修复结果"闭环，也才不需要解释"为什么提示写 A 而修复做 B"。判定逐对进行、POT 不改，是"最小必要"原则在修复管线里的体现：修复工具越少动用户原本正确的字节，越不容易引入回归。降采样默认关，因为它是**有损且不可逆**的画质决策，应由用户显式开启；`pngjs` 已在 `dependencies`，用它不增加包体积与平台风险。
+- **后果**：正面——体检报得出、修复修得掉，M3 的两项验收标准第一次有实现承载；降采样默认关使"不改变现状"成为默认行为，回归风险集中在显式开启的路径上。**代价与风险**：① `CLAMP_TO_EDGE` 会让原本靠 `REPEAT` 平铺的资产失去平铺（可见变化），因此**只在非法组合上动手**，并在修复报告里如实记录改了哪些采样器；② mipmap 被去掉后远处缩小的画面可能出现闪烁/摩尔纹——这是选中"按贴图退化"而非"去 mipmap 保 REPEAT"的代价，若日后闪烁成为主要痛点，应新立需求做成可选策略，而不是静默改口径；③ `pngjs` 盒式平均是纯 CPU 操作，大贴图批量降采样会明显变慢（在 TASK-018 实测并把耗时写进日志/文档，必要时才考虑 `utilityProcess`）；④ 降采样会改写贴图字节，因此"只动贴图、几何逐字节不变"必须由不变量断言守住。
+- **替代方案**：① **把 NPOT 补成 POT**（padding 或缩放）——否决：会改像素语义与画面比例，且体检仍会报 NPOT，属于把问题藏起来；② **保留 `REPEAT`、只把 minFilter 降为非 mipmap**——技术上能消掉 WebGL1 的非法组合且保住平铺，但与本仓既有提示和 `ive.js` 口径不一致，会让同一工具两条路径产出不同采样器；故仅作为"若闪烁成为主要痛点"的后续可选策略（见代价 ②）；③ **引入 `sharp`**——否决：原生依赖、按平台分发，正是 REQ-007/ADR-008 要摆脱的形态；④ **只报告不修复**——否决：M3 验收标准明确要求修复后不再出现该组合。
+- **影响面**：`src/repair.js`（新增采样器规范化步骤、降采样步骤、`collectMaterialTexCoords` 读扩展覆盖、报告字段）、`src/inspect.js`（`collectTextureSlots` 读扩展覆盖）、`src/renderer.js` + `src/index.html`（降采样档位下拉与中文提示）、`test/repair.test.js`、`test/inspect.test.js`、`test/ui-smoke.cjs`、`docs/001-code-design.md`（BR-031 / BR-032）、`docs/testing/TEST_PLAN.md`（TC-019~TC-021）。
+- **验证方式**：`node --test test/repair.test.js test/inspect.test.js`——NPOT+REPEAT+mipmap 修复后为 `CLAMP_TO_EDGE`+`LINEAR` 且体检不再报该问题；POT 与已合法组合的采样器 JSON 逐字段不变；产物全量不变量（无"NPOT 且 REPEAT+mipmap"）；2048² → 1024² 逐像素等于 2×2 盒式平均；3000×1000 → 1024×341；「不降」档产物字节与现状一致；几何 bufferView 逐字节不变；`KHR_texture_transform` 用例在旧代码上为红。`node test/ui-smoke.cjs` 在 GLB/IVE/FBX/OBJ 上仍全绿。
+
+## ADR-010 Windows 的 IVE 仍走原生 OSG 助手，不改走 assimp/WASM
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-021/022）
+- **关联需求**：REQ-009（订正 REQ-007 描述里"顺带解决 Windows 没有 ive2glb.exe 的既有缺口"这一设想）
+- **背景/问题**：决定 v0.1.1 暂不发布、等补齐 Windows 支持后，必须回答"Windows 上的 IVE 怎么办"。REQ-007 的描述曾设想"用 assimpjs 统一多格式与 Windows 分发，顺带解决 Windows 没有 `ive2glb.exe` 的缺口"。但 `assimp` **没有 IVE importer**（IVE 是 OpenSceneGraph 的私有序列化格式），npm 生态也没有 JS/WASM 的 IVE 解析器（只有 `.osgb/.osgt` 序列化库）——该设想不成立。当前事实：`vendor/ive2glb/` 只有 `darwin-arm64`；`dist/` 里的产物是 2026-09-15 的 `0.1.0` 旧包。
+- **决策**：(a) Windows 的 IVE 能力**继续用原生 OSG 助手**：在 Windows x64 上构建 `ive2glb.exe`，把可执行文件与其依赖闭包 vendoring 到 `vendor/ive2glb/win32-x64/`，目录结构与 darwin 同构；(b) 打包沿用既有约定（`asarUnpack: vendor/ive2glb/**` + `resolveIveHelper` 的平台目录解析 + `app.asar` → `app.asar.unpacked` 回退），**不改解析逻辑**；(c) 找不到助手时仍按 BR-012 给中文降级提示并列已查找路径，不静默。
+- **理由**：IVE 只在原生 OSG 生态里可读，这是格式属性而非实现选择；既有 `src/ive.js` + `native/ive2glb` 链路已在 darwin 上验证过世界盒/顶点/贴图三项真值，把同一条链路搬到 Windows 的风险远低于为 Windows 另写一条 IVE 路径。
+- **后果**：正面——Windows 获得与 macOS 一致的 IVE 能力，REQ-009 的验收标准可判定；打包与解析逻辑零改动。**代价与风险**：① 多一份平台产物要**手工维护**（`scripts/build-ive2glb.sh` 是 macOS-only，Windows 版本只能按 README 人工执行；本机无 wine、无法交叉构建，必须由具备 Windows 环境的人执行）；② `osgdb_ive` 那一整套依赖（含 fontconfig/freetype，darwin 侧约 11MB）在 Windows 上需要单独收集 DLL 闭包，易漏；③ 长期看 IVE 仍是"只在两个平台可用"的格式，若日后要覆盖更多平台，应重新评估是否值得。
+- **替代方案**：① **用 assimp 读 IVE**——不可行（无 importer），背景已说明；② **让用户先自行把 IVE 转成 GLB/FBX 再喂给工具**——否决：违背"开箱即用"；③ **Windows 不支持 IVE，只在发布说明里声明**——这是"暂不发布"之前的默认状态，用户已明确选择"等补齐 Windows 支持"，故不采纳为最终方案（若 Windows 构建环境长期不可得，应回到本方案并在发布说明中显式声明，见 REQ-009 验收标准 6）。
+- **影响面**：`vendor/ive2glb/win32-x64/`（新增，入库）、`native/ive2glb/README.md`（补 Windows 构建步骤）、`package.json`（如需调整 `files`/`asarUnpack`）、`docs/release/RELEASE_CHECKLIST.md`（§3/§4 回填）、`docs/testing/TEST_PLAN.md`。
+- **验证方式**：`dumpbin /dependents ive2glb.exe`（或等价）证明依赖闭包无第三方非系统 DLL；Windows 上 `app-capabilities` 报 `ive: true` 且 `.ive` 能转换/预览/落盘、世界盒与 darwin 一致（容差 0.02）；`npm run dist:win` 的新包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；按 `RELEASE_CHECKLIST.md` §4 逐行冒烟并回填实际值。

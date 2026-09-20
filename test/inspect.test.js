@@ -483,6 +483,112 @@ test('inspect: 内嵌 JPEG 即使 APP1 段很长也能读出宽高并判定 NPOT
   }
 })
 
+// 多张贴图的最小 GLB：sizes 给每张图的 [宽, 高]（用带长 APP1 的 JPEG，模拟真实"SOF 在后面"），
+// textures/samplers 由调用方给，用来精确构造 NPOT × 采样器的绑定关系。
+function glbWithTextures({ sizes, textures, samplers }) {
+  let bin = Buffer.alloc(0)
+  const bufferViews = []
+  const images = []
+  for (const [width, height] of sizes) {
+    const jpeg = jpegWithLargeApp1(width, height, 3200)
+    bufferViews.push({ buffer: 0, byteOffset: bin.length, byteLength: jpeg.length })
+    images.push({ bufferView: bufferViews.length - 1, mimeType: 'image/jpeg' })
+    bin = Buffer.concat([bin, jpeg])
+  }
+  const json = glb({
+    bufferViews,
+    buffers: [{ byteLength: bin.length }],
+    images,
+    textures,
+    ...(samplers ? { samplers } : {}),
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+  })
+  return { json, bin }
+}
+
+test('inspect: 完全没写采样器的 NPOT 贴图也算 REPEAT + mipmap（规范默认值），不得漏报', () => {
+  const workDir = makeTempDir()
+  try {
+    // glTF 规范：sampler 缺省 ⇒ wrapS/wrapT = REPEAT、minFilter = LINEAR_MIPMAP_LINEAR
+    const { json, bin } = glbWithTextures({ sizes: [[3, 2]], textures: [{ source: 0 }] })
+    const file = writeTemp(workDir, 'default-sampler.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.ok(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'))
+    assert.deepEqual(report.npotSamplerBindings, [{ texture: 0, image: 0, sampler: null }])
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 写了采样器但漏写 minFilter 的 NPOT 贴图同样是 mipmap 路径，不得漏报', () => {
+  const workDir = makeTempDir()
+  try {
+    const { json, bin } = glbWithTextures({
+      sizes: [[3, 2]],
+      textures: [{ source: 0, sampler: 0 }],
+      samplers: [{ wrapS: 10497, wrapT: 10497 }],
+    })
+    const file = writeTemp(workDir, 'no-min-filter.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.equal(report.samplers[0].mipmapped, true)
+    assert.ok(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: REPEAT + mipmap 属于另一张 POT 贴图时不得误报 NPOT_WITH_REPEAT_MIPMAP', () => {
+  const workDir = makeTempDir()
+  try {
+    // 这正是旧口径的场景：文件里既有 NPOT 贴图、又有 REPEAT+mipmap 采样器，但两者并不相干。
+    // POT 贴图用 REPEAT+mipmap 完全合法，NPOT 那张已经退化为 CLAMP_TO_EDGE + LINEAR。
+    const { json, bin } = glbWithTextures({
+      sizes: [[4, 4], [3, 2]],
+      textures: [{ source: 0, sampler: 0 }, { source: 1, sampler: 1 }],
+      samplers: [
+        { wrapS: 10497, wrapT: 10497, minFilter: 9987 },
+        { wrapS: 33071, wrapT: 33071, minFilter: 9729 },
+      ],
+    })
+    const file = writeTemp(workDir, 'pot-shares-sampler.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.equal(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'), false)
+    assert.deepEqual(report.npotSamplerBindings, [])
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 同一文件里 NPOT 贴图逐个绑定判定，只报真正非法的那条', () => {
+  const workDir = makeTempDir()
+  try {
+    const { json, bin } = glbWithTextures({
+      sizes: [[3, 2], [5, 3]],
+      textures: [{ source: 0, sampler: 0 }, { source: 1, sampler: 1 }],
+      samplers: [
+        { wrapS: 10497, wrapT: 10497, minFilter: 9987 },
+        { wrapS: 33071, wrapT: 33071, minFilter: 9729 },
+      ],
+    })
+    const file = writeTemp(workDir, 'per-binding.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.deepEqual(report.npotSamplerBindings, [{ texture: 0, image: 0, sampler: 0 }])
+    const issue = report.issues.find((entry) => entry.code === 'NPOT_WITH_REPEAT_MIPMAP')
+    assert.ok(issue)
+    assert.match(issue.message, /1 张贴图/)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
 test('inspect: 外部贴图文件存在时读出宽高，缺失时报错', () => {
   const workDir = makeTempDir()
   try {
