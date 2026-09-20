@@ -76,7 +76,7 @@
     "scripts/record-approval.mjs": "9b9cab488912b803d8e7d8142f20cfd034daea4106020e3ec825e2d270966675",
     "scripts/progress.mjs": "7b2314c17fe8d11e8ecbe30bdb0f215607a1fd3b092ebf4fe0de44bbb23224a2",
     "scripts/requirements-parse.mjs": "0a65838397e4625764dde3d172149422e9f6c1cf394f5ba587c8eacb7c2ad7bc",
-    "scripts/memory.mjs": "3ce961f593aacc316c52bc98dcd5cb47287b63c51e719e1c892ea92fd3b71cf7",
+    "scripts/memory.mjs": "40f85216ef1dc3a41af1f98b2ae0bfaa787dfde22643bb4b662183d919645157",
     "scripts/sync-base.mjs": "2a7052a11c0dc35a152d30671d0ebc2f009876b4f94712d4954f7251b2c5d6cb",
     "scripts/version.mjs": "c6f82bae48a7a1106804f4eb3745de7d5e3b6da99eb7b466f90a867ef508c591",
     "scripts/task-flow.mjs": "56e6c43c9d3789d08128e057d6dd0b0d94e8c63b2bc3dc030312f6e7a9dfd736",

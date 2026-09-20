@@ -17,7 +17,9 @@ import { fileURLToPath } from 'node:url'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
 import { ISSUE_FILE, logIssue } from './platform-issue.mjs'
 
-const FILE = 'docs/PROJECT_MEMORY.md'
+// 记忆线文件路径：这里是**唯一**定义（doctor 的入库检查也用它，避免两处各写一份字面量）。
+export const MEMORY_FILE = 'docs/PROJECT_MEMORY.md'
+const FILE = MEMORY_FILE
 const S_BEGIN = '<!-- memory:structure:begin -->'
 const S_END = '<!-- memory:structure:end -->'
 const C_BEGIN = '<!-- memory:completion:begin -->'
