@@ -4,7 +4,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { align4, collectGlbEntries, collectGlbFiles, encodePng, mergeUniquePaths, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
+const { align4, collectGlbEntries, collectGlbFiles, downsamplePng, encodePng, mergeUniquePaths, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
 const { inspect } = require('../src/inspect')
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -655,4 +655,230 @@ test('repairGlbFile 的 NPOT 采样器退化对多张 NPOT 贴图共用一份退
   assert.equal(json.textures[0].sampler, json.textures[1].sampler)
   assert.equal(json.samplers.length, 1)
   assert.deepEqual(json.samplers[0], CLAMP_LINEAR)
+})
+
+// ---- BR-032 / REQ-008：贴图降采样 ----
+
+// 给定尺寸与像素生成函数，产出真 PNG（复用 pngOfSize 的缓存思路，但内容可自定义）。
+function pngFromPixels(width, height, pixelAt) {
+  const { PNG } = require('pngjs')
+  const png = new PNG({ width, height })
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b, a] = pixelAt(x, y)
+      const offset = (y * width + x) * 4
+      png.data[offset] = r
+      png.data[offset + 1] = g
+      png.data[offset + 2] = b
+      png.data[offset + 3] = a
+    }
+  }
+  return PNG.sync.write(png)
+}
+
+test('downsamplePng: 2048×2048 → 1024×1024，逐像素等于 2×2 盒式平均（BR-032）', () => {
+  const { PNG } = require('pngjs')
+  const source = pngFromPixels(2048, 2048, (x, y) => [
+    (x * 13 + y * 7) % 256,
+    (x * 3 + y * 29) % 256,
+    (x * 17 + y * 5) % 256,
+    255,
+  ])
+
+  const scaled = downsamplePng(source, 1024)
+
+  assert.equal(scaled.width, 1024)
+  assert.equal(scaled.height, 1024)
+  assert.equal(scaled.sourceWidth, 2048)
+  assert.equal(scaled.sourceHeight, 2048)
+  // 期望值由**解码后的源像素**算出（不是复用实现里的公式），因此这是独立校验
+  const decodedSource = PNG.sync.read(source)
+  const decodedTarget = PNG.sync.read(scaled.bytes)
+  let mismatches = 0
+  for (let y = 0; y < 1024; y += 1) {
+    for (let x = 0; x < 1024; x += 1) {
+      for (let channel = 0; channel < 4; channel += 1) {
+        const at = (sx, sy) => decodedSource.data[((sy * 2048 + sx) * 4) + channel]
+        const expected = Math.round(
+          (at(x * 2, y * 2) + at(x * 2 + 1, y * 2) + at(x * 2, y * 2 + 1) + at(x * 2 + 1, y * 2 + 1)) / 4,
+        )
+        if (decodedTarget.data[((y * 1024 + x) * 4) + channel] !== expected) mismatches += 1
+      }
+    }
+  }
+  assert.equal(mismatches, 0)
+})
+
+test('downsamplePng: 透明像素按 alpha 预乘，不把颜色拉黑（BR-032）', () => {
+  const { PNG } = require('pngjs')
+  // 一个完全透明的红 + 三个不透明白：颜色均值必须仍是白，alpha 均值是 191
+  const source = pngFromPixels(2, 2, (x, y) => (x === 0 && y === 0 ? [255, 0, 0, 0] : [255, 255, 255, 255]))
+
+  const scaled = downsamplePng(source, 1)
+  const target = PNG.sync.read(scaled.bytes)
+
+  assert.equal(target.width, 1)
+  assert.equal(target.height, 1)
+  assert.equal(target.data[0], 255)
+  assert.equal(target.data[1], 255)
+  assert.equal(target.data[2], 255)
+  assert.equal(target.data[3], Math.round((0 + 255 + 255 + 255) / 4))
+})
+
+test('downsamplePng: 尺寸已达标或读不出宽高时返回 null（不做无谓重编码）', () => {
+  assert.equal(downsamplePng(pngOfSize(256, 256), 1024), null)
+  assert.equal(downsamplePng(pngOfSize(1024, 1024), 1024), null)
+  assert.equal(downsamplePng(Buffer.from('not a png'), 1024), null)
+})
+
+test('repairGlbFile: 目标 1024 时 3000×1000 贴图等比缩到 1024×341（BR-032）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-downsample-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(3000, 1000) }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ ...REPEAT_MIPMAP }],
+  })
+
+  const report = repairGlbFile(input, output, { maxTextureSize: 1024 })
+
+  assert.equal(report.status, 'success')
+  assert.equal(report.maxTextureSize, 1024)
+  assert.equal(report.texturesDownsampled, 1)
+  assert.ok(report.textureBytesAfter < report.textureBytesBefore)
+
+  const { json, bin } = readGlb(output)
+  const view = json.bufferViews[json.images[0].bufferView]
+  const png = bin.subarray(view.byteOffset, view.byteOffset + view.byteLength)
+  const { PNG } = require('pngjs')
+  const decoded = PNG.sync.read(png)
+  assert.equal(decoded.width, 1024)
+  assert.equal(decoded.height, 341)
+  // ADR-009 决策 d 的顺序证明：降采样把 POT(3000×1000) 变成了 NPOT(1024×341)，
+  // 采样器规范化必须在降采样**之后**跑，才能把这条 REPEAT+mipmap 采样器退化为合法组合。
+  assert.equal(report.samplersNormalized, 1)
+  assert.deepEqual(json.samplers[0], CLAMP_LINEAR)
+  assert.deepEqual(inspect(output).npotSamplerBindings, [])
+})
+
+test('repairGlbFile: 默认「不降」时贴图字节与几何字节都逐字节不变（BR-032 回归基线）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-no-downsample-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  const texture = pngOfSize(2048, 2048)
+  writeTextureFixture(input, { images: [{ bytes: texture }], textures: [{ source: 0 }] })
+
+  const withoutOption = repairGlbFile(input, path.join(tempDir, 'plain.glb'))
+  const explicitZero = repairGlbFile(input, path.join(tempDir, 'zero.glb'), { maxTextureSize: 0 })
+  const bogus = repairGlbFile(input, path.join(tempDir, 'bogus.glb'), { maxTextureSize: -5 })
+
+  for (const report of [withoutOption, explicitZero, bogus]) {
+    assert.equal(report.maxTextureSize, 0)
+    assert.equal(report.texturesDownsampled, 0)
+    // 「未降采样」必须是有内容的陈述，而不是静默省略
+    assert.equal(report.textureBytesAfter, report.textureBytesBefore)
+    assert.ok(report.textureBytesBefore > 0)
+  }
+
+  const before = readGlb(input)
+  const after = readGlb(output.replace('output.glb', 'plain.glb'))
+  const imageView = before.json.bufferViews[before.json.images[0].bufferView]
+  const afterImageView = after.json.bufferViews[after.json.images[0].bufferView]
+  assert.equal(
+    before.bin.subarray(imageView.byteOffset, imageView.byteOffset + imageView.byteLength)
+      .equals(after.bin.subarray(afterImageView.byteOffset, afterImageView.byteOffset + afterImageView.byteLength)),
+    true,
+  )
+})
+
+test('repairGlbFile: 降采样只动贴图，几何 bufferView 逐字节不变（BR-032）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-downsample-geometry-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, { images: [{ bytes: pngOfSize(2048, 2048) }], textures: [{ source: 0 }] })
+  const before = readGlb(input)
+
+  const report = repairGlbFile(input, output, { maxTextureSize: 1024 })
+  assert.equal(report.texturesDownsampled, 1)
+
+  const after = readGlb(output)
+  // 几何是前三个 bufferView（POSITION / 索引 / TEXCOORD_0）：字节必须完全一致
+  for (const index of [0, 1, 2]) {
+    const beforeView = before.json.bufferViews[index]
+    const afterView = after.json.bufferViews[index]
+    assert.equal(
+      before.bin.subarray(beforeView.byteOffset, beforeView.byteOffset + beforeView.byteLength)
+        .equals(after.bin.subarray(afterView.byteOffset, afterView.byteOffset + afterView.byteLength)),
+      true,
+      `bufferView ${index} 必须逐字节不变`,
+    )
+  }
+  // 几何统计也不受影响
+  assert.deepEqual(after.json.accessors[0].min, before.json.accessors[0].min)
+  assert.deepEqual(after.json.accessors[0].max, before.json.accessors[0].max)
+  assert.equal(after.json.accessors[0].count, before.json.accessors[0].count)
+})
+
+test('repairGlbFile: 外部贴图同样参与降采样，且落盘的是缩过的字节（BR-032）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-downsample-external-'))
+  const input = path.join(tempDir, 'model.glb')
+  const output = path.join(tempDir, 'output.glb')
+  const external = path.join(tempDir, 'Body.png')
+  fs.writeFileSync(external, pngOfSize(2048, 2048))
+  writeGlb(input, {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+    textures: [{ source: 0 }],
+    images: [{ uri: 'Body.png', mimeType: 'image/png' }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [1, 1, 0] }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+    buffers: [{ byteLength: 36 }],
+  }, Buffer.from(Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer))
+
+  const report = repairGlbFile(input, output, { maxTextureSize: 512 })
+
+  assert.equal(report.texturesDownsampled, 1)
+  assert.equal(report.externalImagesEmbedded, 1)
+  const { json, bin } = readGlb(output)
+  assert.equal(json.images[0].uri, undefined)
+  const view = json.bufferViews[json.images[0].bufferView]
+  const { PNG } = require('pngjs')
+  const decoded = PNG.sync.read(bin.subarray(view.byteOffset, view.byteOffset + view.byteLength))
+  assert.equal(decoded.width, 512)
+  assert.equal(decoded.height, 512)
+  // 落盘的确实是缩小后的字节，而不是"报告说降了、文件里还是原图"
+  assert.ok(view.byteLength < fs.statSync(external).size)
+})
+
+// REQ-008 验收标准 6 的本地等价基线。样例集不入库，夹具缺失时按既有门控模式跳过。
+const LOCAL_PERSON_STAND = path.join(__dirname, '..', 'model', 'person-stand.glb')
+
+test('repairGlbFile: person-stand 本地基线——降采样后体积只降不升、贴图与几何不回退（BR-032）', {
+  skip: fs.existsSync(LOCAL_PERSON_STAND) ? false : `缺少 ${LOCAL_PERSON_STAND}（样例模型不入库）`,
+}, () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-person-stand-downsample-'))
+  const plainOutput = path.join(tempDir, 'plain.glb')
+  const reducedOutput = path.join(tempDir, 'reduced.glb')
+
+  const plain = repairGlbFile(LOCAL_PERSON_STAND, plainOutput)
+  const reduced = repairGlbFile(LOCAL_PERSON_STAND, reducedOutput, { maxTextureSize: 1024 })
+
+  assert.equal(plain.status, 'success')
+  assert.equal(reduced.status, 'success')
+  assert.equal(plain.texturesDownsampled, 0)
+  assert.ok(reduced.texturesDownsampled > 0, 'person-stand 的贴图必须真的被降采样')
+  // 「体积只降不升」：同一输入下，降采样档位的产物必须小于不降档
+  assert.ok(reduced.newBytes < plain.newBytes, `${reduced.newBytes} 应小于 ${plain.newBytes}`)
+
+  const before = inspect(LOCAL_PERSON_STAND)
+  const after = inspect(reducedOutput)
+  assert.equal(after.images.length, before.images.length, '贴图张数不得回退')
+  assert.equal(after.geometry.triangles, before.geometry.triangles, '三角面数不得回退')
+  assert.equal(after.geometry.vertices, before.geometry.vertices, '顶点数不得回退')
+  assert.deepEqual(after.npotSamplerBindings, [], '降采样后的产物不得留下 NPOT × REPEAT × mipmap 绑定')
 })

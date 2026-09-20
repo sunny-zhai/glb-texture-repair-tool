@@ -40,8 +40,9 @@ const failures = []
 // 已执行的断言数：脚本里有 25 处 `if (step) { check(...) }`，某一步 Runtime.evaluate 超时
 // 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
 let checksRun = 0
-// 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
-const EXPECTED_CHECK_COUNT = 112
+// 断言调用点总数。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
+// （TASK-018 加了「4 档降采样」与「档位进入 IPC 载荷」2 条 → 112 + 2 = 114）
+const EXPECTED_CHECK_COUNT = 114
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -248,7 +249,7 @@ async function main() {
       'splitterLeft','splitterRight','splitterBottom','toggleLog','toggleDrawer','helpPanel',
       'capabilityHint','progressWrap','statusModel','statusModelSize','statusInspect','statusProgress',
       'inputSummary','inputList','outputSummary','resultList','pickFiles','pickDir','clearInputs',
-      'pickOutput','pickValidation','resetView','runRepair','freezePose','minimizeWindow',
+      'pickOutput','pickValidation','resetView','runRepair','freezePose','textureMaxSize','minimizeWindow',
       'maximizeWindow','closeWindow'].reduce((acc, id) => (acc[id] = Boolean(document.getElementById(id)), acc), {}),
     layoutApi: typeof window.__layout,
   }))()`)
@@ -1013,10 +1014,39 @@ async function main() {
   check('体检失败必须是 { ok:false, error } 而不是 reject',
     missing?.ok === false && (missing?.error || '').length > 0, JSON.stringify(missing))
 
+  // ---------------------------------------------------------------- 修复选项接线（BR-032 贴图降采样）
+  const optionWiring = await run('修复选项必须真的进入 IPC 载荷（BR-032）', `(() => {
+    const select = document.getElementById('textureMaxSize');
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    const selectedByDefault = select.value;
+    const payloads = {};
+    for (const value of ['0', '2048', '1024', '512']) {
+      select.value = value;
+      payloads[value] = collectRepairOptions();
+    }
+    select.value = selectedByDefault;
+    return {
+      optionValues,
+      selectedByDefault,
+      maxTextureSizeByValue: Object.fromEntries(Object.entries(payloads).map(([value, payload]) => [value, payload.maxTextureSize])),
+      freezePoseIsBoolean: Object.values(payloads).every((payload) => typeof payload.freezePose === 'boolean'),
+    };
+  })()`)
+  if (optionWiring) {
+    check('贴图降采样必须是 4 档（不降/2048/1024/512）且默认不降',
+      JSON.stringify(optionWiring.optionValues) === JSON.stringify(['0', '2048', '1024', '512'])
+        && optionWiring.selectedByDefault === '0',
+      JSON.stringify(optionWiring))
+    check('所选档位必须原样进入 IPC 载荷（「不降」= 0，不能丢字段）',
+      JSON.stringify(optionWiring.maxTextureSizeByValue) === JSON.stringify({ 0: 0, 2048: 2048, 1024: 1024, 512: 512 })
+        && optionWiring.freezePoseIsBoolean === true,
+      JSON.stringify(optionWiring))
+  }
+
   // ---------------------------------------------------------------- 键盘可达与焦点样式（REQ-006 标准 6）
   const focusables = await run('键盘可达性：操作栏与预览控件可聚焦', `(() => {
     const ids = ['pickFiles','pickDir','clearInputs','pickOutput','pickValidation','resetView','runRepair',
-      'freezePose','previewYaw','previewScale','previewAxis','resetPreview','toggleLog','toggleDrawer'];
+      'freezePose','textureMaxSize','previewYaw','previewScale','previewAxis','resetPreview','toggleLog','toggleDrawer'];
     const out = {};
     for (const id of ids) {
       const el = document.getElementById(id);
