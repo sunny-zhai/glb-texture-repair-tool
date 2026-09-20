@@ -115,8 +115,8 @@
 - **范围**：新增 `src/convert.js`（assimpjs 转换内核）；改 `src/main.js`（文件过滤器、`repair-glb`、`read-glb-data-url`、`inspect-glb` 的转换前置与能力探测）、`src/preload.js`（如需新通道）、`src/renderer.js`（提示文案与接受的扩展名）、`package.json`（`dependencies` 加 `assimpjs`、`asarUnpack`、`files`）、`scripts/`（如需 wasm 校验）、文档与台账。
   **不做**：FBX/OBJ 之外的格式（dae/3ds/stl/ply 等本次不进选择器）；不引入前端框架；不改 Cesium 版本；不新增"上轴/贴地"开关（沿用现有预览修正三态）。
 - **验收标准**（Given/When/Then；数字来自 2026-09-20 的真机 spike，`assimpjs@0.0.10` + `o-model/蹲姿.fbx` / `蹲姿.obj`）：
-  1. Given `o-model/蹲姿.fbx`（2.5MB，含 1 蒙皮/1 动画）When 转换 Then 产出 GLB（实测 5.17MB / 3.9s），体检报 **18,924 三角面**、**3 张内嵌贴图**、上轴为 **Y**；且 `asset.generator` 记录 assimp 版本。
-  2. Given `o-model/蹲姿.obj` + `蹲姿.mtl` When 转换 Then 产出 GLB，体检报 **18,924 三角面**，世界盒 **0.54 × 1.36 × 1.06 m**（与 FBX2glTF 参考件 `o-model/蹲姿.glb` 的三轴一致，容差 0.02）。
+  1. Given `o-model/蹲姿.fbx`（2.5MB，含 1 蒙皮/1 动画）When 转换 Then 产出 GLB（焊接后实测 **2.32MB** / 3.9s），体检报 **18,924 三角面**、**3 张内嵌贴图**、上轴为 **Y**，世界盒与绑定姿态参考件 `o-model/蹲姿.glb` 三轴一致（**1.8937 × 1.8483 × 0.3804**，容差 0.02）；且 `asset.generator` 记录 assimp 版本。
+  2. Given `o-model/蹲姿.obj` + `蹲姿.mtl` When 转换 Then 产出 GLB（焊接后实测 0.57MB），体检报 **18,924 三角面**，世界盒 **0.5382 × 1.3643 × 1.0559 m**，与蹲姿参考件 **`model/蹲姿.glb`** 三轴一致（容差 0.02）。注意两个参考件姿态不同、不可混用：`o-model/蹲姿.glb` 是绑定/平举姿态（对应 FBX），`model/蹲姿.glb` 才是蹲姿（对应 OBJ）。
   3. Given OBJ 的 MTL 引用外部贴图 When 转换 Then 按「相对路径 → 同级同名 → `.fbm` 目录内同名」顺序解析并内嵌；**解析不到的不得静默丢弃**：必须在日志与体检问题清单里以中文条目列出原始 `uri`（`o-model/蹲姿.mtl` 实测引用的是 `E:\zxbwork\1216…\Pistol Kneeling Idle.fbm\WuYanZu_Hat_D.jpg` 这类**乱码绝对路径**，本机无该文件）。
   4. Given 转换产物 When 用于 Cesium 预览 Then 该临时 GLB **不得残留解析不到的外部 `uri`**（否则 Cesium 必然加载失败）；解析不到的贴图槽在预览副本里被移除，并在日志说明被移除的原因。
   5. Given 用户在「选择文件/选择目录」里选 FBX/OBJ When 观察 Then 过滤器含这两种扩展名，且**预览、批量修复（可落盘）、体检三条路径都与 IVE 同等待遇**（IVE 的转换前置逻辑不外溢、不回归）。

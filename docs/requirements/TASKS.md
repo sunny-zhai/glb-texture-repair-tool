@@ -163,10 +163,15 @@
 - **依赖**：无（REQ-007 起点）
 - **做什么**：新增 `src/convert.js`（纯 Node，CommonJS，不依赖 Electron），把 FBX/OBJ 转成**自包含** GLB：① `assimpAvailable()` / `resolveAssimpModule()`——加载 `assimpjs` 并容忍 wasm 缺失（返回中文可读原因，形如既有的 `missingIveHelperMessage()`）；② `collectSidecarFiles(inputPath)`——按扩展名收集同目录的 sidecar（`.mtl` + 贴图，含 `.fbm` 子目录），**按 basename 加入 FileList**（assimp 靠文件名互相引用）；③ `ConvertFileList(fileList, 'glb2')` 拿字节，失败时用中文包装 assimp 的 `GetErrorCode()`；④ 焊接三角汤——**复用 `src/ive.js` 已导出的 `weldVertices`**（顶点:面实测 3:1，56,772 → 目标 ~11.5k），面数与贴图必须不变；⑤ **外部贴图内嵌**——遍历产物 `images[]` 里带 `uri` 的项，用既有 `resolveExternalImage(sourceFilePath, uri)`（base 用**源文件**所在目录，而不是临时 GLB 的目录）解析后写进 bufferView；解析不到的**移除该 image 与材质贴图槽**，并把原始 `uri` 收进 `warnings` 返回（供日志/体检展示，不静默丢）。返回 `{ status, bytes, warnings, stats }`，**永不抛**（与 `repairGlbFile` 同风格）。
 - **产出**：`src/convert.js`、`test/convert.test.js`
-- **文件范围**：`src/convert.js`, `test/convert.test.js`, `package.json`（加 `dependencies.assimpjs`）
-- **验证方式**：`node --test test/convert.test.js`——① `o-model/蹲姿.fbx` → 18,924 面 + ≥3 张内嵌贴图 + 上轴 Y；② `o-model/蹲姿.obj`+`.mtl` → 18,924 面 + 世界盒 `0.54×1.36×1.06`（容差 0.02）；③ 焊接后顶点数显著下降且面数不变；④ 产物里**不得残留** `images[].uri`（预览副本必须自包含），而 `o-model/蹲姿.mtl` 的乱码绝对路径必须以 `warnings` 形式出现；⑤ 坏文件（改扩展名的文本文件）返回 `status:'error'` + 中文消息且不抛。夹具缺失时按既有 `fixtureSkipReason()` 模式跳过并打印恢复命令。
-- **状态**：待开始
-- **验证结果**：（待开始）
+- **文件范围**：`src/convert.js`, `test/convert.test.js`, `package.json`（加 `dependencies.assimpjs`）, `src/repair.js`（**仅**新增 `resolveExternalImage` 导出，供转换内核复用既有贴图兜底）, `src/ive.js`（`weldVertices` 泛化到整型属性）
+- **验证方式**：`node --test test/convert.test.js`——① `o-model/蹲姿.fbx` → 18,924 面 + ≥3 张内嵌贴图 + 上轴 Y + 世界盒与 `o-model/蹲姿.glb` 一致；② `o-model/蹲姿.obj`+`.mtl` → 18,924 面 + 世界盒 `0.5382×1.3643×1.0559`（与 `model/蹲姿.glb` 一致，容差 0.02）；③ 焊接后顶点数显著下降且面数不变、文件更小；④ 产物里**不得残留** `images[].uri`，而 `o-model/蹲姿.mtl` 的乱码绝对路径必须以 `warnings` + `missing:` 占位形式出现；⑤ 坏文件返回 `status:'error'` + 中文消息且不抛。夹具缺失时按既有 `fixtureSkipReason()` 模式跳过并打印恢复命令。
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/convert.test.js` → **9 用例 / 9 通过 / 0 失败**（新增文件）；全量 `npm test` → **115 用例 / 111 通过 / 0 失败 / 4 跳过**（IVE 与 repair 无回归）。
+  ② FBX：**56,772 → 11,516 顶点**（与 FBX2glTF 参考件同量级）、18,924 面不变、**3 张内嵌贴图**、0 外部 uri、保留 1 蒙皮/1 动画、2.32MB、世界盒 1.8937×1.8483×0.3804 与 `o-model/蹲姿.glb` 一致。
+  ③ OBJ：**56,772 → 11,516 顶点**、18,924 面、0.57MB、世界盒 **0.5383×1.3643×1.0559** 与 `model/蹲姿.glb` 一致；MTL 里的乱码绝对路径被如实报成 warning 并换成 `missing:` 占位（体检识别为 `TEXTURE_1X1_PLACEHOLDER`）。
+  ④ 两个实现坑（都已修并写进注释）：**(a)** assimp 的 FBX 图元带 `JOINTS_0/WEIGHTS_0` 整型属性，原 `weldVertices` 只吃 float32 导致一个顶点都焊不动——已把该函数泛化到按 `componentType` 逐流解码/回写（默认仍是 float32，IVE 行为不变，`ive.test.js` 21 通过 0 失败），并保留 `normalized` 标志；**(b)** 焊接若"新增 accessor"而不改写原 accessor，旧 bufferView 仍被引用、压实回收不掉（实测 FBX 反而从 4.7MB 涨到 5.6MB）——改为**原地改写图元自己的 accessor**，并对被共享的 accessor 保守跳过。
+  ⑤ 参考件认错一次并已纠正：`o-model/蹲姿.glb`（1.8937×1.8483×0.3804）是**绑定/平举姿态**、对应 FBX；`model/蹲姿.glb`（0.5382×1.3643×1.0559）才是**蹲姿**、对应 OBJ。需求正文已按实测改正，两个参考件不可混用。
 
 ### TASK-014 接线与打包：选择器 / 三条 IPC 路径 / 能力探测 / wasm 分发
 - **关联需求**：REQ-007（验收标准 3、5、8、9）；设计决策见 ADR-008
@@ -245,6 +250,6 @@ TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内�
 | TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
 | TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-013 | REQ-007 | 待开始 | ☐ |
+| TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
 | TASK-014 | REQ-007 | 待开始 | ☐ |
 | TASK-015 | REQ-007 | 待开始 | ☐ |
