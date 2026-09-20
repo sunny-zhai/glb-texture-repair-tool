@@ -20,6 +20,7 @@ const {
   convertToGlb,
   isConvertiblePath,
   missingAssimpMessage,
+  probeAssimp,
 } = require('./convert')
 const { inspect } = require('./inspect')
 
@@ -53,14 +54,19 @@ async function convertSourceToGlb(inputPath, targetPath, options = {}) {
     if (!assimpAvailable()) return { status: 'error', error: missingAssimpMessage() }
     const report = await convertToGlb(inputPath)
     if (report.status !== 'success') return { status: 'error', error: report.error }
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true })
-    fs.writeFileSync(targetPath, report.bytes)
+    try {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+      fs.writeFileSync(targetPath, report.bytes)
+    } catch (error) {
+      // 写盘失败同样只记这一条错误：批量修复不该因为一个文件写不进去就整体中断
+      return { status: 'error', error: `写入转换产物失败：${error.message}` }
+    }
     return {
       status: 'success',
       newBytes: report.bytes.length,
       warnings: report.warnings,
       meshes: report.stats.meshes,
-      images: report.stats.embeddedImages,
+      images: report.stats.images,
       vertices: report.stats.vertices,
       verticesBefore: report.stats.verticesBeforeWeld,
       triangles: report.stats.triangles,
@@ -127,14 +133,18 @@ ipcMain.handle('pick-inputs', async (_, mode, current) => {
     : mergeUniquePaths(normalizeSelection(current), result.filePaths)
 })
 
-ipcMain.handle('app-capabilities', () => ({
-  ive: iveConversionAvailable(),
-  // REQ-007：FBX/OBJ 的能力单独上报（WASM 平台无关，但仍要能给出"为什么不可用"）
-  assimp: assimpAvailable(),
-  assimpMessage: assimpAvailable() ? '' : missingAssimpMessage(),
-  platform: `${process.platform}-${process.arch}`,
-  iveHelperSearched: resolveIveHelper().searched,
-}))
+ipcMain.handle('app-capabilities', async () => {
+  // REQ-007：assimp 的能力必须**真正加载一次 wasm** 才算数——只查 JS 模块能否 require 会给出
+  // 假阳性（glue 在、wasm 读不到时界面会显示"支持 FBX/OBJ"却每次转换必失败，冷审实测）。
+  const probe = await probeAssimp()
+  return {
+    ive: iveConversionAvailable(),
+    assimp: probe.ok,
+    assimpMessage: probe.ok ? '' : missingAssimpMessage(),
+    platform: `${process.platform}-${process.arch}`,
+    iveHelperSearched: resolveIveHelper().searched,
+  }
+})
 
 ipcMain.handle('pick-output-dir', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] })
@@ -167,13 +177,13 @@ ipcMain.handle('repair-glb', async (event, payload) => {
   let temporaryDir = ''
   try {
     const entries = collectGlbEntries(inputPaths, SOURCE_EXTENSIONS)
-    const repairEntries = entries.filter((entry) => !needsConversion(entry.inputPath))
-    const convertEntries = entries.filter((entry) => needsConversion(entry.inputPath))
 
-    // 同名不同扩展名（`蹲姿.fbx` + `蹲姿.obj`，或 `蹲姿.ive` + `蹲姿.glb`）转换后都是
-    // `蹲姿.glb`：临时文件会互相覆盖、输出目录也会互相覆盖，而两条都报 success。
-    // 撞了就按源扩展名区分（`蹲姿-obj.glb`），只在真的撞到时才改名，不动单文件时的既有命名。
-    const usedRelativePaths = new Set(repairEntries.map((entry) => entry.relativePath.toLowerCase()))
+    // 同名（不论扩展名是否相同）会撞到同一个输出路径：`蹲姿.fbx` + `蹲姿.obj` 都会变成
+    // `蹲姿.glb`；两个同名 GLB（来自不同子目录）更是直接同名。撞了会互相覆盖而两条都报
+    // success——冷审实测「两个同名 GLB → 只落 1 个文件、两条 success」。
+    // 撞名时按源扩展名/序号区分（`蹲姿-obj.glb`），只在真的撞到时才改名：单文件仍保留
+    // BR-001 要求的原始 basename。**普通 GLB 也走这里**，否则 GLB+GLB 的撞名漏网。
+    const usedRelativePaths = new Set()
     const uniqueRelativePath = (relativePath, sourcePath) => {
       let candidate = relativePath
       if (usedRelativePaths.has(candidate.toLowerCase())) {
@@ -189,6 +199,11 @@ ipcMain.handle('repair-glb', async (event, payload) => {
       usedRelativePaths.add(candidate.toLowerCase())
       return candidate
     }
+
+    const repairEntries = entries
+      .filter((entry) => !needsConversion(entry.inputPath))
+      .map((entry) => ({ ...entry, relativePath: uniqueRelativePath(entry.relativePath, entry.inputPath) }))
+    const convertEntries = entries.filter((entry) => needsConversion(entry.inputPath))
 
     if (convertEntries.length > 0) {
       // 缺后端时提前失败，错误里说清是哪一种格式缺什么（IVE 缺原生助手 / assimp 缺 wasm）
