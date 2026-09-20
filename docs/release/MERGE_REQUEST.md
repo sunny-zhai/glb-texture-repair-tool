@@ -2,9 +2,11 @@
 
 - version branch: `release/v0.1.1`
 - target: `main`（受保护分支，需人工合并）
-- commits: 75
+- commits: 77
 
 ## 变更
+- c31feb3 docs(platform): 修正 .gitignore 口径与 docs 入库份数
+- 876dd32 chore(release): request the merge of release/v0.1.1 into main
 - cb13998 chore(platform): declare docs/coding-standard not applicable and track the remaining seeds
 - 19236d3 chore(memory): resync the structure snapshot from tracked content
 - 3e8fbc9 chore(platform): sync platform fixes so the version only changes on an explicit bump
