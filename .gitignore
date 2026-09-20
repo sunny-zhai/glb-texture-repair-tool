@@ -59,6 +59,7 @@ docs/testing/*
 !docs/release/
 docs/release/*
 !docs/release/RELEASE_CHECKLIST.md
+!docs/release/MERGE_REQUEST.md
 !docs/design/
 docs/design/*
 !docs/design/ADR.md
