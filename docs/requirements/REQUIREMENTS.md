@@ -131,7 +131,7 @@
 - **确认**：已确认（见 `docs/approvals/APPROVALS.md`）
 
 ### REQ-008 贴图规格收口：采样器规范化 + 贴图降采样 + `KHR_texture_transform` 漏报修复（M3）
-- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；实现见 TASK-017~020）
+- **状态**：已完成（闸门 ① 规格 · sunny-zhai · 2026-09-20；TASK-017~020 全部交付：采样器规范化、降采样四档与界面接线、`KHR_texture_transform` 漏报修复、文档与规则回填。11 条验收标准均有自动化证据，见 `docs/testing/TEST_PLAN.md` 的 TC-019~TC-021）
 - **优先级**：P1
 - **描述**：`docs/002-requirements.md` 的 M3「修得全（贴图规格）」里，**采样器规范化**与**贴图降采样**两项至今没有任何任务承载：体检能报出 `NPOT_WITH_REPEAT_MIPMAP` 却修不了（`src/repair.js` 里只有动画 sampler，没有贴图采样器规范化步骤）；`BR-002` 把 JPEG 统一转 PNG 后照片类贴图明显膨胀（实测 2048² 2.1MB → 10.25MB），发布说明自己写着"真正的解法是贴图降采样，尚未做"，却没有降采样旋钮。另外 TASK-007 留下的"已知遗留"——体检与修复都忽略了 `KHR_texture_transform.texCoord` 覆盖，导致 `MISSING_TEXCOORD` 可能**漏报**，而漏报的后果是 Cesium 因着色器编译失败连整个场景都不渲染——也一直没有登记任务。本需求把这三件事一次收口，让"贴图规格"从只能看见变成能修。
 - **范围**：`src/repair.js`（新增采样器规范化步骤 + 降采样步骤 + `collectMaterialTexCoords` 读扩展覆盖）、`src/inspect.js`（`collectTextureSlots` 读扩展覆盖）、`src/renderer.js` + `src/index.html`（贴图降采样档位下拉与中文提示）、`test/repair.test.js`、`test/inspect.test.js`、`src/001-code-design.md`（BR 回填，见任务）、`docs/testing/TEST_PLAN.md`。
@@ -201,3 +201,4 @@
 | 2026-09-20 | REQ-009 | 新增 | 决定 v0.1.1 暂不发布后，"等补齐 Windows 支持"必须有可核验的目标：`vendor/ive2glb` 缺 win32-x64、`dist/` 产物停留在 2026-09-15 的 0.1.0 旧包。把 Windows 助手入库、安装包重打与冒烟回填立成需求，避免"暂缓发布"变成无期限挂账 |
 | 2026-09-20 | REQ-010 | 新增 | `docs/002-requirements.md` §6 问题 3 的默认口径写着"手动三态并**记住**选择"，实现只持久化布局，预览三态每次启动归零——文档承诺与实现不一致，立需求以便选择"实现它"或"改口径" |
 | 2026-09-20 | REQ-005 / REQ-007 | 状态订正 | REQ-005 仍写"TASK-009 的缺陷修复待完成"（实际 `caa812e` 已修完）；REQ-007 仍写"待实现"（实际 TASK-013~016 已交付）。二者都只剩人工目视确认，按实情订正，不改写历史验证结论 |
+| 2026-09-20 | REQ-008 | 交付完成 | TASK-017（采样器规范化，含体检侧逐绑定判定）、TASK-018（降采样四档 + 界面接线）、TASK-019（`KHR_texture_transform.texCoord` 覆盖，旧代码上实测 3 红 1 绿）、TASK-020（BR-031~BR-033 / TC-019~TC-021 / 管线文档回填）依次合入 `release/v0.1.1`；`npm test` 141 用例 / 137 通过 / 0 失败 / 4 跳过；冒烟四格式各 36 步 / 114 条断言 |

@@ -287,7 +287,14 @@
 - **产出**：`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
 - **文件范围**：`docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
 - **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR/TC 措辞与实现一致（数值取自实测，不写估计值）
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**：
+  ① `docs/001-code-design.md`：BR 表新增 **BR-031**（采样器规范化：逐「贴图 × 采样器」绑定、共用则复制、POT 不动、缺省采样器按规范默认判定、体检同口径 + `report.npotSamplerBindings`）、**BR-032**（降采样：默认不降、面积加权盒式平均、alpha 预乘、只动贴图字节、顺序在内嵌与规范化之间、无原生依赖、报告字段）、**BR-033**（`KHR_texture_transform.texCoord` 覆盖优先、`textureTexCoordOf` 同源、`MISSING_TEXCOORD` 点名语义）；MOD-002/MOD-007 模块说明补新步骤与新判定；§2.3 策略补两条；§5.1 修复报告字段补 `samplersNormalized`/`samplersCloned`/`maxTextureSize`/`texturesDownsampled`/`textureBytesBefore`/`textureBytesAfter`；§6 测试要点新增 16~18 条（含"3 红 1 绿"的旧代码实测）。
+  ② `docs/testing/TEST_PLAN.md`：TC-019/TC-020/TC-021 写入结果汇总（含逐像素 mismatches=0、person-stand 三档体积、旧代码 3 红 1 绿）；总计更新为 **141 用例 / 137 通过 / 0 失败 / 4 跳过**，全新克隆 **141 / 121 / 0 / 20**（逐文件在干净检出实测）；覆盖率按 2026-09-20 复测重填（all files **94.35 / 79.03 / 95.76**，`repair.js` 90.87、`inspect.js` 94.31）；「待执行」区只留 TC-022（Windows）与 TC-023（REQ-010）。
+  ③ `CLAUDE.md`：修复管线由 7 步改为 **9 步**（新增「贴图降采样」「采样器规范化」），`rebuildBinary`/`appendBufferViewToBinary`/`workingBin` 段落的步骤交叉引用同步改为 1–4 与 6–7、6–7 与 6；`fillMissingTexCoords` 段落写明 BR-033 的通道来源；测试段落数字同步为实测值（本地 141/137/0/4，全新克隆 19→20 个跳过）。
+  ④ `docs/002-requirements.md`：§3 报告字段清单注明**两处**与实现不符——`contentHash` 未实现、`textureBytes` 在 `inspect()` 里不存在（只有 `report.images[].bytes`）；BR 表把 BR-031/BR-032 状态改为「已落地」并补 **BR-033** 行。
+  ⑤ `docs/requirements/REQUIREMENTS.md`：REQ-008 状态改为「已完成」并追加一条变更记录。
+  ⑥ 门禁：`node scripts/memory.mjs check` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`npm run lint` 通过。
 
 ### TASK-021 构建并入库 Windows x64 的 IVE 助手
 - **关联需求**：REQ-009（验收标准 1、2）
@@ -394,7 +401,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-017 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-018 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-019 | REQ-008 | 已完成 | ☑ 自动 |
-| TASK-020 | REQ-008 | 待开始 | ☐ |
+| TASK-020 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
 | TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
 | TASK-023 | REQ-010 | 待开始 | ☐ |

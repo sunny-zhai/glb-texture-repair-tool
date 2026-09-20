@@ -32,7 +32,9 @@ document:
 ### 2.3 已确认修复策略
 
 - 将模型内嵌图片统一转为 PNG：JPEG 一律在进程内用纯 JS 解码后重新编码为 PNG，不依赖系统 ffmpeg（打包版没有）。
-- 不保留 JPEG 原格式。曾实现过「JPEG 原样保留」以省掉转码膨胀，但该方案已撤销（见 `docs/cesium-glb-load-issues.md` §“JPEG 贴图”一节），当前行为是统一转 PNG；照片类贴图因此会明显变大，需要靠降采样解决（见 `docs/002-requirements.md` 的 M3）。
+- 不保留 JPEG 原格式。曾实现过「JPEG 原样保留」以省掉转码膨胀，但该方案已撤销（见 `docs/cesium-glb-load-issues.md` §“JPEG 贴图”一节），当前行为是统一转 PNG；照片类贴图因此会明显变大，**控体积靠贴图降采样**（BR-032，默认不降、可选 2048/1024/512 三档）。
+- 贴图采样器规范化：非 2 次幂（NPOT）贴图配 `REPEAT` + mipmap 在 WebGL1 下是非法组合，修复时按本仓既有口径退化为 `CLAMP_TO_EDGE` + `LINEAR`，**POT 与已合法的组合一字不改**（BR-031）。体检的同名问题与修复共用同一判定口径。
+- 贴图槽的 UV 通道以 `KHR_texture_transform.texCoord` 覆盖为准（扩展值优先于槽位自身的 `texCoord`）：忽略它会把"实际采样 `TEXCOORD_1`"误判成 `TEXCOORD_0`，于是 `MISSING_TEXCOORD` 漏报，而漏报的后果是 Cesium 因着色器编译失败停止**整个场景**渲染（BR-033）。
 - 解析 GLB 中的外部贴图 URI，在模型同级目录递归查找同名文件并嵌入输出 GLB。
 - 清理 `KHR_materials_specular` 等 Cesium 不稳定扩展。
 - 预览相机使用更保守的近裁剪面和更远的默认取景，降低人物模型切边。
@@ -46,12 +48,12 @@ document:
 | 模块ID | 模块名称 | 职责 |
 |---|---|---|
 | MOD-001 | Electron 主进程 | 窗口创建、菜单、文件对话框、任务调度 |
-| MOD-002 | 修复执行器 | 读取 GLB、修复贴图、重打包输出 |
+| MOD-002 | 修复执行器 | 读取 GLB、修复贴图（蒙皮烘焙 / JPEG→PNG / 可选降采样 / 采样器规范化）、补全零 UV（按 `KHR_texture_transform` 覆盖的通道）、按材质合并图元、重打包输出（BR-031~BR-033） |
 | MOD-003 | 批处理队列 | 单文件/目录扫描、任务串行执行、失败继续 |
 | MOD-004 | 结果面板 | 展示输入、输出、大小变化、错误信息 |
 | MOD-005 | IVE 原生助手（C++） | 用 OpenSceneGraph 读取 IVE，导出 `scene.json` + `data.bin` 中间产物；不链接 Qt/Assimp/渲染模块 |
 | MOD-006 | IVE→GLB 组装器（`src/ive.js`） | 解析中间产物、编码贴图、组装并写出自包含 GLB；含上轴转换、贴地归心、顶点焊接 |
-| MOD-007 | 模型体检（`src/inspect.js`） | 只读产出参数报告：体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴推断、比例尺、问题清单；支持 `node src/inspect.js <file.glb>` |
+| MOD-007 | 模型体检（`src/inspect.js`） | 只读产出参数报告：体积、点面数、贴图规格、世界盒 vs accessor 盒及偏差倍数、中心点、上轴推断、比例尺、问题清单；NPOT × REPEAT × mipmap 按「贴图 × 采样器」逐绑定判定（`report.npotSamplerBindings`），UV 通道以 `KHR_texture_transform.texCoord` 覆盖为准且与修复同源（BR-031/BR-033）；支持 `node src/inspect.js <file.glb>` |
 | MOD-008 | 世界盒与矩阵工具（`src/transform.js`） | 沿节点链累乘矩阵求世界包围盒；GLB 路径与 IVE 路径共用同一份遍历实现 |
 | MOD-009 | 体检报告格式化（`src/report-format.js`） | 把 `inspect.js` 的机器报告转成界面用的中文键值行与偏差文案；纯函数，可在 `node --test` 里直接覆盖 |
 | MOD-010 | 预览方向/缩放（`src/preview-transform.js`） | 把方向/缩放换算成 Cesium `modelMatrix`（列主序 16 元素）；纯函数，无 Cesium 依赖 |
@@ -92,6 +94,9 @@ document:
 | BR-028 | 栏位尺寸与**内容解耦**（ADR-007）：面板宽高只由**用户操作**与**窗口尺寸**决定，任何内容/临时面板都不得改变它——① 高度预算不得读入随内容变化的实时高度（模型信息行固定单行省略号 + `title`，帮助面板限高且**不参与预算**）；② **用户意图与生效值分离**：`layoutDesired`（唯一落盘对象）是用户设定的尺寸，`layout` 是当前窗口夹取后的**生效值**（仅用于渲染），窗口缩放/跨窄断点等非用户事件只 `refitLayout()` 重算生效值、**绝不落盘**，故窗口恢复后用户尺寸自行回来；③ 中栏网格必须显式 `grid-template-columns: minmax(0, 1fr)`，否则 nowrap 内容会把列撑开（实测 2994px）。**反例（修复前实测）**：超长模型路径让预览条 126→189px，重算时把日志从 380px 夹到 290px **并写进 `localStorage`**，换回短路径也不恢复 | P1 |
 | BR-029 | 滚动条**自绘细条**，且每个区域**只留最外层一个滚动容器**：① 全局用 `::-webkit-scrollbar`（8px 轨道 + 2px 透明描边内缩 = 视觉 4px 圆角细条）替代系统默认样式，**不得同时写标准属性** `scrollbar-width`/`scrollbar-color`——Chromium 121+ 只要看到标准属性就会**整体忽略** webkit 伪元素，两个都写等于没写；② 滚动职责按区域唯一化：左栏与右栏**只有 `.pane-body` 可滚**（`.list`、`.inspect-issues` 等**不得**自带 `max-height` + `overflow` 自成滚动条），日志区只有 `.log` 可滚（父级 `.pane-body` 已 `overflow: hidden`），帮助面板限高自滚但它是独立网格行、不与其它滚动容器嵌套。**反例（修复前实测）**：左栏一个面板里同时存在 `.pane-body` + `#inputList` + `#resultList` **三个**滚动条，右栏 `.pane-body` 内还嵌 `#inspectIssues` 第二层 | P2 |
 | BR-030 | 多格式输入（FBX/OBJ）的转换口径（ADR-008）：① 用 **assimpjs(WASM)** 在进程内转换，**不引入外部可执行程序**、不按平台分发二进制；② 产物必须**自包含**——`images[].uri` 一律内嵌（OBJ 的贴图 assimp 只写 uri 不内嵌，连相对路径也如此，必须在转换阶段用 `resolveExternalImage` 补齐）；③ 解析不到的贴图**不得静默丢**：换 1×1 占位并留 `missing:<原始 uri>` 名字 + warning，日志与体检都要能看到原始路径；④ 三角汤必须焊接（复用 `ive.js::weldVertices`，键覆盖全部属性含 JOINTS/WEIGHTS），**面数与贴图不得改变**；⑤ 同名不同扩展名的源（`蹲姿.fbx` + `蹲姿.obj`、`蹲姿.ive` + `蹲姿.glb`）转换后会同名，必须按源扩展名区分，否则临时文件与输出双双互相覆盖而两条都报成功 | P1 |
+| BR-031 | 贴图采样器规范化（ADR-009，REQ-008）：贴图任一维非 2 次幂、且采样器同时 `REPEAT`（wrapS 或 wrapT）与 mipmap（minFilter ∈ 9984..9987）时，退化为 `CLAMP_TO_EDGE` + `LINEAR`——与 `src/ive.js` 的 NPOT 规则、`inspect.js` 该问题的既有中文提示同一口径，同一工具的两条路径不允许给出不同结果。判定粒度是**「贴图维度 × 采样器」逐个绑定**：① 采样器独占时原地改，被 POT 贴图**共用时必须复制**一份退化采样器（原位改会误伤合法贴图）；② POT 贴图与已合法组合**一个字段都不改**；③ `texture.sampler` 缺省、或写了采样器却漏写 `minFilter` 时，按 glTF 规范默认（`REPEAT` + `LINEAR_MIPMAP_LINEAR`）判定为非法并**新建**显式采样器；④ 同形退化采样器复用去重。体检侧的 `NPOT_WITH_REPEAT_MIPMAP` 必须用同一口径（旧实现是"文件里有 NPOT 图像"×"文件里有 REPEAT+mipmap 采样器"两条独立事实相乘，**既误报**——REPEAT+mipmap 属于另一张 POT 贴图，**也漏报**——`samplers` 为空时整条检查被跳过），结构化证据见 `report.npotSamplerBindings`。修复报告给出 `samplersNormalized` / `samplersCloned` | P1 |
+| BR-032 | 贴图降采样（ADR-009，REQ-008）：① **默认不降**（`maxTextureSize` 缺省/0/非法一律按不降），可选 2048/1024/512——画质是有损且不可逆的决定，由用户显式开启；② 按最长边等比缩小并取整（`Math.round`，至少 1 像素：3000×1000 + 1024 → 1024×341），用**面积加权的盒式平均**而不是最近邻抽样，透明像素**先按 alpha 预乘再平均**（否则透明边缘会把颜色拉黑）；③ 只改贴图字节——几何 bufferView（POSITION/NORMAL/TANGENT/TEXCOORD/索引）与 accessor `min`/`max` 必须逐字节不变，外部 `uri` 贴图同样参与且落盘的是缩小后的字节；④ 管线顺序固定为**「贴图内嵌（PNG）→ 降采样 → 采样器规范化」**——降采样可能把 POT 变成 NPOT，采样器判定必须用最终宽高（顺序颠倒时该组合必然漏网，`test/repair.test.js` 有专门的顺序证明用例）；⑤ 不引入 `sharp`/`canvas` 等原生依赖，用已在 `dependencies` 的 `pngjs`；⑥ 报告给出 `maxTextureSize` / `texturesDownsampled` / `textureBytesBefore` / `textureBytesAfter`（字节对比只量"贴图归一化后 → 降采样后"，不把 BR-002 的 PNG 膨胀算到降采样头上），「不降」时两个字节数相等，是"未降采样"的明确陈述而不是静默省略 | P1 |
+| BR-033 | 贴图槽的 UV 通道判定（REQ-008）：`KHR_texture_transform` 挂在 textureInfo 上，其 `texCoord` **覆盖**槽位自身的 `texCoord`（glTF 规范：扩展值优先）。判定统一走 `src/repair.js` 导出的 `textureTexCoordOf(reference)`，`src/inspect.js` 直接 require 它（inspect 本就依赖 repair；反向 require 会成环）——体检与修复**不允许有第二套口径**。`MISSING_TEXCOORD` 的文案必须**点名缺失语义**（如「缺 TEXCOORD_1」）：旧文案只写「缺少对应 TEXCOORD_n」，用户会去补错的通道；漏报的后果是 Cesium 因缺 varying 让着色器编译失败并停止整个场景渲染 | P1 |
 
 ## 4. 接口设计
 
@@ -179,12 +184,18 @@ macOS 上 `install_name_tool` 会破坏原签名，脚本随后统一做 ad-hoc 
   "externalImagesEmbedded": 0,
   "texCoordsFilled": 0,
   "primitivesMerged": 0,
+  "samplersNormalized": 0,
+  "samplersCloned": 0,
+  "maxTextureSize": 0,
+  "texturesDownsampled": 0,
+  "textureBytesBefore": 0,
+  "textureBytesAfter": 0,
   "extensionsRemoved": [],
   "status": "success"
 }
 ```
 
-字段取自 `src/repair.js` 的实际返回对象；失败分支把计数字段归零并给出中文 `error`。注意**没有** `imagesKeptJpeg`——「保留 JPEG」方案撤销后该字段一并移除（见 BR-002）。
+字段取自 `src/repair.js` 的实际返回对象；失败分支把计数字段归零并给出中文 `error`。注意**没有** `imagesKeptJpeg`——「保留 JPEG」方案撤销后该字段一并移除（见 BR-002）。`samplersNormalized` / `samplersCloned` 见 BR-031；`maxTextureSize` / `texturesDownsampled` / `textureBytesBefore` / `textureBytesAfter` 见 BR-032（档位为 0 时后两者相等，表示未降采样）。`textureBytes*` 与 `src/inspect.js` **无关**：体检报告里有 `report.images[].bytes` 逐张给出贴图字节，但**没有**汇总的 `textureBytes` 字段（`docs/002-requirements.md` §3 曾把它列为报告字段，2026-09-20 已按实情注明）。
 
 ## 6. 测试要点
 
@@ -203,6 +214,9 @@ macOS 上 `install_name_tool` 会破坏原签名，脚本随后统一做 ad-hoc 
 13. 验证 `pruneMeshlessSubtrees` 只保留含网格的子树并正确重映射 children 索引。
 14. 验证助手缺失、输入非 IVE、源文件不存在时都返回中文错误而不是抛异常。
 15. 验证打包后 `vendor/ive2glb` 不引用开发机路径：`DYLD_PRINT_LIBRARIES=1` 下从 Homebrew 加载的库数为 0。
+16. 验证采样器规范化（BR-031）：NPOT(512×341) + `REPEAT` + `9987` 修复后变成 `CLAMP_TO_EDGE` + `9729` 且体检不再报；POT(256×256) 与已合法的 NPOT 采样器 **JSON 逐字段不变**；采样器被 POT 贴图共用时**复制**一份退化采样器（原采样器仍是 `REPEAT+9987`）；缺省采样器与漏写 `minFilter` 两种情况都会新建显式采样器（旧口径漏报）；体检侧"REPEAT+mipmap 属于另一张 POT 贴图"不得误报（旧口径误报）。
+17. 验证贴图降采样（BR-032）：2048² → 1024² 逐像素等于 2×2 盒式平均（期望值由解码后的源像素独立算出）；3000×1000 + 1024 → 1024×341；不传/`0`/负数都不降且贴图字节逐字节不变；几何 bufferView 与 accessor `min`/`max` 不变；外部 `uri` 贴图落盘的是缩小后的字节；降采样造出 NPOT 时采样器在同一趟被退化（顺序证明）；`model/person-stand.glb` 本地基线 14.31MB（不降）→ 4.95MB（1024，2 张）→ 1.86MB（512，3 张），贴图张数与几何统计不变。
+18. 验证 `KHR_texture_transform.texCoord` 覆盖（BR-033）：图元有 `TEXCOORD_0`、扩展以 `texCoord: 1` 采样时，体检必须报 `MISSING_TEXCOORD` 且**点名 `TEXCOORD_1`**，修复必须补出全零 `VEC2` 的 `TEXCOORD_1`（而不是 `TEXCOORD_0`）；去掉扩展覆盖的对照组不得报。这 4 条用例在改动前的代码上实测 **3 红 1 绿**（绿的是对照）。
 
 ## 7. 交付物
 

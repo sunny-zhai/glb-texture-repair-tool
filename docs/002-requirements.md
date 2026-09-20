@@ -165,7 +165,7 @@ src/repair.js ──(C1/C2/C6)─┴─→ 输出 GLB ─→ read-glb-data-url �
 `textures[]{mime,w,h,bytes,sampled,npot}` / `textureBytes` / `nodeCount` / `skins` / `animations` /
 `bounds.world{min,max,size,center,radius}` / `bounds.accessorUnion` / `boundsDeviationFactor` /
 `upAxis{guess,confidence}` / `transformHealth{mirrored,nonUniform,singular}` / `generator` / `contentHash`。
-> **2026-09-20 核实**：以上末项 `contentHash` **未实现**（`grep contentHash src/` 无命中），与 §4 风险表里"重复资产提示"同源、目前**未排期**；其余字段均已落地。
+> **2026-09-20 核实**：清单里有两项与实现不符，均已按实情标注——① 末项 `contentHash` **未实现**（`grep contentHash src/` 无命中），与 §4 风险表里"重复资产提示"同源、目前**未排期**；② `textureBytes`（贴图字节汇总）**在 `inspect()` 里不存在**：贴图字节只在 `report.images[].bytes` 上逐张给出，没有汇总字段，TASK-020 复核时确认。其余字段均已落地。
 
 **新增规则（续 001 文档的 BR 编号）**
 
@@ -177,8 +177,9 @@ src/repair.js ──(C1/C2/C6)─┴─→ 输出 GLB ─→ read-glb-data-url �
 | BR-016 | 中间产物的 `matrix` 字段判定以"字段存在"为准，不得依赖 `hasMatrix`（详见 001 文档同条目） | **已落地** |
 | BR-017 | 体检报告必须同时给出"世界盒"和"accessor 并集盒"，偏差 ≥10× 时告警 | **已落地**（2026-09-20 核实：实现编号在 `docs/001-code-design.md` 里是 **BR-018**——两份文档的 BR-017/018 历史撞号，本表保留原编号并加此注，不再改动历史行） |
 | BR-018 | 变换烘焙仅对 `skins=0 且 animations=0` 的文件开放，其余只报告不改写 | **未实现，且已冻结**（2026-09-20 核实：本仓从未实现"变换烘焙落盘"，且 ADR-004 / BR-024 明确预览修正**不写回**文件；若日后要做，须先立需求并复核与 ADR-004 的冲突。原"待办"状态保留不改写） |
-| 新增（编号见 `docs/001-code-design.md` **BR-031**） | 贴图采样器规范化：贴图任一维非 2 次幂且采样器同时 `REPEAT` + mipmap 时，退化为 `CLAMP_TO_EDGE` + `LINEAR`；POT 与已合法组合不得改动 | 待实现（REQ-008 / TASK-017） |
-| 新增（编号见 `docs/001-code-design.md` **BR-032**） | 贴图降采样：默认不降；开启档位后按最长边等比盒式平均；**只改贴图字节**，几何 bufferView 逐字节不变；顺序在采样器规范化之前 | 待实现（REQ-008 / TASK-018） |
+| 新增（编号见 `docs/001-code-design.md` **BR-031**） | 贴图采样器规范化：贴图任一维非 2 次幂且采样器同时 `REPEAT` + mipmap 时，退化为 `CLAMP_TO_EDGE` + `LINEAR`；POT 与已合法组合不得改动 | 已落地（REQ-008 / TASK-017） |
+| 新增（编号见 `docs/001-code-design.md` **BR-032**） | 贴图降采样：默认不降；开启档位后按最长边等比盒式平均；**只改贴图字节**，几何 bufferView 逐字节不变；顺序在采样器规范化之前 | 已落地（REQ-008 / TASK-018） |
+| 新增（编号见 `docs/001-code-design.md` **BR-033**） | 贴图槽的 UV 通道以 `KHR_texture_transform.texCoord` 覆盖为准（扩展值优先于槽位自身），体检与修复共用 `textureTexCoordOf`；`MISSING_TEXCOORD` 必须点名缺失语义 | 已落地（REQ-008 / TASK-019） |
 
 ---
 
