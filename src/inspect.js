@@ -33,6 +33,20 @@ const {
 const WRAP_REPEAT = 10497
 const MIPMAP_FILTERS = new Set([9984, 9985, 9986, 9987]) // NEAREST/LINEAR_MIPMAP_*
 
+// glTF 规范：sampler 的 `minFilter` 缺省即 `LINEAR_MIPMAP_LINEAR`（含 mipmap），
+// `wrapS`/`wrapT` 缺省即 `REPEAT`。所以"没写采样器"与"写了但没写 minFilter"同样是 mipmap 路径——
+// 旧实现按"显式写了才算"处理，会漏报「NPOT 贴图 + 缺省采样器」这一真实非法组合（REQ-008 口径）。
+function describeSampler(sampler, index = null) {
+  return {
+    index,
+    wrapS: sampler?.wrapS ?? WRAP_REPEAT,
+    wrapT: sampler?.wrapT ?? WRAP_REPEAT,
+    minFilter: sampler?.minFilter ?? null,
+    repeats: (sampler?.wrapS ?? WRAP_REPEAT) === WRAP_REPEAT || (sampler?.wrapT ?? WRAP_REPEAT) === WRAP_REPEAT,
+    mipmapped: sampler?.minFilter == null ? true : MIPMAP_FILTERS.has(sampler.minFilter),
+  }
+}
+
 const ISSUE_LEVELS = { error: '错误', warn: '警告', info: '提示' }
 
 /** 外部图片做头部解析时最多读多少字节；Exif/ICC 可能上万字节，给足余量。 */
@@ -418,14 +432,7 @@ function analyze(report, json, bin, filePath) {
     dimensionsKnown: images.filter((image) => typeof image.width === 'number').length,
   }
 
-  report.samplers = asArray(json?.samplers).map((sampler, index) => ({
-    index,
-    wrapS: sampler?.wrapS ?? WRAP_REPEAT,
-    wrapT: sampler?.wrapT ?? WRAP_REPEAT,
-    minFilter: sampler?.minFilter ?? null,
-    repeats: (sampler?.wrapS ?? WRAP_REPEAT) === WRAP_REPEAT || (sampler?.wrapT ?? WRAP_REPEAT) === WRAP_REPEAT,
-    mipmapped: MIPMAP_FILTERS.has(sampler?.minFilter),
-  }))
+  report.samplers = asArray(json?.samplers).map((sampler, index) => describeSampler(sampler, index))
 
   // ---- 问题清单 ----
   if (report.counts.scenes === 0) {
@@ -486,12 +493,28 @@ function analyze(report, json, bin, filePath) {
           : '多半是资产制作时的残留，视觉上无意义，可考虑剔除')
     }
   }
-  const usesRepeatMipmap = report.samplers.some((sampler) => sampler.repeats && sampler.mipmapped)
-  const npotImages = images.filter((image) => image.npot)
-  if (usesRepeatMipmap && npotImages.length) {
+  // NPOT 判定按「贴图 × 采样器」逐个绑定，而不是"文件里有 NPOT"×"文件里有 REPEAT+mipmap 采样器"
+  // 两条独立事实相乘——旧实现既会误报（REPEAT+mipmap 属于另一张 POT 贴图），也会漏报（缺省采样器）。
+  // 该判定必须与 src/repair.js 的 normalizeTextureSamplers 保持同一口径（BR-031）。
+  const knownSamplers = asArray(json?.samplers)
+  const npotSamplerBindings = []
+  for (const [textureIndex, texture] of textures.entries()) {
+    const source = texture?.source
+    if (typeof source !== 'number') continue
+    const image = images[source]
+    if (!image || !image.npot) continue
+    const samplerIndex = typeof texture.sampler === 'number' ? texture.sampler : null
+    const described = describeSampler(samplerIndex === null ? null : knownSamplers[samplerIndex], samplerIndex)
+    if (described.repeats && described.mipmapped) {
+      npotSamplerBindings.push({ texture: textureIndex, image: source, sampler: samplerIndex })
+    }
+  }
+  report.npotSamplerBindings = npotSamplerBindings
+  if (npotSamplerBindings.length) {
+    const named = npotSamplerBindings.map((binding) => binding.texture).slice(0, 5).join('、')
     addIssue(issues, 'warn', 'NPOT_WITH_REPEAT_MIPMAP',
-      `${npotImages.length} 张非 2 次幂贴图，但采样器同时使用 REPEAT + mipmap`,
-      'WebGL1 下这种组合不完整（Cesium 可能显示异常），需改为 CLAMP_TO_EDGE + LINEAR')
+      `${npotSamplerBindings.length} 张贴图尺寸非 2 次幂，且采样器同时使用 REPEAT + mipmap（贴图 ${named}${npotSamplerBindings.length > 5 ? '…' : ''}）`,
+      'WebGL1 下这种组合不合法（Cesium 可能显示异常）；修复会按本仓既有口径退化为 CLAMP_TO_EDGE + LINEAR，POT 贴图不动')
   }
   if (missingTexCoordPrimitives > 0) {
     addIssue(issues, 'error', 'MISSING_TEXCOORD',

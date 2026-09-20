@@ -5,6 +5,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const { align4, collectGlbEntries, collectGlbFiles, encodePng, mergeUniquePaths, repairGlbFile, repairMany, readGlb, writeGlb } = require('../src/repair')
+const { inspect } = require('../src/inspect')
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -465,4 +466,193 @@ test('repairGlbFile reports a JPEG it cannot transcode instead of embedding a br
   assert.equal(report.status, 'error')
   assert.equal(report.imagesConverted, 0)
   assert.match(report.error, /JPEG 转 PNG 失败/)
+})
+
+// ---- BR-031 / REQ-008：NPOT × REPEAT × mipmap 的采样器退化 ----
+
+const REPEAT_MIPMAP = { wrapS: 10497, wrapT: 10497, minFilter: 9987 }
+const CLAMP_LINEAR = { wrapS: 33071, wrapT: 33071, minFilter: 9729 }
+const NPOT_REPAIR_PNG_CACHE = new Map()
+
+// 真 PNG（不是伪造头）——修复路径会用 jpeg-js/pngjs 真解码，伪造头走不到采样器那一步。
+function pngOfSize(width, height) {
+  const key = `${width}x${height}`
+  if (!NPOT_REPAIR_PNG_CACHE.has(key)) {
+    const { PNG } = require('pngjs')
+    const png = new PNG({ width, height })
+    for (let index = 0; index < width * height; index += 1) {
+      png.data[index * 4] = index % 251
+      png.data[index * 4 + 1] = (index * 7) % 253
+      png.data[index * 4 + 2] = 200
+      png.data[index * 4 + 3] = 255
+    }
+    NPOT_REPAIR_PNG_CACHE.set(key, PNG.sync.write(png))
+  }
+  return NPOT_REPAIR_PNG_CACHE.get(key)
+}
+
+// 几何固定、贴图与采样器可配的最小模型：一张 baseColorTexture 采纹理 0，
+// 但 textures/samplers 由调用方给，用来精确构造"哪张贴图配哪个采样器"。
+function writeTextureFixture(input, { images, textures, samplers }) {
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0])
+  const indices = Uint16Array.from([0, 1, 2])
+  const uvs = Float32Array.from([0, 0, 1, 0, 0, 1])
+  let bin = Buffer.concat([
+    Buffer.from(positions.buffer, positions.byteOffset, positions.byteLength),
+    Buffer.from(indices.buffer, indices.byteOffset, indices.byteLength),
+    Buffer.from(uvs.buffer, uvs.byteOffset, uvs.byteLength),
+  ])
+  const bufferViews = [
+    { buffer: 0, byteOffset: 0, byteLength: 36 },
+    { buffer: 0, byteOffset: 36, byteLength: 6 },
+    { buffer: 0, byteOffset: 44, byteLength: 24 },
+  ]
+  const imageEntries = images.map((image) => {
+    const offset = align4(bin.length)
+    bin = Buffer.concat([bin, Buffer.alloc(offset - bin.length), image.bytes])
+    bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: image.bytes.length })
+    return { bufferView: bufferViews.length - 1, mimeType: image.mimeType || 'image/png' }
+  })
+  const json = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 2 }, indices: 1, material: 0 }] }],
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+    textures: textures.map((texture) => ({ ...texture })),
+    images: imageEntries,
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [1, 1, 0] },
+      { bufferView: 1, componentType: 5123, count: 3, type: 'SCALAR' },
+      { bufferView: 2, componentType: 5126, count: 3, type: 'VEC2' },
+    ],
+    bufferViews,
+    buffers: [{ byteLength: bin.length }],
+  }
+  if (samplers) json.samplers = samplers
+  writeGlb(input, json, bin)
+}
+
+function hasNpotIssue(filePath) {
+  return inspect(filePath).issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP')
+}
+
+test('repairGlbFile 把 NPOT + REPEAT + mipmap 的采样器退化为 CLAMP_TO_EDGE + LINEAR（BR-031）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-npot-sampler-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(512, 341) }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ ...REPEAT_MIPMAP }],
+  })
+  // 先证明夹具真的命中了那条问题（否则下面的"不再报"是自我满足）
+  assert.equal(hasNpotIssue(input), true)
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.status, 'success')
+  assert.equal(report.samplersNormalized, 1)
+  const { json } = readGlb(output)
+  assert.deepEqual(json.samplers[0], CLAMP_LINEAR)
+  assert.equal(hasNpotIssue(output), false)
+  assert.deepEqual(inspect(output).npotSamplerBindings, [])
+})
+
+test('repairGlbFile 不动 POT 贴图的 REPEAT + mipmap 采样器（BR-031 不误伤）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-pot-sampler-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(256, 256) }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ ...REPEAT_MIPMAP }],
+  })
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.samplersNormalized, 0)
+  const { json } = readGlb(output)
+  assert.deepEqual(json.samplers[0], REPEAT_MIPMAP)
+})
+
+test('repairGlbFile 不动已经合法的 NPOT 采样器（CLAMP_TO_EDGE + LINEAR 原样保留）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-npot-legal-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(512, 341) }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ ...CLAMP_LINEAR }],
+  })
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.samplersNormalized, 0)
+  assert.deepEqual(readGlb(output).json.samplers[0], CLAMP_LINEAR)
+})
+
+test('repairGlbFile 在采样器被 POT 贴图共用时复制一份退化采样器，不误伤 POT（BR-031）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-shared-sampler-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(256, 256) }, { bytes: pngOfSize(512, 341) }],
+    textures: [{ source: 0, sampler: 0 }, { source: 1, sampler: 0 }],
+    samplers: [{ ...REPEAT_MIPMAP }],
+  })
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.samplersNormalized, 1)
+  assert.equal(report.samplersCloned, 1)
+  const { json } = readGlb(output)
+  // 共用采样器不能被原地改：POT 贴图仍指向它，且它仍是 REPEAT + mipmap
+  assert.equal(json.textures[0].sampler, 0)
+  assert.deepEqual(json.samplers[0], REPEAT_MIPMAP)
+  // NPOT 贴图改指一份退化后的采样器
+  const npotSampler = json.textures[1].sampler
+  assert.notEqual(npotSampler, 0)
+  assert.deepEqual(json.samplers[npotSampler], CLAMP_LINEAR)
+  // 这正是旧口径会误报的场景：POT 贴图合法地用 REPEAT+mipmap，产物必须不再报该问题
+  assert.equal(hasNpotIssue(output), false)
+})
+
+test('repairGlbFile 给缺省采样器的 NPOT 贴图新建显式 CLAMP_TO_EDGE + LINEAR 采样器（BR-031）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-default-sampler-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(300, 300) }],
+    textures: [{ source: 0 }],
+  })
+  // glTF 规范：缺省采样器就是 REPEAT + LINEAR_MIPMAP_LINEAR，因此这同样是非法组合
+  assert.equal(hasNpotIssue(input), true)
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.samplersNormalized, 1)
+  const { json } = readGlb(output)
+  assert.equal(typeof json.textures[0].sampler, 'number')
+  assert.deepEqual(json.samplers[json.textures[0].sampler], CLAMP_LINEAR)
+  assert.equal(hasNpotIssue(output), false)
+})
+
+test('repairGlbFile 的 NPOT 采样器退化对多张 NPOT 贴图共用一份退化采样器（去重）', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-npot-dedup-'))
+  const input = path.join(tempDir, 'input.glb')
+  const output = path.join(tempDir, 'output.glb')
+  writeTextureFixture(input, {
+    images: [{ bytes: pngOfSize(512, 341) }, { bytes: pngOfSize(300, 200) }],
+    textures: [{ source: 0 }, { source: 1 }],
+  })
+
+  const report = repairGlbFile(input, output)
+
+  assert.equal(report.samplersNormalized, 2)
+  const { json } = readGlb(output)
+  assert.equal(json.textures[0].sampler, json.textures[1].sampler)
+  assert.equal(json.samplers.length, 1)
+  assert.deepEqual(json.samplers[0], CLAMP_LINEAR)
 })
