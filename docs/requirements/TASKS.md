@@ -229,6 +229,69 @@
   ⑦ 次要项：模块编号改 **MOD-012**（不再与 transform 撞号）；REQ-007 #4 与 ADR-008(d) 的口径统一为"保留材质槽 + 1×1 占位"（与 BR-030 一致）；ADR-008 的包体积口径改为约 4.2MB 并写明 npm 报的 8.7MB 是整目录解包体积；`convert.test.js` 去掉自我满足断言与不必要的夹具门控、补"相对路径 / 同级同名 / `.fbm` 内同名"三种解析顺序用例；冒烟补"预览产物不得残留外部 uri + 有告警必须落日志"的直接断言，并把抽屉几何断言改为**测试期关闭过渡**（消除冷审与本次都复现过的 flaky，根因是合成器把 0.16s transition 停在中途）。ADR-008 另补两条已知代价：`ConvertFileList` 同步阻塞主进程（FBX 单次 4~6s）、重复转换时 wasm 侧内存增长。
   ⑧ 全量：`npm run lint` 通过；`npm test` → **119 用例 / 115 通过 / 0 失败 / 4 跳过**；冒烟 GLB / IVE / FBX / OBJ **各 35 步 / 112 条断言 / 0 失败**。
 
+### TASK-017 采样器规范化：修掉 NPOT × REPEAT × mipmap 的非法组合
+- **关联需求**：REQ-008（验收标准 1、2、3）
+- **依赖**：无
+- **做什么**：在 `src/repair.js` 新增采样器规范化步骤——对每个"贴图 + 采样器"对，若贴图任一维非 2 次幂且采样器同时使用 `REPEAT`（wrapS/wrapT）与 mipmap 过滤（minFilter 含 `MIPMAP`），则改为 `CLAMP_TO_EDGE` + `LINEAR`（**与 `src/ive.js` 既有 NPOT 退化规则、以及 `inspect.js` 那条问题的既有中文提示保持一致**，见 ADR-009）。判定必须按"贴图维度 × 采样器"逐对进行：采样器被多材质共用时不得因共用而漏改或误改；POT 与已合法的组合**一个字段都不改**。步骤位置在贴图内嵌与降采样之后（降采样可能产生新的 NPOT，见 TASK-018）。
+- **产出**：`src/repair.js`、`test/repair.test.js`
+- **文件范围**：`src/repair.js`, `test/repair.test.js`
+- **验证方式**：`node --test test/repair.test.js`——① 合成 NPOT(512×341)+REPEAT+mipmap 修复后采样器为 `CLAMP_TO_EDGE`+`LINEAR` 且 `inspect()` 不再报 `NPOT_WITH_REPEAT_MIPMAP`；② POT+REPEAT+mipmap 与 NPOT+CLAMP+LINEAR 修复前后采样器 JSON **逐字段相同**；③ 对产物全量断言"任一维 NPOT 的贴图不得同时 REPEAT+mipmap"；本地语料按 `fixtureSkipReason()` 门控扫描（不硬编码数量）
+- **状态**：待开始
+
+### TASK-018 贴图降采样四档 + 选项接线
+- **关联需求**：REQ-008（验收标准 4、5、6、7、8）
+- **依赖**：TASK-017（同一文件；且阶段顺序必须是"内嵌 PNG → 降采样 → 采样器规范化"）
+- **做什么**：在 `src/repair.js` 的贴图内嵌之后新增降采样步骤：用**已在 `dependencies` 的 `pngjs`** 解码 PNG、按最长边目标值做**盒式平均**（不是最近邻抽样）、重新编码回 PNG 并替换该 bufferView 字节；保持宽高比、四舍五入规则写进注释。修复选项新增 `maxTextureSize`（`0` = 不降，默认；可选 `2048/1024/512`），在界面修复选项区加中文下拉与提示，经既有 `repair-glb` 选项透传。报告新增 `texturesDownsampled` / `textureBytesBefore` / `textureBytesAfter`。
+- **产出**：`src/repair.js`、`src/renderer.js`、`src/index.html`、`test/repair.test.js`、`test/ui-smoke.cjs`
+- **文件范围**：`src/repair.js`, `src/renderer.js`, `src/index.html`, `test/repair.test.js`, `test/ui-smoke.cjs`
+- **验证方式**：`node --test test/repair.test.js`——2048² 已知图案 → 1024² 逐像素等于 2×2 盒式平均；3000×1000 → 1024×341；「不降」产物与现状字节一致；几何 bufferView 逐字节不变；`model/person-stand.glb` 体积只降不升且贴图张数不变（IVE 夹具缺失时门控跳过）。`node test/ui-smoke.cjs` 四格式仍全绿
+- **状态**：待开始
+
+### TASK-019 `KHR_texture_transform.texCoord` 覆盖：体检不漏报、修复补对通道
+- **关联需求**：REQ-008（验收标准 9、10）
+- **依赖**：TASK-018（同改 `src/repair.js`）
+- **做什么**：`src/inspect.js` 的 `collectTextureSlots` 与 `src/repair.js` 的 `collectMaterialTexCoords` 在读取贴图槽时，一并读取 `material.extensions.KHR_texture_transform.texCoord` 覆盖（扩展里的 `texCoord` 优先于槽位自身的 `texCoord`）——当前两处都忽略它，导致"材质实际采样 `TEXCOORD_1` 却只检查 `TEXCOORD_0`"的漏报，而漏报的后果是 Cesium 整个场景不渲染。两处口径必须一致。
+- **产出**：`src/inspect.js`、`src/repair.js`、`test/inspect.test.js`、`test/repair.test.js`
+- **文件范围**：`src/inspect.js`, `src/repair.js`, `test/inspect.test.js`, `test/repair.test.js`
+- **验证方式**：`node --test test/inspect.test.js test/repair.test.js`——构造"缺 `TEXCOORD_0`、经 `KHR_texture_transform` 以 `texCoord: 1` 采样"的合成 GLB：体检报 `MISSING_TEXCOORD` 且点名 `TEXCOORD_1`（**该用例在旧代码上必须为红**），修复补出的是全零 `TEXCOORD_1`
+- **状态**：待开始
+
+### TASK-020 REQ-008 的文档与规则回填
+- **关联需求**：REQ-008
+- **依赖**：TASK-017、TASK-018、TASK-019
+- **做什么**：`docs/001-code-design.md` 新增 BR-031（采样器规范化的判定口径与"不误伤 POT"）与 BR-032（降采样：默认不降、盒式平均、只动贴图字节、顺序在采样器规范化之前）；模块表补 `repair.js` 的新步骤与选项；`docs/testing/TEST_PLAN.md` 新增 TC-019~TC-021 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的修复管线章节补两步与降采样档位口径。
+- **产出**：`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR/TC 措辞与实现一致（数值取自实测，不写估计值）
+- **状态**：待开始
+
+### TASK-021 构建并入库 Windows x64 的 IVE 助手
+- **关联需求**：REQ-009（验收标准 1、2）
+- **依赖**：无（**需要外部 Windows x64 构建环境；本机 macOS 无 wine，无法完成**）
+- **做什么**：按 `native/ive2glb/README.md` 在 Windows 上构建 `ive2glb.exe`，把可执行文件与其依赖闭包 vendoring 到 `vendor/ive2glb/win32-x64/`（与 darwin 目录同构），并补齐 README 的 Windows 步骤（构建命令、依赖收集、DLL 放置）。**不入库任何第三方非系统 DLL**之外的东西，也不为 Windows 单独改 IVE 解析路径（assimp 没有 IVE importer，见 ADR-010）。
+- **产出**：`vendor/ive2glb/win32-x64/`、`native/ive2glb/README.md`、`package.json`（如 `files`/`asarUnpack` 需调整）
+- **文件范围**：`vendor/ive2glb/win32-x64/`, `native/ive2glb/README.md`, `package.json`
+- **验证方式**：① `dumpbin /dependents vendor/ive2glb/win32-x64/ive2glb.exe`（或等价）证明无第三方非系统依赖；② 在 Windows 上运行应用 → `app-capabilities` 报 `ive: true`、选 `.ive` 能转换/预览/落盘，世界盒与 darwin 产出一致（容差 0.02）；③ `npm test` 不回归
+- **状态**：待开始（等待 Windows 构建环境）
+
+### TASK-022 重打 Windows 安装包并回填发布清单与冒烟
+- **关联需求**：REQ-009（验收标准 3、4、5）
+- **依赖**：TASK-021
+- **做什么**：在具备 Windows/打包能力的环境执行 `npm run dist:win`，产出新安装包与便携版；按 `RELEASE_CHECKLIST.md` §4 逐行冒烟（`.ive`/`.glb`/`.fbx`/`.obj`、嵌套目录、输出体积、坏输入不阻断、Windows 安装包），把实际值与结果回填；同步测试/覆盖率总数；更新发布记录与发布说明。**`dist/` 产物不入库。**
+- **产出**：`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、（本地产物 `dist/`，不入库）
+- **文件范围**：`docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`
+- **验证方式**：安装包时间戳新于本次提交且包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；§4 每行都有实际值与结果；`RELEASE_CHECKLIST.md` 预检除显式"不适用"外全勾；`node scripts/memory.mjs check` 通过
+- **状态**：待开始（等待 TASK-021）
+
+### TASK-023 预览三态记忆：上轴/方向/缩放重启后保持
+- **关联需求**：REQ-010（验收标准 1~5）
+- **依赖**：无
+- **做什么**：把预览的上轴三态、偏航与缩放并入既有的 `localStorage` 持久化（新键或既有键的 `version` 升级，读取时 clamp），并区分"用户显式选过"与"从未选过"——未动过控件时不落盘，显式选回 `auto` 也要记住；界面提示说明该值来自上次选择。复用 `src/preview-transform.js` 的 `clampPreview`/默认值，不新写一套校验。
+- **产出**：`src/renderer.js`、`test/ui-smoke.cjs`
+- **文件范围**：`src/renderer.js`, `test/ui-smoke.cjs`
+- **验证方式**：`node test/ui-smoke.cjs`——设置 `Z-up/90°/2×` 后重载页面三个控件复原且提示可见；从未动过时不写 `localStorage`；显式选回 `auto` 后重载仍是 `auto`；垃圾载荷落回默认且页面异常 0；输入文件 `shasum` 前后一致（不写回）
+- **状态**：待开始
+
 ## 依赖 DAG
 
 ```text
@@ -248,6 +311,12 @@ TASK-011 ──▶ TASK-012（体验细化：细滚动条 + 每区只留最外�
 TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内核 → 接线与打包 → 文档与规则）
 
 TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本次要项）
+
+TASK-017 ──▶ TASK-018 ──▶ TASK-019 ──▶ TASK-020（REQ-008 贴图规格收口：采样器规范化 → 降采样与接线 → KHR_texture_transform → 文档回填；四者依次改同一个 `src/repair.js`，必须串行）
+
+TASK-021 ──▶ TASK-022（REQ-009 Windows 分发：助手入库 → 安装包重打与冒烟；TASK-021 需外部 Windows x64 环境，未就绪前 TASK-022 不启动）
+
+TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/`ui-smoke.cjs` 重叠，故与 TASK-018 串行，但与 TASK-019 的文件范围不重叠）
 ```
 
 ## 并行批次
@@ -272,6 +341,11 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 | 13 | TASK-014 | 依赖 TASK-013；改 `main.js`/`package.json`/`ui-smoke.cjs` |
 | 14 | TASK-015 | 依赖 TASK-014（文档要引用最终实现与实测数字） |
 | 15 | TASK-016 | 依赖 TASK-015（缺陷由冷审暴露） |
+| 16 | TASK-017, TASK-021 | TASK-017 无依赖（REQ-008 起点）；TASK-021 无依赖但需外部 Windows 环境；二者文件范围不重叠（`src/repair.js`+`test/repair.test.js` vs `native/`、`vendor/`） |
+| 17 | TASK-018 | 依赖 TASK-017；改 `repair.js`/`renderer.js`/`index.html`/`ui-smoke.cjs`，与 TASK-023 的 `renderer.js` 重叠，故与 TASK-023 分属不同批次 |
+| 18 | TASK-019, TASK-023 | TASK-019 依赖 TASK-018（同改 `repair.js`）；TASK-023 无依赖且只改 `renderer.js`/`ui-smoke.cjs`，与 TASK-019 的 `inspect.js`/`repair.js` 不重叠，可并行 |
+| 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
+| 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 
 ## 进度
 
@@ -285,7 +359,7 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
 | TASK-007 | REQ-005 | 已完成（经两轮冷上下文复审） | ☑ |
 | TASK-008 | REQ-005 | 已完成（待人工目视确认） | ☑ 自动 / ☐ 人工 |
-| TASK-009 | REQ-005 | 已完成（待冷审查与人工目视） | ☑ |
+| TASK-009 | REQ-005 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
 | TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
 | TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
@@ -293,3 +367,10 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 | TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-017 | REQ-008 | 待开始 | ☐ |
+| TASK-018 | REQ-008 | 待开始 | ☐ |
+| TASK-019 | REQ-008 | 待开始 | ☐ |
+| TASK-020 | REQ-008 | 待开始 | ☐ |
+| TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
+| TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
+| TASK-023 | REQ-010 | 待开始 | ☐ |
