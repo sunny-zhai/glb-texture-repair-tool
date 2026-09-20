@@ -10,10 +10,12 @@ node_modules/
 npm-debug.log*
 
 # ---------------------------------------------------------------- 打包产物
-# electron-builder 的输出目录，见 package.json 的 build.directories.output
-dist/
-release/
-out/
+# electron-builder 的输出目录，见 package.json 的 build.directories.output。
+# 必须带根锚点 /：不锚定的 `release/` 会匹配任意层级同名目录，
+# 连带把 .ai/skills/release/ 吞掉，使 .ai/platform-lock.json 登记的文件静默不入库。
+/dist/
+/release/
+/out/
 
 # ---------------------------------------------------------------- 仅本机保留的样例与临时目录
 # o-model/ 是约 174MB 的样例模型（.ive 输入 + 各条转换链路的参考 .glb），只在开发机保留；
