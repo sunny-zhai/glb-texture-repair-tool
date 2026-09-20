@@ -58,6 +58,11 @@ const statusProgress = document.getElementById('statusProgress')
 const reportFormat = window.reportFormat
 const previewTools = window.previewTransform
 
+// 预览修正的记忆（REQ-010）：只记**用户显式选过**的上轴/方向/缩放；"从未动过"与"显式选了
+// auto"必须可区分——所以用键是否存在来表达（没动过就不写这个键）。
+const PREVIEW_KEY = 'glb-repair.preview'
+const PREVIEW_VERSION = 1
+
 const ISSUE_LEVEL_LABELS = { error: '错误', warn: '警告', info: '提示' }
 
 const state = {
@@ -1034,7 +1039,43 @@ function applyPreviewTransform(options = {}) {
   }
 }
 
-function resetPreviewControls() {
+/** @description 读取上次的预览选择（REQ-010）。没有记录时返回 null——"从未选过"与"选了 auto"必须可区分。 */
+function readStoredPreview() {
+  try {
+    const raw = localStorage.getItem(PREVIEW_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    if (parsed.version !== PREVIEW_VERSION) return null
+    // clampPreview 负责把垃圾值规整成合法默认值（yaw 取整到 5°、scale 夹到区间、axis 只认三态）
+    return previewTools.clampPreview({ yawDeg: parsed.yawDeg, scale: parsed.scale, axis: parsed.axis })
+  } catch (error) {
+    // 隐私模式 / 坏 JSON：当作"没记录过"，绝不影响使用
+    return null
+  }
+}
+
+/** @description 记住预览选择。**只在用户显式操作时调用**（控件 change 或重置按钮）。 */
+function savePreviewPreference() {
+  if (!previewTools) return
+  try {
+    const preview = previewTools.clampPreview(readPreviewInput())
+    localStorage.setItem(PREVIEW_KEY, JSON.stringify({
+      version: PREVIEW_VERSION,
+      yawDeg: preview.yawDeg,
+      scale: preview.scale,
+      axis: preview.axis,
+    }))
+  } catch (error) {
+    // 配额/隐私模式：记不住不是功能故障
+  }
+}
+
+/**
+ * @description 让控件回到"上次显式选择"（若存在）或默认值，并刷新标签。
+ * @param {{stored?: object|null}} [options] `stored` 由调用方传入（避免每次重读 localStorage）
+ */
+function resetPreviewControls(options = {}) {
   if (!previewTools) return
   if (!previewAxis.options.length) {
     for (const option of previewTools.axisOptions()) {
@@ -1044,9 +1085,10 @@ function resetPreviewControls() {
       previewAxis.appendChild(element)
     }
   }
-  previewYaw.value = String(previewTools.PREVIEW_DEFAULT.yawDeg)
-  previewScale.value = String(previewTools.PREVIEW_DEFAULT.scale)
-  previewAxis.value = previewTools.PREVIEW_DEFAULT.axis
+  const source = options.stored || previewTools.PREVIEW_DEFAULT
+  previewYaw.value = String(source.yawDeg)
+  previewScale.value = String(source.scale)
+  previewAxis.value = source.axis
   updatePreviewLabels()
 }
 
@@ -1112,13 +1154,17 @@ async function validateModel(filePath) {
       throw new Error('Cesium 未返回模型对象。')
     }
     state.model = model
-    // 新模型一律回到默认预览修正（modelMatrix 本来就是单位矩阵，控件必须与之一致）
-    resetPreviewControls()
+    // 新模型的预览修正：默认回到默认值；若用户**显式选过**（REQ-010），沿用那组选择并立即生效
+    const storedPreview = readStoredPreview()
+    resetPreviewControls({ stored: storedPreview })
     model.backFaceCulling = false
     model.minimumPixelSize = 96
     model.debugShowBoundingVolume = false
     state.viewer.scene.primitives.add(model)
     appendLog(`Cesium 模型对象已创建：${filePath}`)
+    if (storedPreview) {
+      applyPreviewTransform({ prefix: '预览修正（沿用上次选择）：' })
+    }
     const loadedStatusText = `加载成功 · ${(payload.bytes / 1000 / 1000).toFixed(2)} MB / ${(payload.bytes / 1024 / 1024).toFixed(2)} MiB`
     // 超时兜底恢复：窗口恢复后终于渲染出第一帧时，重新诊断与取景（否则停在回退取景上）
     const onLateReady = () => {
@@ -1391,6 +1437,8 @@ const applyPreviewLive = () => {
 const applyPreviewAndLog = () => {
   updatePreviewLabels()
   applyPreviewTransform()
+  // REQ-010：只有**显式操作**（松手 change）才记住这组选择；input 拖动过程不写
+  savePreviewPreference()
 }
 
 previewYaw.addEventListener('input', applyPreviewLive)
@@ -1403,6 +1451,8 @@ previewAxis.addEventListener('change', applyPreviewAndLog)
 resetPreviewButton.addEventListener('click', () => {
   resetPreviewControls()
   applyPreviewTransform({ prefix: '已重置预览修正：' })
+  // 重置是显式操作：把默认值记下来，重启后仍是默认（而不是被当成"从未选过"）
+  savePreviewPreference()
 })
 
 /** @description 修复选项（IPC 载荷的选项部分）。抽成函数，冒烟可以直接断言接线（BR-032）。 */
@@ -1482,6 +1532,20 @@ window.repairApp.capabilities().then((capabilities) => {
 
 renderInputs()
 renderOutput()
-resetPreviewControls()
+// REQ-010：启动时就把上次显式选过的预览三态摆到控件上，并说明它来自上次选择
+{
+  const storedPreview = readStoredPreview()
+  resetPreviewControls({ stored: storedPreview })
+  if (storedPreview) {
+    appendLog(`预览修正：已沿用上次选择（${previewTools.describePreview(storedPreview)}）；点「重置预览修正」可恢复默认`, 'ok')
+  }
+}
 initLayout()
 renderStatusBar()
+
+// 冒烟测试用：预览记忆的键与当前控件值（只读）
+window.__preview = {
+  key: PREVIEW_KEY,
+  get: () => (previewTools ? previewTools.clampPreview(readPreviewInput()) : null),
+  stored: () => localStorage.getItem(PREVIEW_KEY),
+}
