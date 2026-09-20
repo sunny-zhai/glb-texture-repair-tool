@@ -572,7 +572,10 @@ function renderResults(reports) {
       li.textContent = `ERROR ${report.inputPath}：${report.error}`
       appendLog(`修复失败：${report.inputPath}：${report.error}`, 'error')
     } else {
-      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, baked=${report.skinnedMeshesBaked || 0}, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0}, uv=${report.texCoordsFilled || 0}, merged=${report.primitivesMerged || 0})`
+      li.textContent = `${report.status.toUpperCase()} ${report.inputPath} -> ${report.outputPath} (${report.oldBytes}B -> ${report.newBytes}B, baked=${report.skinnedMeshesBaked || 0}, converted=${report.imagesConverted}, embedded=${report.externalImagesEmbedded || 0}, uv=${report.texCoordsFilled || 0}, merged=${report.primitivesMerged || 0}, down=${report.texturesDownsampled || 0})`
+      // BR-032：贴图降采样必须在日志里说清楚——选「不降」时也要明确讲"未降采样"，
+      // 而不是静默省略（用户才不会以为降过了或是忘了降）
+      appendLog(`${report.outputPath}：${describeTextureDownsample(report)}`, 'ok')
     }
     resultList.appendChild(li)
   }
@@ -583,6 +586,17 @@ function renderResults(reports) {
     total: reports.length,
   }
   renderStatusBar()
+}
+
+/** @description 贴图降采样的中文说明（BR-032）。档位为「不降」时也要明确表达"未降采样"。 */
+function describeTextureDownsample(report) {
+  const before = Number(report?.textureBytesBefore) || 0
+  const after = Number(report?.textureBytesAfter) || 0
+  const count = Number(report?.texturesDownsampled) || 0
+  const tier = Number(report?.maxTextureSize) || 0
+  if (tier <= 0) return `贴图：未降采样（档位「不降」，共 ${formatBytesShort(before)}）`
+  if (count <= 0) return `贴图：没有超过 ${tier}px 的贴图，未降采样（共 ${formatBytesShort(before)}）`
+  return `贴图降采样：${count} 张，最长边 ≤ ${tier}px，${formatBytesShort(before)} → ${formatBytesShort(after)}`
 }
 
 function showProgress(done, total, message, className = '') {
@@ -1290,6 +1304,15 @@ resetPreviewButton.addEventListener('click', () => {
   applyPreviewTransform({ prefix: '已重置预览修正：' })
 })
 
+/** @description 修复选项（IPC 载荷的选项部分）。抽成函数，冒烟可以直接断言接线（BR-032）。 */
+function collectRepairOptions() {
+  return {
+    freezePose: document.getElementById('freezePose').checked,
+    // BR-032：贴图降采样档位（0 = 不降，默认）；主进程会再兜一次非法值
+    maxTextureSize: Number(document.getElementById('textureMaxSize').value) || 0,
+  }
+}
+
 runRepairButton.addEventListener('click', async () => {
   resultList.innerHTML = ''
   showProgress(0, 0, '正在扫描输入，统计待修复模型数量…')
@@ -1299,7 +1322,7 @@ runRepairButton.addEventListener('click', async () => {
       inputPaths: state.inputPaths,
       inputMode: state.inputMode,
       outputDir: state.outputDir,
-      freezePose: document.getElementById('freezePose').checked,
+      ...collectRepairOptions(),
     })
     renderResults(reports)
     appendLog(`完成：${reports.length} 个任务`, 'ok')

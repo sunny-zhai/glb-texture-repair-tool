@@ -252,7 +252,17 @@
 - **产出**：`src/repair.js`、`src/renderer.js`、`src/index.html`、`test/repair.test.js`、`test/ui-smoke.cjs`
 - **文件范围**：`src/repair.js`, `src/renderer.js`, `src/index.html`, `test/repair.test.js`, `test/ui-smoke.cjs`
 - **验证方式**：`node --test test/repair.test.js`——2048² 已知图案 → 1024² 逐像素等于 2×2 盒式平均；3000×1000 → 1024×341；「不降」产物与现状字节一致；几何 bufferView 逐字节不变；`model/person-stand.glb` 体积只降不升且贴图张数不变（IVE 夹具缺失时门控跳过）。`node test/ui-smoke.cjs` 四格式仍全绿
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js` → **34 用例 / 34 通过 / 0 失败**；全量 `npm test` → **137 用例 / 133 通过 / 0 失败 / 4 跳过**（TASK-017 后基线 129/125/0/4，净增 8 条）；`npm run lint` 通过。
+  ② **像素正确性**：2048² 已知图案 → 1024²，期望值由**解码后的源像素**独立算出（不复用实现公式），1024×1024×4 通道逐像素比对 **mismatches = 0**。透明像素按 alpha 预乘：2×2 中一个全透明红 + 三个不透明白 → 颜色仍是白、alpha = 191（不把颜色拉黑）。尺寸已达标或读不出宽高时返回 `null`，不做无谓重编码。
+  ③ **档位与默认**：3000×1000 + `maxTextureSize: 1024` → **1024×341**（等比，取整规则 `Math.round` 且至少 1 像素）；不传 / `0` / `-5` 三种情况都落到"不降"，且 `textureBytesAfter === textureBytesBefore > 0`（未降采样是有内容的陈述，不是静默省略）。
+  ④ **只动贴图**：2048² + 1024 档修复后，几何的三个 bufferView（POSITION / 索引 / TEXCOORD_0）**逐字节相同**，accessor `min`/`max`/`count` 不变；外部贴图（`uri` 引用）同样被降采样，且**落盘的是缩小后的字节**（`view.byteLength < 原文件大小`），不是"报告说降了、文件里还是原图"。
+  ⑤ **顺序证明（ADR-009 决策 d）**：3000×1000（POT）配 `REPEAT + 9987` 采样器，1024 档修复后贴图变成 NPOT(1024×341)，采样器**在同一趟里**被退化为 `CLAMP_TO_EDGE + LINEAR`（`samplersNormalized === 1`），产物 `npotSamplerBindings` 为空——若规范化排在降采样之前，这条必然漏网。
+  ⑥ **本地基线（验收标准 6 的等价物）**：`model/person-stand.glb`（源 2.17MB，贴图为 JPEG）——不降档 **14.31MB**（BR-002 的 PNG 膨胀，与本次改动无关）→ 1024 档 **4.95MB（2 张降采样）** → 512 档 **1.86MB（3 张）**；三档贴图张数均为 3、几何统计不变、产物无 NPOT 绑定。需求里"9.74MB → ≤4MB"用的是**缺失的 IVE 转换产物夹具**（`o-model/person-stand.ive` 不在本地），未复测；本地等价基线按需求只断言"体积只降不升 + 贴图张数不变"，用例按夹具存在性门控。
+  ⑦ **冒烟（四格式全跑）**：`node test/ui-smoke.cjs` 在 `model/蹲姿.glb`、`o-model/蹲姿.ive`、`o-model/蹲姿.fbx`、`o-model/蹲姿.obj` 上**各 36 步 / 114 条断言 / 0 失败**（新增 2 条：4 档且默认不降、所选档位原样进入 IPC 载荷，`EXPECTED_CHECK_COUNT` 112 → 114）。为此把渲染进程的选项收集抽成 `collectRepairOptions()`，让冒烟能直接断言接线而不必真的跑修复。
+  ⑧ **环境备注（不影响产品）**：本机本轮跑 Electron 出现 `sandbox initialization failed: Operation not permitted` → GPU 进程崩溃 → `SIGTRAP`，需加 `--no-sandbox` 才能起应用（只在人工冒烟命令里加，产品代码未改）。这也是第一次 FBX 冒烟"卡住 600s"的原因：调试端口被一个已崩坏的旧实例占着，页面不响应。
+  ⑨ 顺带发现（留给 TASK-020 的文档回填）：`docs/002-requirements.md` §3 列出的报告字段 `textureBytes` 在 `inspect()` 里**并不存在**（贴图字节只在 `report.images[].bytes` 上逐张给出）。
 
 ### TASK-019 `KHR_texture_transform.texCoord` 覆盖：体检不漏报、修复补对通道
 - **关联需求**：REQ-008（验收标准 9、10）
@@ -266,7 +276,7 @@
 ### TASK-020 REQ-008 的文档与规则回填
 - **关联需求**：REQ-008
 - **依赖**：TASK-017、TASK-018、TASK-019
-- **做什么**：`docs/001-code-design.md` 新增 BR-031（采样器规范化的判定口径与"不误伤 POT"）与 BR-032（降采样：默认不降、盒式平均、只动贴图字节、顺序在采样器规范化之前）；模块表补 `repair.js` 的新步骤与选项；`docs/testing/TEST_PLAN.md` 新增 TC-019~TC-021 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的修复管线章节补两步与降采样档位口径。
+- **做什么**：`docs/001-code-design.md` 新增 BR-031（采样器规范化的判定口径与"不误伤 POT"）与 BR-032（降采样：默认不降、盒式平均、只动贴图字节、顺序在采样器规范化之前）；模块表补 `repair.js` 的新步骤与选项；`docs/testing/TEST_PLAN.md` 新增 TC-019~TC-021 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的修复管线章节补两步与降采样档位口径。**另需订正 `docs/002-requirements.md` §3 的报告字段清单**：`textureBytes` 在 `inspect()` 里并不存在（只有 `report.images[].bytes` 逐张给出），与先前标注的 `contentHash` 同属"文档列了但没实现"的字段，一并按实情注明。
 - **产出**：`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
 - **文件范围**：`docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
 - **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR/TC 措辞与实现一致（数值取自实测，不写估计值）
@@ -375,7 +385,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
 | TASK-017 | REQ-008 | 已完成 | ☑ 自动 |
-| TASK-018 | REQ-008 | 待开始 | ☐ |
+| TASK-018 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-019 | REQ-008 | 待开始 | ☐ |
 | TASK-020 | REQ-008 | 待开始 | ☐ |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
