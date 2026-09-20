@@ -39,3 +39,5 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 2026-09-20 08:28 | spec | approved | sunny-zhai | REQ-009 | docs/requirements/REQUIREMENTS.md（确认 REQ-009 的 6 条：win32-x64 助手入库与依赖闭包、capabilities ive:true 与世界盒一致、dist 包内容、§4 冒烟逐行回填、清单全勾、只能声明时的显式兜底） |
 | 2026-09-20 08:28 | spec | approved | sunny-zhai | REQ-010 | docs/requirements/REQUIREMENTS.md（确认 REQ-010 的 5 条：重启恢复三态、从未动过不落盘、显式 auto 被记住、垃圾载荷降级、不写回文件） |
 | 2026-09-20 08:28 | architecture | approved | sunny-zhai | ADR-009 | docs/design/ADR.md（采纳\“按贴图退化\”：NPOT×REPEAT×mipmap → CLAMP_TO_EDGE+LINEAR，与 inspect.js 提示与 ive.js 规则一致；降采样进程内 pngjs 盒式平均、默认不降；管线顺序内嵌→降采样→采样器规范化。ADR-010 原生 win32-x64 助手同批确认） |
+| 2026-09-20 09:20 | spec | approved | sunny-zhai | REQ-011 | docs/requirements/REQUIREMENTS.md（确认 REQ-011 的 7 条验收标准：占比不漂移 ≤1 个百分点为核心、拖拽改占比、占比被记住含 version:1 像素载荷迁移、极小窗口夹取规则确定且恢复后不失真、窄窗口降级按占比、内部元素自适应矩阵、不回归；另确认口径「宽高都按占比」，TASK-025 走 900×700~1920×1200 矩阵普查） |
+| 2026-09-20 09:21 | architecture | approved | sunny-zhai | ADR-011 | docs/design/ADR.md（采纳「布局以占比为唯一用户意图、像素只是派生物」；像素上限改比例上限；夹取优先级写死为「先等比整体压缩 → 再依次触底」；localStorage 升 version:2 并迁移 version:1 像素载荷；保留像素级拖拽跟手手感） |
