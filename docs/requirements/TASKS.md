@@ -371,7 +371,14 @@
 - **产出**：`docs/001-code-design.md`、`docs/design/ADR.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
 - **文件范围**：`docs/001-code-design.md`, `docs/design/ADR.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
 - **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-034/TC-024 措辞与实现一致（数值取自实测）
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**：
+  ① `docs/001-code-design.md`：新增 **BR-034**（占比是唯一用户意图、像素是派生物；可用空间必须是 `appShell.clientWidth − 8` × `appShell.clientHeight` 而不是 `window.innerHeight`；像素上限改比例上限；比例下限刻意低于像素下限对应比例；夹取规则确定；`version:1` 迁移并回写；附修复前实测的反例数字）；**BR-027** 的"布局状态写 `localStorage` 并在读取时 clamp"改为"以占比写入并按比例夹取（见 BR-034）"；**BR-028** 的"`layoutDesired` 是用户设定的尺寸"改为"`layoutRatio`（占比）是用户设定的比例，`layout` 是由比例派生的生效像素"；**MOD-011** 补上占比模型；§6 测试要点新增第 19、20 条。
+  ② `docs/design/ADR.md`：ADR-011 状态由"待确认"改为**已采纳**（闸门 ② 架构 · sunny-zhai · 2026-09-20）。
+  ③ `docs/testing/TEST_PLAN.md`：结果汇总新增 **TC-024**（占比不漂移、resize 不改写落盘占比、夹取后恢复、v1 迁移、五档自适性矩阵；含旧模型上的漂移数字），总计里的冒烟口径更新为 **53 步 / 126 条断言**（并注明"36 步 / 114 条"是 TASK-018 时代的口径）。
+  ④ `CLAUDE.md`：渲染进程段落从"4px splitters 拖 CSS 变量并 clamp 后存 `localStorage`"改为"布局以**占比**存储（`version: 2`）、像素每次渲染派生、拖拽按像素跟手但落盘换算回占比、resize 不改写意图、可用空间口径与 v1 迁移"。
+  ⑤ `docs/requirements/REQUIREMENTS.md`：验收标准 6 的澄清与变更记录已在 TASK-025 一并落地（本任务只补充文档引用一致性）。
+  ⑥ 门禁：`node scripts/memory.mjs check` 通过；`npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过。
 
 ## 依赖 DAG
 
@@ -458,7 +465,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-020 | REQ-008 | 已完成 | ☑ 自动 |
 | TASK-024 | REQ-011 | 已完成 | ☑ 自动 |
 | TASK-025 | REQ-011 | 已完成（矩阵普查未发现缺陷，留回归网） | ☑ 自动 |
-| TASK-026 | REQ-011 | 待开始 | ☐ |
+| TASK-026 | REQ-011 | 已完成 | ☑ 自动 |
 | TASK-021 | REQ-009 | 待开始（需外部 Windows x64 环境） | ☐ |
 | TASK-022 | REQ-009 | 待开始（等待 TASK-021） | ☐ |
 | TASK-023 | REQ-010 | 待开始 | ☐ |
