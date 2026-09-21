@@ -168,8 +168,20 @@ output:
 **插到插件搜索列表最前**，否则会命中 OSG 编译期内置路径（开发机上的 Homebrew 安装）。
 macOS 上 `install_name_tool` 会破坏原签名，脚本随后统一做 ad-hoc 重签，否则 arm64 会直接被杀。
 
-打包时 `package.json` 的 `build.asarUnpack` 必须包含 `vendor/ive2glb/**`，因为 asar 内的文件无法执行；
-`src/ive.js` 用 `app.asar` → `app.asar.unpacked` 的路径替换来定位它。
+打包时 `package.json` 的 `build.asarUnpack` 必须包含 `vendor/ive2glb/**`，因为 asar 内的文件无法执行。
+`src/ive.js::resolveIveHelper()` 按下面的顺序解析助手，并把每个查过的路径都记进 `searched`
+（缺助手时 `convertIveToGlb` 返回 `status: error`，中文信息里列出这些路径，见 BR-012）：
+
+1. `GLB_REPAIR_IVE2GLB` 环境变量；指向 `.js` 时按 WASM 助手处理；
+2. `<root>/<platform>-<arch>/ive2glb[.exe]`（本平台原生助手）；
+3. `<root>/wasm/ive2glb.js` + 同名 `ive2glb.wasm`（跨平台 WASM 助手，两者必须成对存在）。
+
+`<root>` 先取 `app.asar.unpacked/vendor/ive2glb`，再取 `vendor/ive2glb`；开发态两者是同一个路径，
+只查一次。**顺序不能反过来**：`asarUnpack` 的文件在 asar 索引里仍然可见、`fs.statSync` 也会成功，
+但 asar 内的文件不能被 `spawnSync` 执行（报 `ENOTDIR`），asar 优先会让打包后的 IVE 转换整体失效。
+WASM 助手是 `.js`，必须由 Node 起进程（打包态是 Electron 的 Node，需 `ELECTRON_RUN_AS_NODE=1`），
+因此 win32-x64 / linux-x64 / darwin-x64 不再需要各自的预编译助手（REQ-012 / ADR-012）。
+构建入口：`npm run build:ive2glb:wasm`（产物落在 `vendor/ive2glb/wasm/`，实测 2.79 MB、单文件约 102 ms）。
 
 ## 5. 数据设计
 
