@@ -76,3 +76,6 @@ docs/api/*
 # 已随仓库入库，新克隆即可直接跑通 Tenon 流程，不要再把它们当本机配置忽略。
 # scripts/ 下 ensure-cesium.js、build-ive2glb.sh 与各 *.mjs 全部入库——
 # build-ive2glb.sh 是重建 vendor/ive2glb 助手的唯一途径，不能整目录忽略。
+
+# 构建缓存（TASK-030：electron-builder 默认写 ~/Library/Caches，重定向进工作区以免撞沙箱/污染系统目录）
+/.cache/

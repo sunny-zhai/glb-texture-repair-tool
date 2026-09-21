@@ -20,7 +20,7 @@
   - `test/` → （无子目录）
   - `vendor/` → `ive2glb`
 - **顶层文件**：`.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package-lock.json`, `package.json`
-- **入口点**：`npm run build:ive2glb`、`npm run dev`、`npm run dist:win`、`npm run ensure:cesium`、`npm run lint`、`npm run start`、`npm run test`
+- **入口点**：`npm run build:ive2glb`、`npm run dev`、`npm run dist:linux`、`npm run dist:mac`、`npm run dist:win`、`npm run ensure:cesium`、`npm run lint`、`npm run start`、`npm run test`
 - **项目文档**：REQUIREMENTS.md ✓ · TASKS.md ✓ · TEST_PLAN.md ✓ · PERF_BUDGET.md ✓ · RELEASE_CHECKLIST.md ✓ · APPROVALS.md ✓ · ADR.md ✓ · openapi.json ✓ · PROJECT_MEMORY.md ✓
 - **工作流**：`.ai/workflows` 5 个（`bug-fix.js`, `deploy.js`, `doc-update.js`, `feature-dev.js`, `req-parallel.js`）· `dsh/workflows` 5 个 · 两侧一致
 <!-- memory:structure:end -->
