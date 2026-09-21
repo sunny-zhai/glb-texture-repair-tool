@@ -422,6 +422,23 @@
 - **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-036/清单措辞与实现一致（数字取自实测）
 - **状态**：待开始
 
+### TASK-030 打包目标与平台矩阵（不依赖 spike，先行的净收益部分）
+- **关联需求**：REQ-012（验收标准 3、4、5）；设计决策见 ADR-012
+- **依赖**：无（**独立于 TASK-027 的 spike 结论**：打包目标与平台矩阵两条路线都要）
+- **做什么**：① `package.json` 补 `mac`（dmg + zip）与 `linux`（AppImage + deb）打包目标及 `dist:mac`/`dist:linux` 脚本，mac 明确 `identity: null`（本机不签名，签名/公证是另一个议题）；② `native/ive2glb/README.md` 增加**平台支持矩阵**（哪四个目标平台、各自需要什么构建前置、产物目录怎么写）与「新增一个平台」的步骤清单；③ 如实写明 darwin-x64 的前置是 **x86_64 的 OSG**（本机只有 arm64 Homebrew，`/usr/local` 下没有 x86_64 工具链），Windows 需要 Windows 环境、Linux 需要 Linux 或容器——把"本机能做什么、不能做什么"写清，不再留含糊。
+- **产出**：`package.json`、`native/ive2glb/README.md`、（本地产物 `dist/`，不入库）
+- **文件范围**：`package.json`, `native/ive2glb/README.md`
+- **验证方式**：`npx electron-builder --mac --dir` 能在本机产出未签名 `.app`，且**包内确实含有** `app.asar.unpacked/vendor/ive2glb/darwin-arm64/ive2glb` 与 `node_modules/assimpjs/dist/assimpjs.wasm`（REQ-012 标准 4 的 macOS 半边）；`node -e "require('./package.json').build.mac && require('./package.json').build.linux"` 配置可解析；`npm run lint` + `npm test` 全绿
+- **状态**：已完成
+- **验证结果**：
+  ① `package.json` 新增 `mac`（dmg + zip，`identity: null` 本机不签名）与 `linux`（AppImage + deb）目标，以及 `dist:mac`/`dist:linux` 脚本；`node -e` 解析两段配置通过。
+  ② **本机实跑**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder npx electron-builder --mac --dir` → 打包成功（Electron 32.3.3 darwin-arm64，下载 99MB 用时 1m24s，`skipped macOS code signing reason=identity explicitly is set to null`），产出 `dist/mac-arm64/GLB Texture Repair Tool.app`（`app.asar` 25MB）。
+  ③ **包内容实测**（REQ-012 标准 4 的 macOS 半边）：`app.asar.unpacked/vendor/ive2glb/darwin-arm64/` 共 **17 个文件**（1 个 exe + 14 个 `lib/*.dylib` + 2 个 `osgPlugins/*.so`），`node_modules/assimpjs/dist/assimpjs.wasm` 与两份许可证文件均在。
+  ④ **包内助手可运行**：直接执行包内的 `ive2glb` 跑 `o-model/蹲姿.ive` → `{"status":"success","images":3,"meshes":3,"binBytes":28782480}`、退出码 0、生成 `scene.json` + `data.bin`；`DYLD_PRINT_LIBRARIES=1` 下 **Homebrew 加载数为 0**，证明 `@rpath/@executable_path/lib` 在应用包布局里也成立。
+  ⑤ **踩到的坑与修法**：electron-builder 默认把 Electron 缓存写到 `~/Library/Caches/electron`，在本机受限环境里被拒绝（`operation not permitted`）；改用 `ELECTRON_CACHE`/`ELECTRON_BUILDER_CACHE` 指到工作区 `.cache/`（已加进 `.gitignore`）后成功。该注意点已写进 `RELEASE_CHECKLIST.md` §3。
+  ⑥ **本机做不到的部分（如实记录）**：`darwin-x64` 需要 x86_64 的 OSG（本机 Rosetta 可用，但 `/usr/local` 下没有 x86_64 Homebrew/OSG，装它属系统级改动）；`win32-x64` 需 Windows 环境；`linux-x64` 需 Linux 或容器（本机 docker 不可用）。`native/ive2glb/README.md` 的平台支持矩阵已逐条写明，并给出"新增一个平台"的六步清单。
+  ⑦ `npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
+
 ## 依赖 DAG
 
 ```text
@@ -447,6 +464,7 @@ TASK-017 ──▶ TASK-018 ──▶ TASK-019 ──▶ TASK-020（REQ-008 贴�
 TASK-021 ──▶ TASK-022（REQ-009 Windows 分发：助手入库 → 安装包重打与冒烟；TASK-021 需外部 Windows x64 环境，未就绪前 TASK-022 不启动）
 
 TASK-027 ──▶ TASK-028 ──▶ TASK-029（REQ-012 跨平台 IVE：WASM 可行性 spike → 按结论落地 → 文档与清单）
+TASK-030（REQ-012 打包目标与平台矩阵；**独立于 spike**，与 TASK-027 文件范围不重叠，可并行）
 
 > REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
 
@@ -485,6 +503,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 25 | TASK-027 | REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行 |
 | 26 | TASK-028 | 依赖 TASK-027 的结论（路线 A/B 二选一）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/` |
 | 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字） |
+| 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
 | 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 
@@ -521,3 +540,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-027 | REQ-012 | 待开始（需联网装 emsdk） | ☐ |
 | TASK-028 | REQ-012 | 待开始（等待 TASK-027 结论） | ☐ |
 | TASK-029 | REQ-012 | 待开始 | ☐ |
+| TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |

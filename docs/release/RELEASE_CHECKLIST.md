@@ -36,6 +36,7 @@
   - `GLB Texture Repair Tool-Setup-0.1.0.exe`（NSIS，可选安装目录、桌面/开始菜单快捷方式）
   - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
+- [ ] 执行命令（REQ-012）：`npm run dist:mac`（dmg + zip，`identity: null` 不签名）/ `npm run dist:linux`（AppImage + deb）——**在受限环境或 CI 里需要把 electron-builder 的缓存指到可写目录**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder`（默认写 `~/Library/Caches/electron`，本机实测会被拒绝；`.cache/` 已 gitignore）。macOS 半边已实测（见 `docs/testing/TEST_PLAN.md` TC-026）：包内助手与 wasm 齐全、包内助手可直接跑通 `蹲姿.ive`
 - [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
 - [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`（该探测会真正加载一次 wasm——只查 JS 模块会有假阳性）、`o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）；dist 里必须能看到 `assimpjs/dist/license.assimp.txt`、`license.assimpjs.txt` 两份许可证文件
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）

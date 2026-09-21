@@ -15,6 +15,36 @@ IVE 是 OpenSceneGraph 的私有序列化格式，npm 上只有 `.osgb/.osgt` �
 
 ## 构建与分发
 
+## 平台支持矩阵（REQ-012 / TASK-030）
+
+Electron 侧**不改代码就能支持新平台**：`src/ive.js::platformDirectory()` 返回
+`${process.platform}-${process.arch}`，`resolveIveHelper()` 就按这个目录名在
+`vendor/ive2glb/<platform>-<arch>/` 里找 `ive2glb`（Windows 上找 `ive2glb.exe`）。
+所以"支持一个平台" = **往对应目录放一份自包含产物**。
+
+| 目标平台 | 目录 | 本机（macOS arm64）能否构建 | 前置 |
+| :-- | :-- | :-- | :-- |
+| macOS Apple Silicon | `vendor/ive2glb/darwin-arm64/` | ✅ 已入库 | `brew install openscenegraph` + `npm run build:ive2glb` |
+| macOS Intel | `vendor/ive2glb/darwin-x64/` | ❌ **本机不行** | 需要 **x86_64 的 OSG**（本机只有 arm64 Homebrew，`/usr/local` 下没有 x86_64 工具链）。两条路：① Rosetta 下装 x86_64 Homebrew + OSG（写 `/usr/local`，系统级改动）；② 在 Intel Mac 上直接 `npm run build:ive2glb` |
+| Windows x64 | `vendor/ive2glb/win32-x64/` | ❌ 不能交叉编译 | Windows x64 构建环境，见下节 |
+| Linux x64 | `vendor/ive2glb/linux-x64/` | ❌ 不能交叉编译 | Linux 环境或容器（本机 docker 不可用），`brew`/`apt` 装 OSG 后跑同一套构建脚本思路 |
+
+> **路线说明**：以上属 ADR-012 的**路线 B（多平台预编译）**。路线 A 是把 OSG + IVE 插件编成
+> **WASM**（一次构建四平台通用，`vendor/ive2glb/<平台>/` 不再必需），先在 TASK-027 做可行性
+> spike；spike 结论出来前，本表就是"哪个平台现在能用 IVE"的唯一答案。
+
+### 新增一个平台的步骤
+
+1. 在目标平台装好 OpenSceneGraph（含 `osgdb_ive` 插件）与 CMake/Ninja；
+2. 构建 `native/ive2glb`（见下两节的命令），确认 `ive2glb` 能独立跑通：
+   `ive2glb <某个.ive> <临时目录>` → stdout 一行 `{"status":"ok",...}` 且生成 `scene.json` + `data.bin`；
+3. 把可执行文件 + 依赖库 + OSG 插件按平台约定放进 `vendor/ive2glb/<platform>-<arch>/`
+   （macOS 用 `lib/` + `osgPlugins/` 与 `@rpath`；Windows 推荐静态三元组单文件，动态三元组把 DLL 放 exe 同目录；Linux 用 `$ORIGIN` rpath）；
+4. 自检依赖闭包（macOS：`DYLD_PRINT_LIBRARIES=1` 下 Homebrew 加载数必须为 0；Windows：`dumpbin /dependents` 只剩系统 DLL；Linux：`ldd` 无「not found」）；
+5. 端到端比对：`node -e "console.log(require('./src/ive').convertIveToGlb('o-model/蹲姿.ive', require('os').tmpdir()+'/ive-check'))"`
+   → `success`、世界盒 `[0.538, 1.364, 1.056]`（容差 0.02）、顶点 `11516`、三角面 `18924`；
+6. 把结果回填本表与 `docs/release/RELEASE_CHECKLIST.md` 的对应行。
+
 ### macOS
 
 ```bash
@@ -27,6 +57,9 @@ npm run build:ive2glb
 不重签的话 arm64 上会被系统直接杀掉）。
 
 > 若本机 CommandLineTools 的 libc++ 头文件缺失，脚本会自动改用 `$(xcrun --show-sdk-path)/usr/include/c++/v1`。
+>
+> **只做 darwin-arm64**：脚本按 `$(uname -m)` 决定目标目录，且依赖 `/opt/homebrew` 下的 arm64 OSG；
+> 要出 `darwin-x64` 必须换一个 x86_64 的 OSG 与 `uname -m` 为 x86_64 的环境（即上表的 Intel Mac 路线）。
 
 ### Windows
 

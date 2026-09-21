@@ -13,6 +13,8 @@
     "dev": "npm run ensure:cesium && electron .",
     "start": "npm run ensure:cesium && electron .",
     "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
+    "dist:mac": "npm run ensure:cesium && electron-builder --mac",
+    "dist:linux": "npm run ensure:cesium && electron-builder --linux",
     "lint": "for f in src/*.js; do node --check \"$f\" || exit 1; done",
     "test": "node --test \"test/*.test.js\""
   },
@@ -67,6 +69,23 @@
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/app-icon.png",
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "assets/app-icon.png"
     }
   },
   "dependencies": {
