@@ -42,3 +42,5 @@ node scripts/record-approval.mjs --gate spec --decision approved --actor "@autho
 | 2026-09-20 09:20 | spec | approved | sunny-zhai | REQ-011 | docs/requirements/REQUIREMENTS.md（确认 REQ-011 的 7 条验收标准：占比不漂移 ≤1 个百分点为核心、拖拽改占比、占比被记住含 version:1 像素载荷迁移、极小窗口夹取规则确定且恢复后不失真、窄窗口降级按占比、内部元素自适应矩阵、不回归；另确认口径「宽高都按占比」，TASK-025 走 900×700~1920×1200 矩阵普查） |
 | 2026-09-20 09:21 | architecture | approved | sunny-zhai | ADR-011 | docs/design/ADR.md（采纳「布局以占比为唯一用户意图、像素只是派生物」；像素上限改比例上限；夹取优先级写死为「先等比整体压缩 → 再依次触底」；localStorage 升 version:2 并迁移 version:1 像素载荷；保留像素级拖拽跟手手感） |
 | 2026-09-21 00:54 | delivery | approved | sunny-zhai | REQ-005/REQ-006/REQ-007 人工目视 | docs/testing/TEST_PLAN.md 的人工目视清单 M-1~M-7 逐项通过（M-8 Windows-only 未执行，随 REQ-009）；TASKS.md 进度表人工列与三个 REQ 状态同步改为已完成 |
+| 2026-09-21 00:58 | spec | approved | sunny-zhai | REQ-012 | docs/requirements/REQUIREMENTS.md（确认 REQ-012 的 8 条验收标准：四平台能力、WASM 优先、多平台兜底、mac/linux 打包目标、BR-012 降级不回归、spike 必须留痕含失败、体积/耗时预算、不回归） |
+| 2026-09-21 00:58 | architecture | approved | sunny-zhai | ADR-012 | docs/design/ADR.md（采纳：先做 WASM spike 再定架构，倾向一次构建全平台；失败则退多平台预编译；两条路都不改 IVE 解析语义、都保持 BR-012 降级。另决定：本机可做部分先行，emsdk 安装待确认；REQ-009 的 TASK-021/022 等 spike 结论再处置） |

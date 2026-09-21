@@ -163,7 +163,7 @@
 ## ADR-012 IVE 跨平台：先 spike「OSG+IVE 编到 WASM」，失败才退回多平台预编译
 
 - **日期**：2026-09-20
-- **状态**：待确认（闸门 ② 架构待 sunny-zhai 确认；实现见 TASK-027~029）
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵）
 - **关联需求**：REQ-012（"支持所有系统"）；与 REQ-009 的范围有交集（见下）
 - **背景/问题**：用户要求"不能改成支持所有系统吗"。核查后的关键事实：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 据此在 `vendor/ive2glb/<platform>-<arch>/` 里找 `ive2glb[.exe]`，因此**增加平台不需要改任何代码**；真正的缺口是产物只有 `darwin-arm64` 一份，Windows / Linux / Intel Mac 上的 `.ive` 一律走 BR-012 中文降级。本机现状：**emscripten 未安装、docker 不可用**，能本机构建的只有 darwin 系。两条候选路线：**A = 把 OSG + IVE 插件编成 WASM**（一次构建，四平台通用，与 ADR-008 的 assimpjs 同思路、不按平台分发二进制）；**B = 各平台各编一份原生助手**（沿用现有架构，但 Windows 那份仍需 Windows 机器、Linux 那份需 Linux 或容器）。
 - **决策**：(a) **先做 spike（TASK-027）再定架构**——与 REQ-007 的先例一致（真机 spike 通过后才立规格）；(b) **倾向路线 A**：若 spike 证明 OSG+IVE 能在 emscripten 下链接、IVE 插件能静态注册、文件 IO 在 Node 下可用，则按 WASM 交付（一次构建覆盖 win32-x64 / linux-x64 / darwin-arm64 / darwin-x64），`vendor/ive2glb/<平台>/` 不再是必需；(c) **spike 失败则走路线 B**：至少补齐 darwin-x64（或 universal2，本机可做），Windows/Linux 按 `native/ive2glb/README.md` 的配方在有环境的机器上补，并把自检结果回填；(d) 两条路都必须**保持 IVE 解析语义不变**（轴转换、贴地归心、顶点焊接、贴图内嵌）并保持 BR-012 降级（缺助手时中文提示、不影响 GLB/FBX/OBJ）；(e) 无论走哪条路，都要给 `package.json` 补 `mac`/`linux` 打包目标，否则"支持所有系统"只在开发态成立。

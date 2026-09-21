@@ -204,7 +204,7 @@
 - **确认**：待确认
 
 ### REQ-012 让 IVE 输入在所有桌面平台可用（Windows / Linux / macOS Intel+ARM）
-- **状态**：待确认（闸门 ① 规格待 sunny-zhai 确认；先做 spike 再定架构，见 ADR-012）
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-012 · 2026-09-20。**先做 spike 再定架构**，本机可做的打包目标与平台矩阵另立 TASK-030 先行）
 - **优先级**：P1
 - **描述**：用户要求"不能改成支持所有系统吗"。现状：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 就到 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]` 找助手，换平台不需要改代码；真正的缺口是**只有 `darwin-arm64` 一份产物**，于是 Windows / Linux / Intel Mac 上 `.ive` 直接降级为 BR-012 的中文提示。本需求把"所有桌面平台都能转 IVE"落成可判定目标，并顺带补齐打包目标（`package.json` 目前只有 `win`）。
 - **范围**：`native/ive2glb/`（若走 WASM 则在其中新增 emscripten 构建路径）、`scripts/`（构建脚本）、`vendor/ive2glb/**`（产物形态可能从"每平台一份"改为"一份 WASM"）、`package.json`（`dependencies`/`asarUnpack`/新增 `mac`、`linux` 打包目标）、`src/ive.js`（若 WASM 路线需要新的调用方式；**解析语义与世界盒口径不得改变**）、文档与台账。
