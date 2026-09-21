@@ -395,6 +395,33 @@
   ⑤ `docs/requirements/REQUIREMENTS.md`：验收标准 6 的澄清与变更记录已在 TASK-025 一并落地（本任务只补充文档引用一致性）。
   ⑥ 门禁：`node scripts/memory.mjs check` 通过；`npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过。
 
+### TASK-027 IVE 跨平台路线 spike：把 OSG+IVE 编到 WASM 是否可行
+- **关联需求**：REQ-012（验收标准 6，以及标准 2/3 的路线选择）；设计决策见 ADR-012
+- **依赖**：无（**需要 emsdk；本机未安装、需联网安装**）
+- **做什么**：用 emscripten 尝试把 `native/ive2glb` 连同 OSG（`osgDB` + `osg` + `OpenThreads` + IVE 插件 + zlib/libpng/freetype）编成 WASM，并在 Node 里跑通 `o-model/蹲姿.ive` → `scene.json` + `data.bin`。要回答四个问题：① 能否链接成功；② IVE 插件能否**静态注册**（emscripten 下没有 `dlopen`，`osgDB::Registry` 的插件加载机制需要改写）；③ 文件 IO 走 `-sNODERAWFS` 还是虚拟 FS + 预加载；④ 产物体积与单文件耗时。**允许失败，但失败必须给具体失败点与已尝试命令**（不得只写"不可行"）。
+- **产出**：`docs/design/ADR.md` 的 ADR-012 结论段；`native/ive2glb/WASM-SPIKE.md`（命令与实测/失败记录）；可选 `scripts/build-ive2glb-wasm.sh` 草稿
+- **文件范围**：`native/ive2glb/`, `docs/design/ADR.md`
+- **验证方式**：成功 → 在 Node 里跑通 `蹲姿.ive` 并与 darwin 助手产物比对（世界盒 `0.538×1.364×1.056`、顶点 `11516`、三角面 `18924`）；失败 → ADR-012 写出失败点 + 可复现命令 + 已排除的替代做法
+- **状态**：待开始（需联网安装 emsdk）
+
+### TASK-028 按 spike 结论落地跨平台 IVE
+- **关联需求**：REQ-012（标准 1、2 或 3、4、5、7）；设计决策见 ADR-012
+- **依赖**：TASK-027
+- **做什么**：二选一，**不改 IVE 解析语义**。**路线 A（WASM 可行）**：把 WASM 助手接进 `src/ive.js`（与 `resolveIveHelper` 并列或替换），wasm 资源按 `asarUnpack` 分发；**路线 B（WASM 不可行）**：补齐 `vendor/ive2glb/darwin-x64`（或 universal2，本机可做）并按 README 配方补 win32-x64 / linux-x64。两条路都要给 `package.json` 加 `mac`/`linux` 打包目标，并保证打包后助手可用（`ive: true`）与缺助手时 BR-012 降级不回归。
+- **产出**：`src/ive.js`（或 `vendor/ive2glb/**`）、`package.json`、`scripts/`（构建脚本）、`test/ive.test.js`
+- **文件范围**：`src/ive.js`, `package.json`, `scripts/`, `vendor/ive2glb/`, `test/ive.test.js`
+- **验证方式**：`npm run lint` + `npm test` 全绿；`node test/ui-smoke.cjs o-model/蹲姿.ive` 全绿；四平台能力判定（标准 1）与打包后 `ive: true`（标准 4）；体积/耗时实测入 ADR（标准 7）；缺助手时的中文降级不回归（标准 5）
+- **状态**：待开始
+
+### TASK-029 REQ-012 的文档与发布清单回填
+- **关联需求**：REQ-012；设计决策见 ADR-012
+- **依赖**：TASK-028
+- **做什么**：`docs/001-code-design.md` 新增 **BR-036**（跨平台 IVE 的交付口径：优先一次构建的 WASM；缺助手时按 BR-012 降级、GLB/FBX/OBJ 不受影响）并更新 MOD-005/006 与 ADR-008 的交叉引用；`RELEASE_CHECKLIST.md` §3/§4 把"只有 Windows 缺助手"改成四平台口径并补 mac/linux 打包检查；`CLAUDE.md` 的 IVE 章节写清产物形态与平台覆盖。
+- **产出**：`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-036/清单措辞与实现一致（数字取自实测）
+- **状态**：待开始
+
 ## 依赖 DAG
 
 ```text
@@ -418,6 +445,10 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 TASK-017 ──▶ TASK-018 ──▶ TASK-019 ──▶ TASK-020（REQ-008 贴图规格收口：采样器规范化 → 降采样与接线 → KHR_texture_transform → 文档回填；四者依次改同一个 `src/repair.js`，必须串行）
 
 TASK-021 ──▶ TASK-022（REQ-009 Windows 分发：助手入库 → 安装包重打与冒烟；TASK-021 需外部 Windows x64 环境，未就绪前 TASK-022 不启动）
+
+TASK-027 ──▶ TASK-028 ──▶ TASK-029（REQ-012 跨平台 IVE：WASM 可行性 spike → 按结论落地 → 文档与清单）
+
+> REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
 
 TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/`ui-smoke.cjs` 重叠，故与 TASK-018 串行，但与 TASK-019 的文件范围不重叠）
 ```
@@ -451,6 +482,9 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 22 | TASK-024 | REQ-011 占比模型；无依赖，但排在 TASK-023 之后以避免争抢 `renderer.js`/`ui-smoke.cjs` |
 | 23 | TASK-025 | 依赖 TASK-024（同一批文件；多尺寸矩阵排查要基于占比模型） |
 | 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
+| 25 | TASK-027 | REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行 |
+| 26 | TASK-028 | 依赖 TASK-027 的结论（路线 A/B 二选一）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/` |
+| 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字） |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
 | 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 
@@ -484,3 +518,6 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-021 | REQ-009 | 进行中（README 配方/自检/打包核对已就绪；待 Windows 环境构建入库） | ☐ |
 | TASK-022 | REQ-009 | 进行中（冒烟表与人工目视清单已就绪；待 `dist:win` 与回填） | ☐ |
 | TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
+| TASK-027 | REQ-012 | 待开始（需联网装 emsdk） | ☐ |
+| TASK-028 | REQ-012 | 待开始（等待 TASK-027 结论） | ☐ |
+| TASK-029 | REQ-012 | 待开始 | ☐ |
