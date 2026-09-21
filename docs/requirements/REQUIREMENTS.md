@@ -203,6 +203,25 @@
 - **关联代码/测试**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`；ADR-011；规则 BR-034
 - **确认**：待确认
 
+### REQ-012 让 IVE 输入在所有桌面平台可用（Windows / Linux / macOS Intel+ARM）
+- **状态**：待确认（闸门 ① 规格待 sunny-zhai 确认；先做 spike 再定架构，见 ADR-012）
+- **优先级**：P1
+- **描述**：用户要求"不能改成支持所有系统吗"。现状：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 就到 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]` 找助手，换平台不需要改代码；真正的缺口是**只有 `darwin-arm64` 一份产物**，于是 Windows / Linux / Intel Mac 上 `.ive` 直接降级为 BR-012 的中文提示。本需求把"所有桌面平台都能转 IVE"落成可判定目标，并顺带补齐打包目标（`package.json` 目前只有 `win`）。
+- **范围**：`native/ive2glb/`（若走 WASM 则在其中新增 emscripten 构建路径）、`scripts/`（构建脚本）、`vendor/ive2glb/**`（产物形态可能从"每平台一份"改为"一份 WASM"）、`package.json`（`dependencies`/`asarUnpack`/新增 `mac`、`linux` 打包目标）、`src/ive.js`（若 WASM 路线需要新的调用方式；**解析语义与世界盒口径不得改变**）、文档与台账。
+  **不做**：不改 IVE 的解析语义（轴转换、贴地归心、顶点焊接、贴图内嵌的实测口径不变）；不做服务端/在线转换；不为 IVE 之外的格式扩选择器；不做代码签名与公证（macOS 分发签名是另一个议题）。
+- **验收标准**（Given/When/Then）：
+  1. **跨平台能力（目标）**：Given 四个目标平台 **win32-x64 / linux-x64 / darwin-arm64 / darwin-x64**，When 在各自平台执行 `app-capabilities` 并选一个 `.ive`，Then `ive: true`，且转换、预览、落盘全部成功，世界盒与参考件三轴一致（容差 0.02：`0.538 × 1.364 × 1.056`）、顶点 `11516`、三角面 `18924`。
+  2. **WASM 路线（首选，前提是 spike 通过）**：助手以 **WebAssembly** 形态交付——一次构建的产物在四个平台都能跑，**包内不含任何平台相关的原生可执行文件**（`vendor/ive2glb/` 不再是必需），且不违反仓库"不按平台分发二进制"的约定（与 REQ-007/ADR-008 的 assimpjs 同一条思路）。
+  3. **兜底路线（spike 不通过时）**：至少补齐 **darwin-x64（或 universal2）** 产物，并给出 win32-x64 / linux-x64 的可复现构建与自检步骤（`native/ive2glb/README.md` 已有 Windows 配方，需按实际执行结果回填）；每个平台入目录后必须通过标准 1。
+  4. **打包目标可用**：`npm run dist:mac` 与 `npm run dist:linux` 能产出对应安装包（与既有 `dist:win` 并列），且**打包产物里助手可用**（WASM 资源被正确包含，或对应平台产物在 `asarUnpack` 内）——安装后 `ive: true`。
+  5. **降级不回归**：任何平台在助手缺失/不可用时，仍按 BR-012 返回中文错误并列出已查找路径（不静默、不崩溃、不影响 GLB/FBX/OBJ 能力）。
+  6. **spike 必须留痕（含失败）**：WASM 可行性 spike 的结论写进 ADR-012，**无论成败**都要给出证据——成功给体积/耗时/世界盒实测；失败给**具体失败点**（例如"OSG 的某模块在 emscripten 下无法链接"）与已尝试的命令，不允许只写"不可行"。
+  7. **资源预算**：WASM 路线下实测并记录（a）助手产物体积、（b）单个 IVE 转换的墙钟耗时（`o-model/蹲姿.ive`，基准：darwin 助手 1.5s、全链路 ~2.5s）；（a）超 30MB 或（b）超 10s 必须在 ADR 里说明取舍，否则视为超预算。
+  8. **不回归**：`npm run lint` + `npm test` 全绿；`test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上仍全绿；`node scripts/memory.mjs check` 通过。
+- **关联任务**：TASK-027（spike，先决）、TASK-028（按结论实现）、TASK-029（文档与发布清单回填）
+- **关联代码/测试**：`native/ive2glb/`、`scripts/build-ive2glb.sh`（或新增 WASM 构建脚本）、`vendor/ive2glb/**`、`package.json`、`src/ive.js`、`test/ive.test.js`、`test/ui-smoke.cjs`；ADR-012；REQ-009（可能被本需求取代部分范围）
+- **确认**：待确认
+
 ## 变更记录
 
 | 日期 | REQ | 变更 | 原因 |
@@ -223,3 +242,4 @@
 | 2026-09-20 | REQ-008 | 交付完成 | TASK-017（采样器规范化，含体检侧逐绑定判定）、TASK-018（降采样四档 + 界面接线）、TASK-019（`KHR_texture_transform.texCoord` 覆盖，旧代码上实测 3 红 1 绿）、TASK-020（BR-031~BR-033 / TC-019~TC-021 / 管线文档回填）依次合入 `release/v0.1.1`；`npm test` 141 用例 / 137 通过 / 0 失败 / 4 跳过；冒烟四格式各 36 步 / 114 条断言 |
 | 2026-09-20 | REQ-011 | 澄清验收标准 6 | 原判据写"状态栏与预览控件条**不换行**"。TASK-025 的尺寸矩阵实测：预览控件条在较窄的中栏宽度下会换行（900 窄布局 99px → 1100 宽布局 126px），这是合理且无法用"单行省略号"消除的（控件是静态按钮/输入框，不是可变文本）。判据改为"**状态栏**不换行（高度恒定）+ 预览控件条**允许换行**但不得横向溢出、不得被裁切、不得把画布压到下限以下"，并把"画布不许永远贴在下限"写成显式判据（原判据在极限占位下会恒真） |
 | 2026-09-20 | REQ-005 / REQ-006 / REQ-007 | 人工目视闸门通过 | sunny-zhai 按 `docs/testing/TEST_PLAN.md` 的人工目视清单在应用内逐项核对：**M-1~M-7 全部通过**（M-8 是 Windows-only，随 REQ-009 / TASK-021、TASK-022）。三个需求状态由"进行中 / 待确认"改为"已完成"，`TASKS.md` 进度表的人工列同步改为已确认，留痕见 `docs/approvals/APPROVALS.md` |
+| 2026-09-20 | REQ-012 | 新增 | 用户要求"不能改成支持所有系统吗"。核查后确认**代码本身已平台无关**（`platformDirectory()` = `${process.platform}-${process.arch}`，换平台只需产物），缺口在产物与打包目标：只有 `darwin-arm64`，GitHub 上 Windows/Linux/Intel Mac 的 `.ive` 一律降级为 BR-012 提示。首选 WASM（一次构建全平台、不按平台分发二进制，与 REQ-007/ADR-008 同思路），故先立 spike 任务 TASK-027，spike 结论决定架构（ADR-012） |
