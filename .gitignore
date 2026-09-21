@@ -79,3 +79,7 @@ docs/api/*
 
 # 构建缓存（TASK-030：electron-builder 默认写 ~/Library/Caches，重定向进工作区以免撞沙箱/污染系统目录）
 /.cache/
+
+# WASM spike 工具链与源码（TASK-027，仅本地）
+/.emsdk/
+/.spike/
