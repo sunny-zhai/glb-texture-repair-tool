@@ -14,7 +14,7 @@
 | ① 能否链接成功 | **能** | `wasm-ld` 严格模式（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 0；OSG 630 个编译目标全部通过 |
 | ② IVE 插件能否静态注册 | **能，且无需改动 OSG 源码** | `DYNAMIC_OPENSCENEGRAPH=OFF` 使插件本身成为静态库；`--whole-archive` 保住静态注册；实测 `Registry` 在 `dlopen` 之前就命中已注册的 reader |
 | ③ 文件 IO 方案 | **`-sNODERAWFS=1` 即可**，不需要虚拟 FS 预加载 | 绝对路径、自动建输出目录、CWD 语义、退出码 0/1/2 全部与原生助手一致 |
-| ④ 产物体积与耗时 | **2.91 MB / 单文件 100.2 ms** | 体积预算 30 MB、耗时预算 10 s，均大幅达标 |
+| ④ 产物体积与耗时 | **2.79 MB / 单文件 101.6 ms** | 体积预算 30 MB、耗时预算 10 s，均大幅达标 |
 
 等价性证据（详见第五节）：
 
@@ -68,9 +68,9 @@ scripts/build-ive2glb-wasm.sh o-model/蹲姿.ive
 | 3 | `fatal error: 'GL/glx.h' file not found`（`osgViewer/GraphicsWindowX11.cpp` 等） | 非 Apple 的 UNIX 平台下 OSG 默认 `OSG_WINDOWING_SYSTEM=X11`，会编出 X11/GLX 后端 | `-DOSG_WINDOWING_SYSTEM=None`。本工具不渲染，窗口系统整个不需要；`osgViewer/CMakeLists.txt` 对 `None` 不匹配任何分支，于是不编入窗口后端 |
 | 4 | `undefined symbol: vtable for osgGA::GUIEventHandler`（`libosgVolume.a(Property.cpp.o)`） | `osgVolume` 依赖 `osgGA`，手工链接时漏了这个静态库 | 链接列表补上 `libosgGA.a`；并用 `-Wl,--start-group ... --end-group` 做迭代解析，避免逐个排库序 |
 | 5 | 链接自动选了 `-lc++-noexcept` | emscripten **默认禁用异常捕获**（`DISABLE_EXCEPTION_CATCHING=1`） | 加 `-fexceptions`。链接随即切换到 `-lc++ -lc++abi` 并导出 `setThrew`。不加的后果是 `try/catch` 形同虚设，场景遍历失败会变成 abort 而不是中文错误 |
-| 6 | 53 个未定义符号（`glNewList`、`glColor4f`、`glAlphaFunc` …） | OSG 的 `osg`/`osgText`/`osgSim`/`osgFX` 里编进了 OpenGL 固定管线调用点；原生构建靠链接系统 OpenGL 框架解决，WebGL/GLES2 没有这些入口 | 两级处理：`-sLEGACY_GL_EMULATION=1`（emscripten 的 GL 模拟层）覆盖其中大部分；剩下 **23 个** 由 `native/ive2glb/wasm/gl-trap-stubs.cpp` 显式补齐。**刻意不做静默空实现**：一旦被调用即打印中文错误并以退出码 3 终止 |
+| 6 | 53 个未定义符号（`glNewList`、`glColor4f`、`glAlphaFunc` …） | OSG 的 `osg`/`osgText`/`osgSim`/`osgFX` 里编进了 OpenGL 固定管线调用点；原生构建靠链接系统 OpenGL 框架解决，WebGL/GLES2 没有这些入口 | `native/ive2glb/wasm/gl-trap-stubs.cpp` 把**全部 53 个**入口点做成显式陷阱桩。**刻意不做静默空实现、也不启用 `-sLEGACY_GL_EMULATION`**：一旦被调用即打印中文错误并以退出码 3 终止 |
 
-关于第 6 点的取舍：模拟层的覆盖面随 emscripten 版本变化（本次 `LEGACY_GL_EMULATION` 之后仍缺 23 个），所以**保留严格未定义符号检查**、把缺口显式列成桩，比放行未定义符号更可维护——符号缺口会随工具链升级而"报错暴露"，而不是悄悄变成空实现。23 个桩的原型由 `.spike/gen-trap-stubs.mjs` 从 emscripten 的 `GL/gl.h` 自动提取，避免手写签名与调用方不一致。
+关于第 6 点的取舍：一开始走的是"`-sLEGACY_GL_EMULATION=1` 提供大部分 + 只补 23 个缺口"，但模拟层有两点不能接受——**它会静默吞掉一部分调用**（渲染路径被误触发时可能悄悄产出错误几何，而不是报错），而且链接时会持续打印 `using emscripten GL emulation…` 警告污染 stderr。改成"关模拟 + 全 53 个陷阱"后：stderr 完全干净、`.js` 从 0.25 MB 降到 0.13 MB、任何一次 GL 调用都必然暴露。代价只是桩多列 30 个，而这批原型由 `.spike/gen-trap-stubs.mjs` 从 emscripten 的 `GL/gl.h` 自动提取，不需要手写签名。**保留严格未定义符号检查**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`），符号缺口会随工具链升级"报错暴露"，而不是悄悄变成空实现。
 
 陷阱桩的有效性是**实测**的，不是声称的：另写一个直接调用 `glNewList` 的小程序链接同一份桩，运行输出
 
@@ -80,7 +80,7 @@ ive2glb(wasm)：不支持的 OpenGL 调用 glNewList。
 WebGL 无法实现的立即模式/显示列表/像素传输功能，请报告该模型。
 ```
 
-并返回退出码 **3**。
+并返回退出码 **3**。反过来说，**53 个桩在真实转换中一个都没有触发**（stderr 为空、产物与原生逐字节相同），这是"只读路径确实不碰渲染"的直接证据。
 
 ## 五、等价性证据
 
@@ -132,12 +132,14 @@ GLB_REPAIR_IVE2GLB="$PWD/.spike/wasm/ive2glb.sh" node --test test/ive.test.js
 
 | 指标 | 预算 | 实测 | 判定 |
 | :-- | :-- | :-- | :-- |
-| 助手产物体积 | > 30 MB 需说明取舍 | `ive2glb.wasm` **2.66 MB** + `ive2glb.js` **0.25 MB** = **2.91 MB** | 达标（约为本机 darwin 助手目录 11 MB 的 1/4） |
-| 单文件转换耗时 | > 10 s 需说明取舍 | WASM **100.2 ms** / darwin **59.4 ms**（`o-model/蹲姿.ive`，各 7 次取最好；WASM 含 Node 启动与实例化开销） | 达标 |
+| 助手产物体积 | > 30 MB 需说明取舍 | `ive2glb.wasm` **2.65 MB** + `ive2glb.js` **0.13 MB** = **2.79 MB** | 达标（约为本机 darwin 助手目录 11 MB 的 1/4） |
+| 单文件转换耗时 | > 10 s 需说明取舍 | WASM **101.6 ms** / darwin **62.7 ms**（`o-model/蹲姿.ive`，各 7 次取最好；WASM 含 Node 启动与实例化开销） | 达标 |
 
-WASM 产物哈希：`ive2glb.wasm` = `cf56089e77dc4c2fa6d9dba16f126097…`，`ive2glb.js` = `81658ef03bdec0b838488b8224b80186…`（Emscripten 6.0.9 / OSG 3.6.5；换工具链版本产物会变，数字需重测）。
+WASM 产物哈希：`ive2glb.wasm` = `5795057b38b4cdfd65d14d31783e99b0…`，`ive2glb.js` = `2d5b1bfe3e7be4b73021662cb4d03c5f…`（Emscripten 6.0.9 / OSG 3.6.5；换工具链版本产物会变，数字需重测）。
 
 ## 七、对 TASK-028 的建议与遗留项
+
+> **落地状态（TASK-028）**：下面第 1~3、6、7 条已落实——产物落在 `vendor/ive2glb/wasm/`（被 `files`/`asarUnpack` 的 `vendor/ive2glb/**` 覆盖）、`resolveIveHelper()` 改为原生优先 + WASM 回退的描述符、构建脚本从"草稿"转为 `npm run build:ive2glb:wasm`、并新增 5 条 `test/ive.test.js` 用例（含逐字节等价比对与"缺 `.wasm` 不算可用"）。第 4、5 条仍是遗留项。本节保留 spike 当时的原始判断，便于回溯。
 
 **建议走路线 A（WASM）**，并据此重新评估 TASK-021/TASK-022：按 `TASKS.md` 的既有约定，spike 通过即意味着 **Windows 原生助手（TASK-021/022）被 REQ-012 取代**，应标为"已取消（被 REQ-012 取代）"，而不是继续等 Windows 环境。原先阻塞在外部环境的整条线因此解开。
 
@@ -148,5 +150,5 @@ WASM 产物哈希：`ive2glb.wasm` = `cf56089e77dc4c2fa6d9dba16f126097…`，`iv
 3. **必须补的验证**：`test/ive.test.js` 与 `test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上全绿；打包后 `app-capabilities` 报 `ive: true`；BR-012 缺助手降级不回归。本次只跑了 `test/ive.test.js`（单测层），**UI 冒烟与打包验证属 TASK-028**。
 4. **本机样例限制**：本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具（`person-move.ive` 不在），等价性是**在这一个模型上**达到逐字节一致的。建议 TASK-028 至少再补一个不同来源/含不同特性的 IVE 复核，避免"单模型偶然一致"。
 5. **可复现性依赖网络**：脚本要从 GitHub 取 emsdk 与 OSG 源码，并在首次编译时由 emscripten 下载 freetype/zlib/libpng/libjpeg 端口。完全离线的构建环境需要预先缓存这些。
-6. **emscripten 的 GL 模拟会打印警告**（`using emscripten GL emulation unsafe opts…`）。本次 GL 从未被调用，警告无实际影响；若要消除可评估 `-sGL_UNSAFE_OPTS=0`，代价未测。
-7. **构建脚本的定位**：本脚本按 `TASKS.md` 属"spike 草稿"。若 TASK-028 采纳 WASM 路线，它需要从"草稿"转为正式发布流程的一环（含产物校验与版本记录），否则 `vendor/` 下的 wasm 就成了无法追溯来源的二进制。
+6. ~~**emscripten 的 GL 模拟会打印警告**~~ **已消除**：改为关闭 `-sLEGACY_GL_EMULATION`、全 53 个入口点走陷阱桩后，stderr 完全干净（实测为空）。
+7. **构建脚本的定位**：本脚本按 `TASKS.md` 属"spike 草稿"。若 TASK-028 采纳 WASM 路线，它需要从"草稿"转为正式发布流程的一环（含产物校验与版本记录），否则 `vendor/` 下的 wasm 就成了无法追溯来源的二进制。**已转为 `npm run build:ive2glb:wasm`**；产物哈希与工具链版本记录在本文件第六节。

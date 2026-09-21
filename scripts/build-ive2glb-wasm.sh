@@ -2,6 +2,10 @@
 #
 # 把 ive2glb（OSG 的 IVE 读取能力）编成 WebAssembly，供所有桌面平台共用一份产物。
 #
+# 产物落在 vendor/ive2glb/wasm/（**入库**，被 package.json 的 files/asarUnpack 引用），
+# 由 src/ive.js::resolveIveHelper() 在找不到本平台原生助手时回退使用——因此 win32-x64 /
+# linux-x64 / darwin-x64 都不再需要各自的预编译助手（REQ-012 / ADR-012）。
+#
 # 背景与完整实测记录见 native/ive2glb/WASM-SPIKE.md（TASK-027 / REQ-012）。
 # 本脚本把那次 spike 的命令固化成可复现的步骤：
 #   ① 准备 emsdk（Emscripten 6.0.9 实测通过）
@@ -17,13 +21,17 @@
 #
 # 可用环境变量覆盖路径：EMSDK_DIR / OSG_SRC / BUILD_DIR / OUT_DIR
 #
+# 该产物需要 Node 才能执行（Emscripten ENVIRONMENT=node）：开发态是 node，打包态是
+# Electron 的 Node（ELECTRON_RUN_AS_NODE=1）。已在 Electron 32.3.3 的 Node 20.18.1 上实测。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EMSDK_DIR="${EMSDK_DIR:-$ROOT/.emsdk}"
 OSG_SRC="${OSG_SRC:-$ROOT/.spike/osg}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/.spike/build-osg}"
-OUT_DIR="${OUT_DIR:-$ROOT/.spike/wasm}"
+# 默认直接产出可分发产物（与 vendor/ive2glb/darwin-<arch>/ 同级）。它是**入库**的、
+# 被 package.json 的 files/asarUnpack 引用，因此不是构建缓存。
+OUT_DIR="${OUT_DIR:-$ROOT/vendor/ive2glb/wasm}"
 
 # 与 vendor/ive2glb/**/osgPlugins 里的 osgPlugins-3.6.5 保持一致；换版本要同步改这个值。
 OSG_VERSION="3.6.5"
@@ -114,15 +122,15 @@ LIB="$BUILD_DIR/lib"
 # 链接要点：
 #   --whole-archive 包住 IVE 插件与 osg 序列化器：它们的注册靠静态初始化，
 #     不被引用就会被链接器整个丢掉，静态注册随即失效。
-#   -sLEGACY_GL_EMULATION=1：提供大部分 OSG 会引用到的固定管线 GL 入口点。
-#   gl-trap-stubs.cpp：补上 emscripten 也未实现的 23 个入口点，被调用即报错退出。
+#   gl-trap-stubs.cpp：补齐全部 53 个 WebGL/GLES2 无法实现的固定管线入口点，
+#     被调用即中文报错并退出码 3。**刻意不开 -sLEGACY_GL_EMULATION**：模拟层会静默
+#     吞掉一部分调用，而全陷阱保证任何一次 GL 调用都必然暴露（实测该路径一次都不调用）。
 #   -fexceptions：emscripten 默认禁用异常捕获，而助手用 try/catch 汇报遍历失败。
 #   -sNODERAWFS=1：直接读写 Node 的真实文件系统，无需预加载虚拟 FS。
 em++ -O2 -std=c++20 -fexceptions \
   -include "$ROOT/native/ive2glb/wasm/cxx17-compat.h" \
   -I "$OSG_SRC/include" -I "$BUILD_DIR/include" \
   -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=node -sEXIT_RUNTIME=1 \
-  -sLEGACY_GL_EMULATION=1 \
   -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sUSE_FREETYPE=1 -sUSE_LIBJPEG=1 \
   "$ROOT/native/ive2glb/src/main.cpp" \
   "$ROOT/native/ive2glb/wasm/gl-trap-stubs.cpp" \

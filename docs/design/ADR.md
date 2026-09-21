@@ -184,12 +184,14 @@
 | ① 能否链接成功 | 能 | Emscripten 6.0.9 + OSG 3.6.5，630 个编译目标全过；`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 0 |
 | ② IVE 插件能否静态注册 | 能，**无需改动 OSG 源码** | `DYNAMIC_OPENSCENEGRAPH=OFF` 使插件本身成为静态库，`--whole-archive` 保住其静态注册；`Registry::getReaderWriterForExtension()` 在 `dlopen` 之前就命中已注册的 IVE reader，因此 `dlopen` 链根本不进符号闭包 |
 | ③ 文件 IO 方案 | `-sNODERAWFS=1` 即可，无需虚拟 FS 预加载 | 绝对路径、自动建输出目录、CWD 语义、退出码 0/1/2 全部与原生助手一致 |
-| ④ 产物体积与耗时 | 2.91 MB / 单文件 100.2 ms | 预算 30 MB 与 10 s，均大幅达标（darwin 对照 59.4 ms） |
+| ④ 产物体积与耗时 | 2.79 MB / 单文件 101.6 ms | 预算 30 MB 与 10 s，均大幅达标（darwin 对照 62.7 ms） |
 
 **等价性达到逐字节级别**：同一份 `src/ive.js`，WASM 助手与 darwin 助手的 `scene.json`、`data.bin` SHA-256 相同；全链路 GLB 亦 SHA-256 相同（2,544,480 B）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`、`triangles 18924` 与标准 1 完全一致；`test/ive.test.js` 指向 WASM 助手为 **21 通过 / 0 失败 / 3 跳过**（跳过项为缺失夹具，与原生基线一致）。
 
 对决策 (c) 的影响：**spike 通过即触发 TASKS.md 已写明的取代关系**——TASK-021/TASK-022（构建并入库 Windows 原生助手、重打 Windows 安装包）应标为「已取消（被 REQ-012 取代）」，而不是继续等待外部 Windows 环境；原先因缺少 Windows/Docker 而挂起的两条任务由此解开。
 
-过程中撞到 6 处失败（GLES2 profile 触发 `EGL_LIBRARY` 缺失、C++17 移除 `std::mem_fun_ref`、X11/GLX 后端、漏链 `osgGA`、emscripten 默认 `-lc++-noexcept` 关掉异常捕获、53 个固定管线 GL 入口点缺失），逐条修法与取舍见 spike 文档第四节。其中最需要留意的两条**代价**是：**(a)** OSG 3.6.5 需要 C++17 兼容头（不改 vendored 源码，用 `-include` 注入）；**(b)** 需要 23 个显式"陷阱桩"补齐 emscripten GL 模拟层未实现的入口点——刻意不做静默空实现，被调用即中文报错并退出码 3（已实测），使"渲染路径被误触发"立刻暴露而不是悄悄产出错误几何。
+过程中撞到 6 处失败（GLES2 profile 触发 `EGL_LIBRARY` 缺失、C++17 移除 `std::mem_fun_ref`、X11/GLX 后端、漏链 `osgGA`、emscripten 默认 `-lc++-noexcept` 关掉异常捕获、53 个固定管线 GL 入口点缺失），逐条修法与取舍见 spike 文档第四节。其中最需要留意的两条**代价**是：**(a)** OSG 3.6.5 需要 C++17 兼容头（不改 vendored 源码，用 `-include` 注入）；**(b)** 需要 **53 个**显式"陷阱桩"补齐 WebGL 无法实现的固定管线入口点——刻意不启用 emscripten 的 GL 模拟层、也不做静默空实现，被调用即中文报错并退出码 3（已实测），使"渲染路径被误触发"立刻暴露而不是悄悄产出错误几何；反过来，这 53 个桩在真实转换中**一个都没有触发**（stderr 为空、产物逐字节相同），本身就是"只读路径确实不碰渲染"的证据。
+
+**TASK-028 落地后的补充（2026-09-21）**：`resolveIveHelper()` 已改为"原生助手优先、WASM 回退"的形态，产物落在 `vendor/ive2glb/wasm/`（被 `files`/`asarUnpack` 的 `vendor/ive2glb/**` 覆盖），构建入口是 `npm run build:ive2glb:wasm`；已在 Electron 32.3.3 的 Node 20.18.1 上实测可用（打包态经 `ELECTRON_RUN_AS_NODE=1` 起进程）。`test/ive.test.js` 新增 5 条用例把 WASM 路径钉进回归网，其中"WASM 与原生产物逐字节相同"在 darwin-arm64 上实际执行（不是跳过）。
 
 **尚未验证、留给 TASK-028 的部分**：`test/ui-smoke.cjs` 四格式冒烟、打包后 `app-capabilities` 报 `ive: true` 与 BR-012 降级不回归。另外本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的，建议 TASK-028 补一个不同来源的 IVE 复核，避免"单模型偶然一致"。

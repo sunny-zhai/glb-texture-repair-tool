@@ -420,7 +420,16 @@
 - **产出**：`src/ive.js`（或 `vendor/ive2glb/**`）、`package.json`、`scripts/`（构建脚本）、`test/ive.test.js`
 - **文件范围**：`src/ive.js`, `package.json`, `scripts/`, `vendor/ive2glb/`, `test/ive.test.js`
 - **验证方式**：`npm run lint` + `npm test` 全绿；`node test/ui-smoke.cjs o-model/蹲姿.ive` 全绿；四平台能力判定（标准 1）与打包后 `ive: true`（标准 4）；体积/耗时实测入 ADR（标准 7）；缺助手时的中文降级不回归（标准 5）
-- **状态**：待开始
+- **状态**：已完成（路线 A：WASM）
+- **验证结果**（2026-09-21）：
+  ① **产物 vendoring**：`scripts/build-ive2glb-wasm.sh` 的默认输出改为 `vendor/ive2glb/wasm/`，产物 `ive2glb.js` 0.13 MB + `ive2glb.wasm` 2.65 MB = **2.79 MB**（入库；被 `package.json` 的 `files`/`asarUnpack` 通配 `vendor/ive2glb/**` 覆盖，这两项无需改动）。构建入口补 `npm run build:ive2glb:wasm`。
+  ② **解析改造（不改 IVE 解析语义）**：`resolveIveHelper()` 由"只认可执行文件路径"改为返回描述符，顺序为 `GLB_REPAIR_IVE2GLB`（指向 `.js` 时按 WASM 处理）→ 本平台原生助手 → WASM 助手；`.wasm` 与 `.js` **必须成对存在**，否则不算可用（避免"起得来但读不到模块"的假可用）。`runHelper()` 对 WASM 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 起进程。无效的覆盖值仍按旧语义回退到内置路径。
+  ③ **顺带修掉一个既有缺陷（打包后 IVE 转换整体失效）**：旧实现按 `vendor/ive2glb` → `app.asar.unpacked/...` 的顺序查找，但 `asarUnpack` 的文件在 asar 索引里仍可见、`fs.statSync` 也会成功，于是打包后解析停在 **asar 内路径**，`spawnSync` 报 `ENOTDIR`。实测复现：打包应用内 `convertIveToGlb` → `status: error`，`error: 调用 IVE 转换助手失败：spawnSync …/app.asar/vendor/ive2glb/darwin-arm64/ive2glb ENOTDIR`。TASK-030 当时只验证了"unpacked 里的助手能直接执行"，没走应用自身的解析，所以漏掉了。改为 **unpacked 优先**（开发态两 root 相同，只查一次），并用纯函数 `vendorRootsFor()` 把顺序钉进回归网。
+  ④ **等价性**：`test/ive.test.js` 新增 6 条用例，其中"WASM 与原生助手产出逐字节相同"在 darwin-arm64 上**实际执行**（非跳过）——`worldSize`/`worldCenter`/`vertices`/`verticesBefore`/`triangles`/`axisMode` 全部相等且 GLB 字节相同；另钉住 REQ-012 标准 1 的 `0.538 × 1.364 × 1.056` / `11516` / `18924`。
+  ⑤ **BR-012 降级不回归**：新增用例把 `src/` 复制到一个**没有 `vendor/`** 的临时根下（真环境、非 mock），断言 `available === false`、`kind === ''`、中文信息含 `缺少 IVE 转换助手`、两个构建脚本名与 `GLB_REPAIR_IVE2GLB`，且**逐条列出** `searched` 里的每个路径。
+  ⑥ **打包后可用（标准 4）**：`npx electron-builder --mac --dir` 后 `app.asar.unpacked/vendor/ive2glb/wasm/` 两个文件齐备；**在打包应用内**实测 `convertIveToGlb('o-model/蹲姿.ive')` → `success`、`11516` / `18924` / `0.538×1.364×1.056`，解析到 `app.asar.unpacked/vendor/ive2glb/darwin-arm64/ive2glb`；再以 WASM 助手跑同一文件 → `success` 且产物与原生路径**逐字节相同**（这即非 darwin 平台上 `ive: true` 的依据）。
+  ⑦ **门禁**：`npm run lint` 通过；`npm test` → **146 用例 / 142 通过 / 0 失败 / 4 跳过**（TASK-027 后基线 141/137/0/4，净增 5 条，全部为本次新增）；`node test/ui-smoke.cjs o-model/蹲姿.ive` 在**开发态**与**打包应用**上各 **66 步 / 132 条断言 / 0 失败**；体积/耗时已入 ADR-012（标准 7）。
+  ⑧ **未做（属 TASK-029）**：`docs/001-code-design.md` 的 BR-036 与 MOD-005/006 完整回填、`RELEASE_CHECKLIST.md` 的四平台口径、`CLAUDE.md` 的 IVE 章节。本次只同步了 `001-code-design.md` §4.3.1 的解析顺序（行为已变，必须同步）。**遗留**：本地仍只有 `o-model/蹲姿.ive` 一个 IVE 夹具，等价性是单模型结论。
 
 ### TASK-029 REQ-012 的文档与发布清单回填
 - **关联需求**：REQ-012；设计决策见 ADR-012
@@ -512,8 +521,8 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 23 | TASK-025 | 依赖 TASK-024（同一批文件；多尺寸矩阵排查要基于占比模型） |
 | 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
 | 25 | TASK-027 | ~~REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行~~ **已于 2026-09-21 完成**，结论「路线 A（WASM）可行」；TASK-028 据此落地 |
-| 26 | TASK-028 | 依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/` |
-| 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字） |
+| 26 | TASK-028 | ~~依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/`~~ **已于 2026-09-21 完成**，TASK-029 据此回填文档 |
+| 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字；**产物形态与数字已定**：`vendor/ive2glb/wasm/` 2.79 MB、单文件约 102 ms） |
 | 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
 | 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
@@ -549,6 +558,6 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-022 | REQ-009 | 已取消（被 REQ-012 取代；冒烟表与人工目视清单仍有效） | ☐ |
 | TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
 | TASK-027 | REQ-012 | 已完成（结论：WASM 路线可行；产物逐字节等价、2.91 MB、100.2 ms） | ☑ 自动 |
-| TASK-028 | REQ-012 | 待开始（等待 TASK-027 结论） | ☐ |
+| TASK-028 | REQ-012 | 已完成（路线 A：WASM 助手 2.79MB 已 vendoring；顺带修掉打包后 asar 路径导致 IVE 转换失效的既有缺陷） | ☑ 自动 |
 | TASK-029 | REQ-012 | 待开始 | ☐ |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |

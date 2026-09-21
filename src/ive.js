@@ -64,41 +64,84 @@ function platformDirectory() {
 }
 
 /**
- * @description 解析原生助手路径，兼容源码运行、asar 打包与非默认安装位置。
- * @returns {{ path: string, available: boolean, searched: string[] }}
+ * @description 列出查找 vendored 助手的根目录，**unpacked 优先**。
+ *
+ * 打包后 `asarUnpack` 的文件在 asar 索引里仍然可见，`fs.statSync` 对 asar 内路径也会成功，
+ * 但 asar 内的文件**不能被执行**（`spawnSync` 直接报 ENOTDIR）。所以必须先看
+ * `app.asar.unpacked`；开发态两个根目录是同一个路径，此时只查一次，避免 searched 出现重复项。
+ */
+function vendorRootsFor(dirname) {
+  const vendorRoot = path.join(dirname, '..', 'vendor', 'ive2glb')
+  const unpackedRoot = vendorRoot.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
+  return unpackedRoot === vendorRoot ? [vendorRoot] : [unpackedRoot, vendorRoot]
+}
+
+/**
+ * @description 解析 IVE 转换助手，兼容源码运行、asar 打包与非默认安装位置。
+ *
+ * 两种形态，优先级从高到低：
+ *   ① 本平台的原生可执行文件 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]`
+ *   ② 跨平台的 WASM 助手 `vendor/ive2glb/wasm/ive2glb.js` + `ive2glb.wasm`
+ * WASM 需要由 Node 起进程（打包态是 Electron 的 Node，见 runHelper），因此
+ * win32-x64 / linux-x64 / darwin-x64 不再需要各自的预编译助手（REQ-012 / ADR-012）。
+ *
+ * @returns {{ kind: 'native'|'wasm'|'', path: string, command: string, prefixArgs: string[],
+ *   available: boolean, searched: string[] }}
  */
 function resolveIveHelper() {
   const executable = process.platform === 'win32' ? 'ive2glb.exe' : 'ive2glb'
   const searched = []
-  const candidates = []
+  const roots = vendorRootsFor(__dirname)
 
-  if (process.env.GLB_REPAIR_IVE2GLB) {
-    candidates.push(process.env.GLB_REPAIR_IVE2GLB)
-  }
-
-  const vendorRoot = path.join(__dirname, '..', 'vendor', 'ive2glb')
-  // 打包后二进制无法从 asar 内执行，electron-builder 会把它解包到 app.asar.unpacked。
-  const unpackedRoot = vendorRoot.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
-  for (const root of [vendorRoot, unpackedRoot]) {
-    const candidate = path.join(root, platformDirectory(), executable)
-    if (!candidates.includes(candidate)) candidates.push(candidate)
-  }
-
-  for (const candidate of candidates) {
+  const isFile = (candidate) => {
     searched.push(candidate)
     try {
-      if (fs.statSync(candidate).isFile()) {
-        return { path: candidate, available: true, searched }
-      }
+      return fs.statSync(candidate).isFile()
     } catch {
-      // 继续尝试下一个候选路径
+      return false
     }
   }
-  return { path: '', available: false, searched }
+
+  const missing = { kind: '', path: '', command: '', prefixArgs: [], available: false, searched }
+
+  // WASM 助手由 Node 起进程；.wasm 必须与 .js 成对存在，只检查 .js 会得到一个
+  // 起得来但读不到模块的「假可用」，错误信息也会指向别处。
+  const wasmHelper = (script) => ({ kind: 'wasm', path: script, command: process.execPath, prefixArgs: [script], available: true, searched })
+  const wasmHelperUsable = (script) => {
+    const binary = path.join(path.dirname(script), 'ive2glb.wasm')
+    const scriptPresent = isFile(script)
+    const binaryPresent = isFile(binary)
+    return scriptPresent && binaryPresent
+  }
+
+  // 显式覆盖优先。覆盖值无效时继续按内置路径查找（保持既有语义，不因写错就整条不可用）；
+  // 指向 .js 时按 WASM 助手处理——这是测试与排障时钉住实现的手段。
+  if (process.env.GLB_REPAIR_IVE2GLB && isFile(process.env.GLB_REPAIR_IVE2GLB)) {
+    const override = process.env.GLB_REPAIR_IVE2GLB
+    if (/\.js$/i.test(override)) {
+      if (wasmHelperUsable(override)) return wasmHelper(override)
+    } else {
+      return { kind: 'native', path: override, command: override, prefixArgs: [], available: true, searched }
+    }
+  }
+
+  for (const root of roots) {
+    const candidate = path.join(root, platformDirectory(), executable)
+    if (isFile(candidate)) {
+      return { kind: 'native', path: candidate, command: candidate, prefixArgs: [], available: true, searched }
+    }
+  }
+
+  for (const root of roots) {
+    const script = path.join(root, 'wasm', 'ive2glb.js')
+    if (wasmHelperUsable(script)) return wasmHelper(script)
+  }
+
+  return missing
 }
 
 /**
- * @description 判断某平台是否已提供 IVE 转换助手。
+ * @description 判断某平台是否已提供 IVE 转换助手（原生或 WASM）。
  */
 function iveConversionAvailable() {
   return resolveIveHelper().available
@@ -109,6 +152,7 @@ function missingIveHelperMessage() {
   return [
     `当前平台（${platformDirectory()}）缺少 IVE 转换助手 ive2glb。`,
     '请在 native/ive2glb 下构建后执行 scripts/build-ive2glb.sh 放入 vendor/ive2glb/，',
+    '或执行 scripts/build-ive2glb-wasm.sh 产出跨平台的 WASM 助手，',
     `或设置环境变量 GLB_REPAIR_IVE2GLB 指向可执行文件。已查找：${helper.searched.join('、')}`,
   ].join('')
 }
@@ -119,11 +163,17 @@ function isIvePath(filePath) {
   return typeof filePath === 'string' && path.extname(filePath).toLowerCase() === '.ive'
 }
 
-function runHelper(helperPath, inputPath, outputDir) {
-  const result = spawnSync(helperPath, [inputPath, outputDir], {
+function runHelper(helper, inputPath, outputDir) {
+  // WASM 助手是个 .js，必须由 Node 执行。打包态 process.execPath 是 Electron 可执行文件，
+  // 需要 ELECTRON_RUN_AS_NODE=1 让它以 Node 模式运行；开发态（纯 node）该变量无副作用。
+  const env = helper.kind === 'wasm'
+    ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    : process.env
+  const result = spawnSync(helper.command, [...helper.prefixArgs, inputPath, outputDir], {
     encoding: 'utf8',
     timeout: 30 * 60 * 1000,
     maxBuffer: 8 * 1024 * 1024,
+    env,
   })
   if (result.error) {
     throw new Error(`调用 IVE 转换助手失败：${result.error.message}`)
@@ -837,7 +887,7 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
 
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ive2glb-'))
     try {
-      const summary = runHelper(helper.path, inputPath, workDir)
+      const summary = runHelper(helper, inputPath, workDir)
       const scenePath = path.join(workDir, 'scene.json')
       const binPath = path.join(workDir, 'data.bin')
       const intermediate = JSON.parse(fs.readFileSync(scenePath, 'utf8'))
@@ -910,6 +960,7 @@ module.exports = {
   resolveIveHelper,
   rotateVector,
   transformVectorArray,
+  vendorRootsFor,
   weldVertices,
   worldBounds,
 }
