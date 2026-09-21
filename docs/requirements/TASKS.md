@@ -303,7 +303,7 @@
 - **产出**：`vendor/ive2glb/win32-x64/`、`native/ive2glb/README.md`、`package.json`（如 `files`/`asarUnpack` 需调整）
 - **文件范围**：`vendor/ive2glb/win32-x64/`, `native/ive2glb/README.md`, `package.json`
 - **验证方式**：① `dumpbin /dependents vendor/ive2glb/win32-x64/ive2glb.exe`（或等价）证明无第三方非系统依赖；② 在 Windows 上运行应用 → `app-capabilities` 报 `ive: true`、选 `.ive` 能转换/预览/落盘，世界盒与 darwin 产出一致（容差 0.02）；③ `npm test` 不回归
-- **状态**：进行中（**环境无关部分已完成**：Windows 构建配方、vendoring 约定与自检步骤；待外部 Windows x64 环境执行构建与入库）
+- **状态**：**已取消（被 REQ-012 取代）**。原状态为「进行中（环境无关部分已完成）」。TASK-027 的 spike 于 2026-09-21 证明 WASM 路线可行，按本文件 DAG 注记与 ADR-012 的既有约定，Windows 原生助手不再需要构建。**已交付的环境无关部分保留有效**（`native/ive2glb/README.md` 的 Windows 配方与依赖闭包自检在排障时仍可用）；下方「部分交付」记录不改写
 - **验证结果（部分交付，2026-09-20）**：
   ① `native/ive2glb/README.md` 的 Windows 章节从"一段命令 + 一句话"扩成可照做的配方：vcpkg 静态三元组构建命令、目标目录结构、以及三条**由源码推出**的硬约束——(a) 可执行文件必须叫 `ive2glb.exe` 且放在 `vendor/ive2glb/win32-x64/`（`src/ive.js::resolveIveHelper()` 只按这个路径找）；(b) 插件目录名只能是 `osgPlugins` 或 `osgPlugins-3.6.5` 且必须在 exe **同级**（`native/ive2glb/src/main.cpp::registerLocalPluginPath()` 只认这两个名字，并把它们插到插件搜索路径最前面）；(c) **Windows 没有 `@rpath/@executable_path/lib`**，所以动态三元组必须把 `osg*/zlib*/libpng*/freetype*` 等 DLL 放在 **exe 同目录**，不能照搬 macOS 的 `lib/` 约定（推荐静态三元组）。
   ② 新增「依赖闭包自检」（对 `ive2glb.exe` 与 `osgdb_ive.dll` 各跑一次 `dumpbin /dependents`，只剩系统 DLL 为通过，并列出需要警惕的第三方 DLL 名单）与「不依赖 GUI 的自检」（助手裸跑 + `convertIveToGlb` 全链路，附期望值 `success / [0.538,1.364,1.056] / 11516 / 18924`），并明确标注**未在本仓库验证过**。
@@ -317,7 +317,7 @@
 - **产出**：`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、（本地产物 `dist/`，不入库）
 - **文件范围**：`docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`
 - **验证方式**：安装包时间戳新于本次提交且包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；§4 每行都有实际值与结果；`RELEASE_CHECKLIST.md` 预检除显式"不适用"外全勾；`node scripts/memory.mjs check` 通过
-- **状态**：进行中（**环境无关部分已完成**：发布冒烟表补成可执行清单、人工目视清单；待 TASK-021 完成后在 Windows 上执行 `dist:win` 与回填）
+- **状态**：**已取消（被 REQ-012 取代）**，随 TASK-021 一并取消——Windows 原生助手不再构建，重打 Windows 安装包的前提消失。原状态为「进行中（环境无关部分已完成）」。**发布冒烟表与人工目视清单继续有效**（它们是平台无关的发布检查项，由 TASK-029 改为四平台口径）；下方「部分交付」记录不改写
 - **验证结果（部分交付，2026-09-20）**：
   ① `docs/release/RELEASE_CHECKLIST.md` §4 从 **7 行扩到 15 行**：补上此前缺失的「GLB 修复」「FBX 转换」「OBJ 转换」「贴图降采样（REQ-008）」「预览修正记忆（REQ-010）」「布局占比（REQ-011）」以及「包内容」「依赖闭包」「助手自检」三行；**Windows-only 的行首标 `★`**（包内容 / 依赖闭包 / 助手自检 / Windows 安装包），其余行在 macOS 开发机上即可执行并回填——这样 Windows 环境到位时只剩"填实际值与勾选"。
   ② `docs/testing/TEST_PLAN.md` 新增「人工目视清单」（M-1~M-8）：把 TC-014~TC-018 与 REQ-009/010/011 的人工部分写成可复制的步骤与判定口径（含 OBJ 那张 1×1 占位贴图属预期的说明），确认后即可把台账里的"待人工"改为"已确认"。
@@ -402,7 +402,16 @@
 - **产出**：`docs/design/ADR.md` 的 ADR-012 结论段；`native/ive2glb/WASM-SPIKE.md`（命令与实测/失败记录）；可选 `scripts/build-ive2glb-wasm.sh` 草稿
 - **文件范围**：`native/ive2glb/`, `docs/design/ADR.md`
 - **验证方式**：成功 → 在 Node 里跑通 `蹲姿.ive` 并与 darwin 助手产物比对（世界盒 `0.538×1.364×1.056`、顶点 `11516`、三角面 `18924`）；失败 → ADR-012 写出失败点 + 可复现命令 + 已排除的替代做法
-- **状态**：待开始（需联网安装 emsdk）
+- **状态**：已完成（结论：**路线 A 可行**）
+- **验证结果**（2026-09-21）：
+  ① **四个问题全部有肯定答案**，完整记录见 `native/ive2glb/WASM-SPIKE.md`，复现脚本 `scripts/build-ive2glb-wasm.sh`（端到端实跑退出码 0，自检输出与原生助手逐字一致）。环境：**Emscripten 6.0.9 + OpenSceneGraph 3.6.5**（与本机 darwin 助手同版本），OSG **630 个编译目标全部通过**。
+  ② **①能否链接**：能。`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 **0**，零未定义符号。
+  ③ **②插件静态注册**：能，且**未改动 OSG 源码**。`DYNAMIC_OPENSCENEGRAPH=OFF` 使 `osgdb_ive` 本身就是静态库；`REGISTER_OSGPLUGIN`（`include/osgDB/Registry:743`）与 `REGISTER_OBJECT_WRAPPER`（`include/osgDB/ObjectWrapper:236`）生成静态注册代理，靠 `-Wl,--whole-archive` 保住；**`Registry::getReaderWriterForExtension()` 先遍历已注册的 `_rwList`（`Registry.cpp:881-887`）并直接返回，`dlopen` 路径根本走不到**——实测符号闭包里**没有任何非 GL 的未定义符号**，即 `dlopen`/`dlsym` 链未进入 wasm，无需给它打桩。
+  ④ **③文件 IO**：`-sNODERAWFS=1` 即可，无需虚拟 FS 预加载。绝对路径、自动创建输出目录、相对路径按进程 CWD 解析、退出码（成功 0 / 输入不存在 1 / 非 IVE 1 / 参数数不对 2）**全部与原生助手逐项一致**，中文错误文案也相同 → `src/ive.js` 的 spawn/解析逻辑可原样复用。
+  ⑤ **④体积与耗时**：`ive2glb.wasm` **2.66 MB** + `ive2glb.js` **0.25 MB** = **2.91 MB**（预算 30 MB）；`o-model/蹲姿.ive` 单文件 **100.2 ms**（darwin 对照 59.4 ms，各 7 次取最好，WASM 含 Node 启动与实例化），预算 10 s。均达标。
+  ⑥ **等价性达到逐字节级别**：助手产物 `scene.json`/`data.bin` 与 darwin 助手 **SHA-256 相同**（`a96011bc…` / `4b82fd20…`）；全链路 `convertIveToGlb` 产出的 GLB **SHA-256 相同**（2,544,480 B，`76e34b58…`）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`（焊接前 56772）、`triangles 18924`、`axisMode bake` 与 REQ-012 标准 1 完全一致；`GLB_REPAIR_IVE2GLB=… node --test test/ive.test.js` → **24 用例 / 21 通过 / 0 失败 / 3 跳过**（跳过项缺 `person-move.ive`，与原生基线一致）。
+  ⑦ **过程中 6 处失败点**（GLES2 profile 触发 `EGL_LIBRARY` 缺失 → 改用 GL2 profile，兼保住 C++ 异常；C++17 移除 `std::mem_fun_ref`（tri_stripper）→ `-include` 兼容头注入，不改 vendored 源码；X11/GLX 后端 → `-DOSG_WINDOWING_SYSTEM=None`；漏链 `libosgGA.a`；emscripten 默认 `-lc++-noexcept` 关掉异常捕获而 `main.cpp` 用 `try/catch` → `-fexceptions`；53 个固定管线 GL 入口点缺失 → `-sLEGACY_GL_EMULATION=1` + **23 个显式陷阱桩**）逐条记入 spike 文档第四节。陷阱桩**实测**有效：直接调用 `glNewList` 会打印中文错误并返回退出码 **3**（刻意不做静默空实现，避免渲染路径被误触发时悄悄产出错误几何）。
+  ⑧ **据此触发 TASKS.md 已写明的取代关系**：TASK-021/TASK-022（Windows 原生助手与安装包）标为「已取消（被 REQ-012 取代）」，不再等待外部 Windows 环境。**尚未验证**、属 TASK-028 的：`test/ui-smoke.cjs` 四格式冒烟、打包后 `app-capabilities` 报 `ive: true`、BR-012 缺助手降级不回归；另本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的，TASK-028 应补一个不同来源的 IVE 复核。
 
 ### TASK-028 按 spike 结论落地跨平台 IVE
 - **关联需求**：REQ-012（标准 1、2 或 3、4、5、7）；设计决策见 ADR-012
@@ -467,6 +476,8 @@ TASK-027 ──▶ TASK-028 ──▶ TASK-029（REQ-012 跨平台 IVE：WASM �
 TASK-030（REQ-012 打包目标与平台矩阵；**独立于 spike**，与 TASK-027 文件范围不重叠，可并行）
 
 > REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
+>
+> **该条件已于 2026-09-21 由 TASK-027 判定为「WASM 可行」**（结论与证据见 `docs/design/ADR.md` 的 ADR-012 结论段与 `native/ive2glb/WASM-SPIKE.md`），因此 TASK-021/TASK-022 已标为「已取消（被 REQ-012 取代）」，原先阻塞在外部 Windows/Docker 环境的两条任务由此解开。REQ-009 的需求状态是否随之终止，留交付闸门（③）由人确认——本文件不单方面改需求状态。
 
 TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/`ui-smoke.cjs` 重叠，故与 TASK-018 串行，但与 TASK-019 的文件范围不重叠）
 ```
@@ -500,8 +511,8 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 22 | TASK-024 | REQ-011 占比模型；无依赖，但排在 TASK-023 之后以避免争抢 `renderer.js`/`ui-smoke.cjs` |
 | 23 | TASK-025 | 依赖 TASK-024（同一批文件；多尺寸矩阵排查要基于占比模型） |
 | 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
-| 25 | TASK-027 | REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行 |
-| 26 | TASK-028 | 依赖 TASK-027 的结论（路线 A/B 二选一）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/` |
+| 25 | TASK-027 | ~~REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行~~ **已于 2026-09-21 完成**，结论「路线 A（WASM）可行」；TASK-028 据此落地 |
+| 26 | TASK-028 | 依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/` |
 | 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字） |
 | 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
@@ -534,10 +545,10 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-024 | REQ-011 | 已完成 | ☑ 自动 |
 | TASK-025 | REQ-011 | 已完成（矩阵普查未发现缺陷，留回归网） | ☑ 自动 |
 | TASK-026 | REQ-011 | 已完成 | ☑ 自动 |
-| TASK-021 | REQ-009 | 进行中（README 配方/自检/打包核对已就绪；待 Windows 环境构建入库） | ☐ |
-| TASK-022 | REQ-009 | 进行中（冒烟表与人工目视清单已就绪；待 `dist:win` 与回填） | ☐ |
+| TASK-021 | REQ-009 | 已取消（被 REQ-012 取代；README 配方/自检/打包核对仍有效） | ☐ |
+| TASK-022 | REQ-009 | 已取消（被 REQ-012 取代；冒烟表与人工目视清单仍有效） | ☐ |
 | TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
-| TASK-027 | REQ-012 | 待开始（需联网装 emsdk） | ☐ |
+| TASK-027 | REQ-012 | 已完成（结论：WASM 路线可行；产物逐字节等价、2.91 MB、100.2 ms） | ☑ 自动 |
 | TASK-028 | REQ-012 | 待开始（等待 TASK-027 结论） | ☐ |
 | TASK-029 | REQ-012 | 待开始 | ☐ |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |

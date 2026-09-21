@@ -163,7 +163,7 @@
 ## ADR-012 IVE 跨平台：先 spike「OSG+IVE 编到 WASM」，失败才退回多平台预编译
 
 - **日期**：2026-09-20
-- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵）
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵）。**TASK-027 的 spike 已于 2026-09-21 完成并判定路线 A 可行**，见下"spike 结论"；TASK-021/022（Windows 原生助手）据此被本需求取代。
 - **关联需求**：REQ-012（"支持所有系统"）；与 REQ-009 的范围有交集（见下）
 - **背景/问题**：用户要求"不能改成支持所有系统吗"。核查后的关键事实：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 据此在 `vendor/ive2glb/<platform>-<arch>/` 里找 `ive2glb[.exe]`，因此**增加平台不需要改任何代码**；真正的缺口是产物只有 `darwin-arm64` 一份，Windows / Linux / Intel Mac 上的 `.ive` 一律走 BR-012 中文降级。本机现状：**emscripten 未安装、docker 不可用**，能本机构建的只有 darwin 系。两条候选路线：**A = 把 OSG + IVE 插件编成 WASM**（一次构建，四平台通用，与 ADR-008 的 assimpjs 同思路、不按平台分发二进制）；**B = 各平台各编一份原生助手**（沿用现有架构，但 Windows 那份仍需 Windows 机器、Linux 那份需 Linux 或容器）。
 - **决策**：(a) **先做 spike（TASK-027）再定架构**——与 REQ-007 的先例一致（真机 spike 通过后才立规格）；(b) **倾向路线 A**：若 spike 证明 OSG+IVE 能在 emscripten 下链接、IVE 插件能静态注册、文件 IO 在 Node 下可用，则按 WASM 交付（一次构建覆盖 win32-x64 / linux-x64 / darwin-arm64 / darwin-x64），`vendor/ive2glb/<平台>/` 不再是必需；(c) **spike 失败则走路线 B**：至少补齐 darwin-x64（或 universal2，本机可做），Windows/Linux 按 `native/ive2glb/README.md` 的配方在有环境的机器上补，并把自检结果回填；(d) 两条路都必须**保持 IVE 解析语义不变**（轴转换、贴地归心、顶点焊接、贴图内嵌）并保持 BR-012 降级（缺助手时中文提示、不影响 GLB/FBX/OBJ）；(e) 无论走哪条路，都要给 `package.json` 补 `mac`/`linux` 打包目标，否则"支持所有系统"只在开发态成立。
@@ -172,3 +172,24 @@
 - **替代方案**：① **维持现状（只在 macOS ARM 上支持 IVE）**——被用户明确否决；② **要求用户自己先把 IVE 转成 GLB/FBX**——否决：违背"开箱即用"，且 Windows 用户没有 osgconv；③ **建 CI 矩阵在三个平台各编原生助手**——不解决"本机没有那些环境"的问题，且仍需维护每平台产物与依赖闭包，只在 A 失败时作为 B 的工程化补充；④ **为 IVE 写一个纯 JS 解析器**——否决：IVE 是 OSG 私有序列化格式，内部类（`osg::Geometry`/`osg::Image`/`StateSet`）无法可靠还原，这也是当初选原生助手的原因。
 - **影响面**：`native/ive2glb/`（新增 WASM 构建路径或维持原生）、`scripts/`（构建脚本）、`vendor/ive2glb/**`（产物形态可能从"每平台一份"变为"一份 WASM"）、`package.json`（`dependencies`/`asarUnpack`/新增 `mac`、`linux` 目标）、`src/ive.js`（WASM 路线的调用方式；解析语义不变）、`test/ive.test.js`、`test/ui-smoke.cjs`、`docs/001-code-design.md`（BR-036）、`docs/release/RELEASE_CHECKLIST.md`、`CLAUDE.md`。
 - **验证方式**：spike 结论（含失败点与命令）写入本节；路线 A 落地后按 REQ-012 标准 1（四平台能力，世界盒 `0.538×1.364×1.056`、顶点 11516、三角面 18924）、标准 2/4（包内无平台相关可执行文件、打包后 `ive: true`）、标准 7（体积/耗时实测入 ADR）判定；路线 B 落地后按标准 3 判定；两条路都必须满足标准 5（BR-012 降级不回归）与标准 8（`npm test` + 四格式冒烟 + `memory check` 全绿）。
+
+### spike 结论（TASK-027，2026-09-21）
+
+**路线 A 可行，采用它；不再需要路线 B 的多平台预编译。** 完整记录（失败点、命令、哈希）见 `native/ive2glb/WASM-SPIKE.md`，复现脚本为 `scripts/build-ive2glb-wasm.sh`。
+
+四个待答问题逐条判定（对应决策 b 的四个前提）：
+
+| 问题 | 结论 | 证据 |
+| :-- | :-- | :-- |
+| ① 能否链接成功 | 能 | Emscripten 6.0.9 + OSG 3.6.5，630 个编译目标全过；`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 0 |
+| ② IVE 插件能否静态注册 | 能，**无需改动 OSG 源码** | `DYNAMIC_OPENSCENEGRAPH=OFF` 使插件本身成为静态库，`--whole-archive` 保住其静态注册；`Registry::getReaderWriterForExtension()` 在 `dlopen` 之前就命中已注册的 IVE reader，因此 `dlopen` 链根本不进符号闭包 |
+| ③ 文件 IO 方案 | `-sNODERAWFS=1` 即可，无需虚拟 FS 预加载 | 绝对路径、自动建输出目录、CWD 语义、退出码 0/1/2 全部与原生助手一致 |
+| ④ 产物体积与耗时 | 2.91 MB / 单文件 100.2 ms | 预算 30 MB 与 10 s，均大幅达标（darwin 对照 59.4 ms） |
+
+**等价性达到逐字节级别**：同一份 `src/ive.js`，WASM 助手与 darwin 助手的 `scene.json`、`data.bin` SHA-256 相同；全链路 GLB 亦 SHA-256 相同（2,544,480 B）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`、`triangles 18924` 与标准 1 完全一致；`test/ive.test.js` 指向 WASM 助手为 **21 通过 / 0 失败 / 3 跳过**（跳过项为缺失夹具，与原生基线一致）。
+
+对决策 (c) 的影响：**spike 通过即触发 TASKS.md 已写明的取代关系**——TASK-021/TASK-022（构建并入库 Windows 原生助手、重打 Windows 安装包）应标为「已取消（被 REQ-012 取代）」，而不是继续等待外部 Windows 环境；原先因缺少 Windows/Docker 而挂起的两条任务由此解开。
+
+过程中撞到 6 处失败（GLES2 profile 触发 `EGL_LIBRARY` 缺失、C++17 移除 `std::mem_fun_ref`、X11/GLX 后端、漏链 `osgGA`、emscripten 默认 `-lc++-noexcept` 关掉异常捕获、53 个固定管线 GL 入口点缺失），逐条修法与取舍见 spike 文档第四节。其中最需要留意的两条**代价**是：**(a)** OSG 3.6.5 需要 C++17 兼容头（不改 vendored 源码，用 `-include` 注入）；**(b)** 需要 23 个显式"陷阱桩"补齐 emscripten GL 模拟层未实现的入口点——刻意不做静默空实现，被调用即中文报错并退出码 3（已实测），使"渲染路径被误触发"立刻暴露而不是悄悄产出错误几何。
+
+**尚未验证、留给 TASK-028 的部分**：`test/ui-smoke.cjs` 四格式冒烟、打包后 `app-capabilities` 报 `ive: true` 与 BR-012 降级不回归。另外本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的，建议 TASK-028 补一个不同来源的 IVE 复核，避免"单模型偶然一致"。
