@@ -24,16 +24,16 @@
 - **层级**：单元 + 集成
 - **前置**：`refs/models/*.glb` 已在位
 - **步骤**：`node --test test/repair.test.js`
-- **期望**：20 通过 / 0 失败（2026-09-20 实测 `test/repair.test.js` 共 20 个用例；此前的 19 是 TASK-006 时代的快照）
-- **实际/证据**：`pass 20 / fail 0`（本地夹具齐备；夹具缺失时 6 个跳过）
+- **期望**：36 通过 / 0 失败（2026-09-22 实测 `test/repair.test.js` 共 36 个用例；此前的 20 是 REQ-008 时代的快照）
+- **实际/证据**：`pass 35 / skip 1 / fail 0`（跳过项需 `model/person-stand.glb`；全新克隆下 7 个跳过 = 6 个需 `refs/models/*.glb` + 该基线）
 
 ### TC-002 IVE 转换全量套件
 - **关联需求**：REQ-002；覆盖 BR-008～BR-017
 - **层级**：单元 + 集成（含 3 个端到端）
 - **前置**：`o-model/*.ive` 存在且 `resolveIveHelper()` 能找到助手
 - **步骤**：`node --test test/ive.test.js`
-- **期望**：24 通过 / 0 失败
-- **实际/证据**：`pass 24 / fail 0`
+- **期望**：35 用例 / 32 通过 / 3 跳过 / 0 失败（2026-09-22 实测，含 TASK-031 新增的回退、打包只带 WASM、元数据、`searched` 去重 4 条；此前的 24 是 TASK-018 时代的快照）
+- **实际/证据**：`pass 32 / skip 3 / fail 0`（3 个跳过均需 `o-model/person-move.ive`）
 
 ### TC-003 轴位与贴地归心金标准（D1/D2 缺陷回归）
 - **关联需求**：REQ-002；判据见 BR-013/014
@@ -70,7 +70,7 @@
 - **关联需求**：REQ-002
 - **层级**：单元（静态检查）
 - **步骤**：`npm run lint`
-- **期望**：五个文件全部通过 `node --check`
+- **期望**：全部 `src/*.js` 通过 `node --check`（当前 **10 个**：`main`/`preload`/`renderer`/`repair`/`ive`/`inspect`/`transform`/`report-format`/`preview-transform`/`convert`；lint 用 `for f in src/*.js` 遍历，新增模块自动纳入）
 - **实际/证据**：通过
 
 ### TC-008 端到端链路：IVE → GLB → 修复
@@ -118,7 +118,7 @@
   2. `node src/inspect.js o-model/运输车.glb`
   3. 逐个体检样例集（`o-model/*.glb` + `model/*.glb`；本次实测 4 个：`o-model/蹲姿.glb` 与 `model/{person-move,person-stand,蹲姿}.glb`）
 - **期望**：① 运输车世界盒 `2.59 × 4.10 × 5.98` m、`deviationFactor > 1000`、列出荒谬的 accessor 盒；② 样例集零崩溃且单文件 < 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb` 174,937 顶点；扫全语料的用例要求基数 ≥1 并随本地语料伸缩）；③ `mode=4` 图元的索引数可被 3 整除（无此类索引图元时为 `null`）、person 参考件 `vertexReuseRatio` = 0.61（定义为顶点数 ÷ 三角面数）；④ 非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失等异常都变成中文问题条目而非抛异常
-- **实际/证据**：`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**（跳过项依赖已删除的样例 `o-model/运输车.glb`）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉核对是本次按 `mode=4` + 索引数重算的
+- **实际/证据**：`node --test test/inspect.test.js` → **42 通过 / 2 跳过 / 0 失败**（2026-09-22 实测；两个跳过项分别依赖 `o-model/运输车.glb` 与 `model/蹲姿.glb`，均属本地已删除的样例）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉检查是本次按 `mode=4` + 索引数重算的
 
 ### TC-014 界面体检面板与预览方向/缩放/上轴（REQ-005 验收标准 4）
 - **关联需求**：REQ-005（验收标准 4）；设计决策见 `docs/design/ADR.md` 的 ADR-002（上轴三态）与 ADR-004（预览修正不写回）
@@ -236,8 +236,8 @@
 
 | 用例 | 关联 REQ | 结果 | 证据 |
 | :-- | :-- | :-- | :-- |
-| TC-001 | REQ-002 | 通过 | `node --test test/repair.test.js` → 36 用例，本地 `pass 36 / fail 0`（夹具缺失时 7 跳过） |
-| TC-002 | REQ-002 | 通过 | `node --test test/ive.test.js` → 24 用例，本地 `pass 21 / skip 3 / fail 0`（缺 `o-model/person-move.ive`） |
+| TC-001 | REQ-002 | 通过 | `node --test test/repair.test.js` → 36 用例，本地 `pass 35 / skip 1（缺 model/person-stand.glb）/ fail 0`（全新克隆下 7 跳过） |
+| TC-002 | REQ-002 | 通过 | `node --test test/ive.test.js` → 35 用例，本地 `pass 32 / skip 3 / fail 0`（3 个跳过均缺 `o-model/person-move.ive`；2026-09-22 含 TASK-031 新增 4 条） |
 | TC-003 | REQ-002 | 通过 | 世界盒 `0.538 × 1.364 × 1.056`，`min.y = 0` |
 | TC-004 | REQ-002 | 通过 | 56,772 → 11,516 顶点；18,924 面逐三角形等价 |
 | TC-005 | REQ-002 | 通过 | 4/4 用例；PNG 签名与 `JPEG 转 PNG 失败` 均断言 |
@@ -248,7 +248,7 @@
 | TC-010 | REQ-002 | 通过 | 异常路径全部有断言 |
 | TC-011 | REQ-002 | 通过 | 嵌套相对路径保留 |
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
-| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` → 44 用例，本地 `pass 43 / skip 1（缺 o-model/运输车.glb）/ fail 0`；本地语料 0 崩溃、最慢 1ms、三角面数全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
+| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` → 44 用例，本地 `pass 42 / skip 2（缺 o-model/运输车.glb 与 model/蹲姿.glb）/ fail 0`；本地语料 0 崩溃、最慢 1ms、三角面数全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
 | TC-014 | REQ-005 | **通过**（自动 + 人工 2026-09-20） | 纯函数 24/24（`report-format` 16 + `preview-transform` 8）；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
 | TC-015 | REQ-006 | **通过**（自动 + 人工 2026-09-20） | 冒烟 34 步 / 110 条断言 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
 | TC-016 | REQ-006 | **通过**（自动 + 人工 2026-09-20） | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
@@ -265,11 +265,11 @@
 
 **总计**（2026-09-21 实测，含 REQ-012 的 TASK-027/028）：`npm test` → **148 用例 / 144 通过 / 0 失败 / 4 跳过**。4 个跳过均为夹具门控（1 个需 `o-model/运输车.glb` 的体检真值用例 + 3 个需 `o-model/person-move.ive` 的 IVE 用例）。**本地跳过数必须按当次夹具集陈述，不得写成常量**（口径见上文 TC-001）：2026-09-22 本地语料被裁剪为只剩 `o-model/蹲姿.*`（`model/` 为空）后复测为 **148 用例 / 142 通过 / 0 失败 / 6 跳过**（多出的 2 个 = 1 个需 `model/蹲姿.glb` + 1 个需 `model/person-stand.glb`）。全新克隆（无任何夹具）为 **148 用例 / 126 通过 / 0 失败 / 22 跳过**（22 = `repair` 7 + `ive` 7 + `inspect` 3 + `convert` 5；用 `git worktree add --detach HEAD` 的干净检出实测。`ive` 由 5 涨到 7，因为 TASK-028 新增的用例里有两条依赖 `蹲姿.ive` 与原生助手）。冒烟另计：`node test/ui-smoke.cjs` 在 **GLB / IVE / FBX / OBJ 四格式上各 66 步 / 132 条断言 / 0 失败**（TC-024 的占比与多尺寸断言把计数从 114 抬到 126，TC-025 的预览记忆断言再抬到 132；"36 步 / 114 条断言"是 TASK-018 时代的口径）。**打包后**的 `o-model/蹲姿.ive` 冒烟同样 66 步 / 132 条断言 / 0 失败（TASK-028 实测，见 TC-026）。
 
-## 待执行（REQ-009 / REQ-010，2026-09-20 登记，尚未实现）
+## 待执行 / 已取代
 
 > REQ-008 的 TC-019~TC-021 已执行完毕，见上方结果汇总。
 
 | 用例 | 关联 REQ | 状态 | 覆盖内容 |
 | :-- | :-- | :-- | :-- |
-| TC-022 | REQ-009 | 待执行（需 Windows x64 环境） | Windows：`ive2glb.exe` 依赖闭包无第三方非系统 DLL；`app-capabilities` 报 `ive: true` 且 `.ive` 世界盒与 darwin 一致；`dist:win` 包内含助手 + wasm + 两份许可证；§4 冒烟逐行回填 |
-| TC-023 | REQ-010 | 待执行（TASK-023） | 预览三态记忆：重启恢复 `Z-up/90°/2×` 且提示可见；从未动过不落盘；显式选回 `auto` 被记住；垃圾载荷落回默认且页面异常 0；输入文件哈希不变 |
+| TC-022 | REQ-009 | **已取代（被 REQ-012）**：REQ-009 的 TASK-021/022 已取消，Windows 原生助手不再构建。同一覆盖面（包内容、`ive: true`、世界盒一致）改由 **REQ-012 的 §4 ★ 行**在四个目标平台上承接（见 `RELEASE_CHECKLIST.md` §3/§4） | Windows：`ive2glb.exe` 依赖闭包无第三方非系统 DLL；`app-capabilities` 报 `ive: true` 且 `.ive` 世界盒与 darwin 一致；`dist:win` 包内容；§4 冒烟逐行回填 |
+| TC-023 | REQ-010 | **已完成 → 由 TC-025 覆盖**（TASK-023 已交付，REQ-010 已完成；同一验收在 TC-025 判定为通过） | 预览三态记忆：重启恢复 `Z-up/90°/2×` 且提示可见；从未动过不落盘；显式选回 `auto` 被记住；垃圾载荷落回默认且页面异常 0；输入文件哈希不变 |

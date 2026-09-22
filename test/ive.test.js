@@ -15,6 +15,7 @@ const {
   pruneMeshlessSubtrees,
   readImagePixels,
   resolveIveHelper,
+  resolveWasmHelper,
   rotateVector,
   vendorRootsFor,
   weldVertices,
@@ -26,17 +27,23 @@ const projectRoot = path.join(__dirname, '..')
 const iveFixture = path.join(projectRoot, 'o-model', 'person-move.ive')
 const crouchFixture = path.join(projectRoot, 'o-model', '蹲姿.ive')
 
+// 跳过信息必须**可照做**，与 test/repair.test.js 的夹具门控同口径：只说"缺少"会让下一个人
+// 自己去翻文档找恢复方法（CLAUDE.md 声称跳过信息都带恢复命令，之前在 IVE 用例上并不成立）。
+// 两类原因分开写：缺样例要找语料，缺助手要构建助手，恢复动作完全不同。
+const IVE_FIXTURE_RECOVERY = '；样例不入库，恢复方法见 docs/testing/TEST_PLAN.md 的「夹具」行'
+const IVE_HELPER_RECOVERY = '；恢复：npm run build:ive2glb（本平台原生）或 npm run build:ive2glb:wasm（跨平台 WASM）'
+
 function fixtureSkipReason() {
-  if (!fs.existsSync(iveFixture)) return `缺少 IVE 样例：${iveFixture}`
-  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）`
+  if (!fs.existsSync(iveFixture)) return `缺少 IVE 样例：${iveFixture}${IVE_FIXTURE_RECOVERY}`
+  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）${IVE_HELPER_RECOVERY}`
   return false
 }
 
 // 蹲姿相关用例只依赖蹲姿.ive —— 不要复用 fixtureSkipReason()（那个查的是 person-move.ive），
 // 否则样例被局部清理时，明明还在的蹲姿金标准用例也会被一起跳过
 function crouchSkipReason() {
-  if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}`
-  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）`
+  if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}${IVE_FIXTURE_RECOVERY}`
+  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）${IVE_HELPER_RECOVERY}`
   return false
 }
 
@@ -675,8 +682,66 @@ test('ive: 任何助手都找不到时按 BR-012 给出中文降级并列出已�
     assert.match(probed.message, /scripts\/build-ive2glb-wasm\.sh/)
     assert.match(probed.message, /GLB_REPAIR_IVE2GLB/)
     for (const candidate of probed.searched) {
-      assert.ok(probed.message.includes(candidate), `降级信息应列出已查找路径：${candidate}`)
+      assert.ok(probed.message.includes(candidate), '降级信息应列出已查找路径：' + candidate)
     }
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- 冷审返工（TASK-031）
+//
+// 三条断言分别对应冷审的两条 major 与一条 minor：
+//   ① 打包只带 WASM（REQ-012 标准 2）——files/asarUnpack 不得含平台原生目录；
+//   ② dist:linux 的 deb 需要 maintainer 身份（否则 FpmTarget 抛 authorEmailIsMissed）；
+//   ③ 原生助手"文件在、但起不来"时必须回退 WASM，而不是丢掉 IVE 能力。
+
+test('ive: 打包只带 WASM —— files/asarUnpack 不得把平台原生助手打进安装包（REQ-012 标准 2）', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  for (const key of ['files', 'asarUnpack']) {
+    const entries = pkg.build[key] || []
+    const iveEntries = entries.filter((entry) => entry.startsWith('vendor/ive2glb'))
+    assert.ok(iveEntries.length > 0, `${key} 应显式放行 WASM 助手目录`)
+    for (const entry of iveEntries) {
+      // 收窄成 wasm/ 之后，"打进每个平台安装包的平台原生助手"（11MB 的 darwin-arm64/）就不再出现。
+      assert.match(entry, /vendor\/ive2glb\/wasm\//, `${key} 里的 ${entry} 必须限定在 wasm/ 下`)
+    }
+  }
+})
+
+test('ive: electron-builder 元数据齐备 —— dist:linux 的 deb 需要 maintainer 身份', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  // FpmTarget.js 读 options.maintainer ?? metadata.author，两者都缺就抛 authorEmailIsMissed。
+  assert.ok(pkg.build.linux.maintainer || pkg.author?.email, 'deb 目标需要 maintainer 或 author.email')
+  assert.ok(pkg.homepage, 'deb 目标需要 homepage（appInfo 可从 .git/config 兜底，但不该依赖它）')
+})
+
+test('ive: 解析结果里没有重复的已查找路径（BR-012 的中文降级要逐条、不重复）', { skip: wasmSkipReason() }, () => {
+  const helper = withHelperOverride(wasmHelper, () => resolveIveHelper())
+  assert.equal(new Set(helper.searched).size, helper.searched.length, `searched 不应重复：${helper.searched.join('、')}`)
+  // resolveWasmHelper 只看 wasm/，不受平台原生助手存在与否影响。
+  const wasmOnly = resolveWasmHelper()
+  assert.equal(wasmOnly.kind, 'wasm')
+  assert.equal(wasmOnly.path, wasmHelper)
+  assert.ok(fs.existsSync(path.join(path.dirname(wasmHelper), 'ive2glb.wasm')))
+})
+
+test('ive: 原生助手起不来时回退 WASM 并成功转换（BR-036 ③）', { skip: wasmSkipReason() }, () => {
+  const workDir = makeTempDir()
+  try {
+    // 造一个"存在但不可执行"的路径当原生助手（EACCES 是"未签名/被隔离/部分解包"的同类故障）
+    const brokenNative = path.join(workDir, 'ive2glb')
+    fs.writeFileSync(brokenNative, 'not an executable\n', { mode: 0o644 })
+    const report = withHelperOverride(brokenNative, () => convertIveToGlb(
+      crouchFixture,
+      path.join(workDir, 'fallback.glb'),
+      { keepJpeg: true },
+    ))
+    assert.equal(report.status, 'success', report.error)
+    assert.equal(report.helperKind, 'wasm', '原生起不来时应真的走 WASM')
+    assert.equal(report.vertices, 11516)
+    assert.equal(report.triangles, 18924)
+    assert.match((report.warnings || []).join('\n'), /已回退到 WASM 助手/)
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
   }

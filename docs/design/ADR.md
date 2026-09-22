@@ -163,7 +163,7 @@
 ## ADR-012 IVE 跨平台：先 spike「OSG+IVE 编到 WASM」，失败才退回多平台预编译
 
 - **日期**：2026-09-20
-- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵）。**TASK-027 的 spike 已于 2026-09-21 完成并判定路线 A 可行**，见下"spike 结论"；TASK-021/022（Windows 原生助手）据此被本需求取代。
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵，TASK-031 收冷审返工：发布形态收窄为只带 WASM、补 deb 元数据与原生失败回退）。**TASK-027 的 spike 已于 2026-09-21 完成并判定路线 A 可行**，见下"spike 结论"；TASK-021/022（Windows 原生助手）据此被本需求取代。
 - **关联需求**：REQ-012（"支持所有系统"）；与 REQ-009 的范围有交集（见下）
 - **背景/问题**：用户要求"不能改成支持所有系统吗"。核查后的关键事实：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 据此在 `vendor/ive2glb/<platform>-<arch>/` 里找 `ive2glb[.exe]`，因此**增加平台不需要改任何代码**；真正的缺口是产物只有 `darwin-arm64` 一份，Windows / Linux / Intel Mac 上的 `.ive` 一律走 BR-012 中文降级。本机现状：**emscripten 未安装、docker 不可用**，能本机构建的只有 darwin 系。两条候选路线：**A = 把 OSG + IVE 插件编成 WASM**（一次构建，四平台通用，与 ADR-008 的 assimpjs 同思路、不按平台分发二进制）；**B = 各平台各编一份原生助手**（沿用现有架构，但 Windows 那份仍需 Windows 机器、Linux 那份需 Linux 或容器）。
 - **决策**：(a) **先做 spike（TASK-027）再定架构**——与 REQ-007 的先例一致（真机 spike 通过后才立规格）；(b) **倾向路线 A**：若 spike 证明 OSG+IVE 能在 emscripten 下链接、IVE 插件能静态注册、文件 IO 在 Node 下可用，则按 WASM 交付（一次构建覆盖 win32-x64 / linux-x64 / darwin-arm64 / darwin-x64），`vendor/ive2glb/<平台>/` 不再是必需；(c) **spike 失败则走路线 B**：至少补齐 darwin-x64（或 universal2，本机可做），Windows/Linux 按 `native/ive2glb/README.md` 的配方在有环境的机器上补，并把自检结果回填；(d) 两条路都必须**保持 IVE 解析语义不变**（轴转换、贴地归心、顶点焊接、贴图内嵌）并保持 BR-012 降级（缺助手时中文提示、不影响 GLB/FBX/OBJ）；(e) 无论走哪条路，都要给 `package.json` 补 `mac`/`linux` 打包目标，否则"支持所有系统"只在开发态成立。
@@ -184,7 +184,7 @@
 | ① 能否链接成功 | 能 | Emscripten 6.0.9 + OSG 3.6.5，630 个编译目标全过；`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 0 |
 | ② IVE 插件能否静态注册 | 能，**无需改动 OSG 源码** | `DYNAMIC_OPENSCENEGRAPH=OFF` 使插件本身成为静态库，`--whole-archive` 保住其静态注册；`Registry::getReaderWriterForExtension()` 在 `dlopen` 之前就命中已注册的 IVE reader，因此 `dlopen` 链根本不进符号闭包 |
 | ③ 文件 IO 方案 | `-sNODERAWFS=1` 即可，无需虚拟 FS 预加载 | 绝对路径、自动建输出目录、CWD 语义、退出码 0/1/2 全部与原生助手一致 |
-| ④ 产物体积与耗时 | 2.79 MB / 单文件 101.6 ms | 预算 30 MB 与 10 s，均大幅达标（darwin 对照 62.7 ms） |
+| ④ 产物体积与耗时 | spike 构建 **2.91 MB**（wasm 2.66 + js 0.25）、单文件 **100.2 ms**（darwin 对照 59.4 ms）；TASK-028 重建后为 **2.79 MB**（137,172 + 2,783,434 B）、单文件 **101.6 ms**（darwin 62.7 ms），哈希见 `WASM-SPIKE.md` §6 | 预算 30 MB 与 10 s，均大幅达标。**注意这里量的是"起一次助手"的墙钟时间**，不是整条转换链路——`convertIveToGlb` 全链路实测 **0.55~0.65 s**（TASK-031 复测），同样远低于 10 s |
 
 **等价性达到逐字节级别**：同一份 `src/ive.js`，WASM 助手与 darwin 助手的 `scene.json`、`data.bin` SHA-256 相同；全链路 GLB 亦 SHA-256 相同（2,544,480 B）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`、`triangles 18924` 与标准 1 完全一致；`test/ive.test.js` 指向 WASM 助手为 **21 通过 / 0 失败 / 3 跳过**（跳过项为缺失夹具，与原生基线一致）。
 
@@ -192,6 +192,10 @@
 
 过程中撞到 6 处失败（GLES2 profile 触发 `EGL_LIBRARY` 缺失、C++17 移除 `std::mem_fun_ref`、X11/GLX 后端、漏链 `osgGA`、emscripten 默认 `-lc++-noexcept` 关掉异常捕获、53 个固定管线 GL 入口点缺失），逐条修法与取舍见 spike 文档第四节。其中最需要留意的两条**代价**是：**(a)** OSG 3.6.5 需要 C++17 兼容头（不改 vendored 源码，用 `-include` 注入）；**(b)** 需要 **53 个**显式"陷阱桩"补齐 WebGL 无法实现的固定管线入口点——刻意不启用 emscripten 的 GL 模拟层、也不做静默空实现，被调用即中文报错并退出码 3（已实测），使"渲染路径被误触发"立刻暴露而不是悄悄产出错误几何；反过来，这 53 个桩在真实转换中**一个都没有触发**（stderr 为空、产物逐字节相同），本身就是"只读路径确实不碰渲染"的证据。
 
-**TASK-028 落地后的补充（2026-09-21）**：`resolveIveHelper()` 已改为"原生助手优先、WASM 回退"的形态，产物落在 `vendor/ive2glb/wasm/`（被 `files`/`asarUnpack` 的 `vendor/ive2glb/**` 覆盖），构建入口是 `npm run build:ive2glb:wasm`；已在 Electron 32.3.3 的 Node 20.18.1 上实测可用（打包态经 `ELECTRON_RUN_AS_NODE=1` 起进程）。`test/ive.test.js` 新增 5 条用例把 WASM 路径钉进回归网，其中"WASM 与原生产物逐字节相同"在 darwin-arm64 上实际执行（不是跳过）。
+**TASK-028 落地后的补充（2026-09-21）**：`resolveIveHelper()` 已改为"原生助手优先、WASM 回退"的形态，产物落在 `vendor/ive2glb/wasm/`，构建入口是 `npm run build:ive2glb:wasm`；已在 Electron 32.3.3 的 Node 20.18.1 上实测可用（打包态经 `ELECTRON_RUN_AS_NODE=1` 起进程）。`test/ive.test.js` 新增 5 条用例把 WASM 路径钉进回归网，其中"WASM 与原生产物逐字节相同"在 darwin-arm64 上实际执行（不是跳过）。
 
-**尚未验证、留给 TASK-028 的部分**：`test/ui-smoke.cjs` 四格式冒烟、打包后 `app-capabilities` 报 `ive: true` 与 BR-012 降级不回归。另外本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的，建议 TASK-028 补一个不同来源的 IVE 复核，避免"单模型偶然一致"。
+**TASK-028 已验证（原「尚未验证」清单，2026-09-22 落实）**：`test/ui-smoke.cjs` 四格式冒烟（开发态与**打包应用**上各 66 步 / 132 条断言 / 0 失败）、打包后应用内 `convertIveToGlb('o-model/蹲姿.ive')` 成功（`11516` / `18924` / `0.538×1.364×1.056`）、强制 WASM 时产物与原生路径逐字节相同、BR-012 降级不回归（把 `src/` 复制到无 `vendor/` 的临时根下断言中文降级并逐条列出 `searched`）。
+
+**仍然存在的边界（如实保留）**：本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的；补一个不同来源的 IVE 复核仍是未做的收尾项。
+
+**TASK-031 对交付形态的修正（2026-09-22）**：TASK-028 让 `files`/`asarUnpack` 用 `vendor/ive2glb/**` 覆盖 WASM，但同一通配把 11 MB 的 `darwin-arm64/` 原生助手也打进了**每个**平台的安装包，与 REQ-012 标准 2「包内不含平台相关的原生可执行文件」冲突（冷审实测 `find … -name 'ive2glb*'` 在真实 macOS 包上命中 `darwin-arm64/ive2glb`）。现收窄为 **`vendor/ive2glb/wasm/**`**：发布形态只有 WASM，原生助手仅留仓库供开发态与字节等价用例；同时补 `resolveWasmHelper()` 作为"原生文件在但起不来"的回退、`searched` 去重、以及 deb 目标必需的 `author.email`/`homepage` 元数据。解析顺序（开发态原生优先）**未变**。

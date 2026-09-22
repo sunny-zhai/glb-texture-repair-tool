@@ -38,7 +38,8 @@
   - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
 - [ ] 执行命令（REQ-012）：`npm run dist:mac`（dmg + zip，`identity: null` 不签名）/ `npm run dist:linux`（AppImage + deb）——**在受限环境或 CI 里需要把 electron-builder 的缓存指到可写目录**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder`（默认写 `~/Library/Caches/electron`，本机实测会被拒绝；`.cache/` 已 gitignore）。本机（darwin-arm64）已用 `npx electron-builder --mac --dir` 实测：`app.asar.unpacked/vendor/ive2glb/wasm/` 两个文件齐备，**打包应用内**跑通 `蹲姿.ive`（`11516` / `18924` / `0.538×1.364×1.056`），且 **UI 冒烟在打包应用上 66 步 / 132 条断言 / 0 失败**。`dist:linux` / `dist:win` 与 `darwin-x64` 需各自平台执行（见 `docs/testing/TEST_PLAN.md` TC-026）
-- [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
+- [ ] 打包正确性（REQ-012 标准 2，TASK-031 修正）：`files` 与 `asarUnpack` 里的 `vendor/ive2glb` 条目**只能是 `vendor/ive2glb/wasm/**`**——助手必须解包到 asar 外（asar 内的文件无法执行），而**平台相关的原生助手不得随包分发**。原先写成 `vendor/ive2glb/**` 时，11 MB 的 `darwin-arm64/`（1 exe + 14 dylib + 2 插件）会被打进**每一个**平台的安装包，标准 2 因此不成立；原生助手现在只留仓库供开发态与字节等价用例使用
+- [ ] 打包正确性（REQ-012 标准 4，TASK-031 补齐）：`package.json` 必须有 `author.email`（或 `linux.maintainer`）与 `homepage`，否则 `dist:linux` 的 **deb** 目标会在 `app-builder-lib` 的 `FpmTarget` 阶段因 `authorEmailIsMissed` 直接中止（AppImage 不受影响）；元数据现已补为 `sunny-zhai <sunny-zhai@users.noreply.github.com>` + GitHub 仓库地址
 - [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`（该探测会真正加载一次 wasm——只查 JS 模块会有假阳性）、`o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）；dist 里必须能看到 `assimpjs/dist/license.assimp.txt`、`license.assimpjs.txt` 两份许可证文件
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
 - [ ] 观测就绪：无遥测、无服务端指标。用户侧可见：界面日志面板（含 `坐标 …/尺寸 …/顶点 …` 行）+ 主进程控制台
@@ -73,8 +74,8 @@
 | 嵌套目录结构 | 选含子目录的输入目录 | 输出保留相对子目录结构（不是全部平铺到输出根） | | ☐ |
 | 输出体积 | 对比源与产物 | 蹲姿 27.25 MB → 2.43 MB；修复后体积不变 | | ☐ |
 | 坏输入不阻断 | 目录内混入损坏 GLB | 该项失败并计入 `failed`，后续文件继续处理 | | ☐ |
-| ★ 包内容（解包后） | 解包安装目录下 `resources/app.asar.unpacked/` | 存在 `vendor/ive2glb/wasm/ive2glb.js` 与 `ive2glb.wasm`（**两者必须成对**）、`node_modules/assimpjs/dist/assimpjs.wasm`、`license.assimp.txt`、`license.assimpjs.txt`。**包内不应出现平台相关的 IVE 助手可执行文件**——macOS 上可以另外留 `vendor/ive2glb/darwin-arm64/` 作开发期对照，但它不是 Windows/Linux 包的一部分 | | ☐ |
-| ★ 包内无平台相关 IVE 二进制 | 解包后 `find resources/app.asar.unpacked/vendor/ive2glb -name 'ive2glb*'` | 只应命中 `wasm/ive2glb.js`（+ `ive2glb.wasm`）；出现 `win32-x64/ive2glb.exe` 之类说明又回到了按平台分发的老路（REQ-012 标准 2） | | ☐ |
+| ★ 包内容（解包后） | 解包安装目录下 `resources/app.asar.unpacked/` | 存在 `vendor/ive2glb/wasm/ive2glb.js` 与 `ive2glb.wasm`（**两者必须成对**）、`node_modules/assimpjs/dist/assimpjs.wasm`、`license.assimp.txt`、`license.assimpjs.txt`。**包内不得出现任何平台相关的 IVE 助手可执行文件**（含 macOS 包的 `darwin-arm64/`）——发布形态只有 WASM，原生助手只在仓库里供开发态与字节等价用例使用（TASK-031 修正；此前 macOS 包实测带着 11 MB 的 `darwin-arm64/`） | | ☐ |
+| ★ 包内无平台相关 IVE 二进制 | 解包后 `find resources/app.asar.unpacked/vendor/ive2glb -name 'ive2glb*'` | **只**应命中 `wasm/ive2glb.js` 与 `wasm/ive2glb.wasm`；出现 `darwin-arm64/ive2glb`、`win32-x64/ive2glb.exe` 之类说明打包通配又放宽了（REQ-012 标准 2）。TASK-031 修正前这条在真实 macOS 包上**跑不通**：实测会多命中 `darwin-arm64/ive2glb` | | ☐ |
 | ★ 助手自检（不依赖 GUI） | `node resources/app.asar.unpacked/vendor/ive2glb/wasm/ive2glb.js <某个.ive> <输出目录>` | 助手 stdout 一行 `{"status":"success",…"images":3,"meshes":3,"binBytes":28782480}`；Node 侧 `success [0.538, 1.364, 1.056] 11516 18924`。原生助手仍在时，其 `dumpbin /dependents` / `DYLD_PRINT_LIBRARIES` 闭包自检见 `native/ive2glb/README.md` | | ☐ |
 | ★ 目标平台安装包 | 在**每个**目标平台安装 → 启动 → 修复一个 `.glb` 与一个 `.ive` | 可启动；`app-capabilities` 报 `ive: true`、`assimp: true`；两种输入都能修复并预览。**四平台的 IVE 期望值相同**（世界盒 `0.54 × 1.36 × 1.06 m`、顶点 `11516`、三角面 `18924`） | | ☐ |
 | ★ 降级不回归（BR-012） | 临时移走 `vendor/ive2glb/wasm/` 与原生助手目录 → 启动 → 选 `.ive` | 中文提示「缺少 IVE 转换助手」并**列出已查找路径**；应用不崩；同一目录里的 `.glb`/`.fbx`/`.obj` 仍能正常修复（REQ-012 标准 5） | | ☐ |

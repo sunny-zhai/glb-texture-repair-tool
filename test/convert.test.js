@@ -27,7 +27,7 @@ const bindPoseReference = path.join(projectRoot, 'o-model', '蹲姿.glb')
 const crouchReference = path.join(projectRoot, 'model', '蹲姿.glb')
 
 function convertSkipReason(fixture) {
-  if (!fs.existsSync(fixture)) return `缺少样例：${fixture}`
+  if (!fs.existsSync(fixture)) return `缺少样例：${fixture}；样例不入库，恢复方法见 docs/testing/TEST_PLAN.md 的「夹具」行`
   if (!assimpAvailable()) return `assimpjs 不可用：${missingAssimpMessage()}`
   return false
 }

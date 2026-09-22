@@ -54,7 +54,7 @@ function corpusFiles() {
 }
 
 function corpusSkipReason() {
-  return corpusFiles().length ? false : `缺少样例 GLB（${corpusDirs.join('、')}）`
+  return corpusFiles().length ? false : `缺少样例 GLB（${corpusDirs.join('、')}）；样例不入库，恢复方法见 docs/testing/TEST_PLAN.md 的「夹具」行`
 }
 
 /** @description 造一个 APP1(Exif) 段超过 1KB 的 JPEG —— 头部扫描若被截断就读不到宽高。 */
