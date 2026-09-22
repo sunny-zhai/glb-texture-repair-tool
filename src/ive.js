@@ -77,24 +77,18 @@ function vendorRootsFor(dirname) {
 }
 
 /**
- * @description 解析 IVE 转换助手，兼容源码运行、asar 打包与非默认安装位置。
+ * @description 建一个"查助手"的小工具集，供 resolveIveHelper / resolveWasmHelper 共用。
  *
- * 两种形态，优先级从高到低：
- *   ① 本平台的原生可执行文件 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]`
- *   ② 跨平台的 WASM 助手 `vendor/ive2glb/wasm/ive2glb.js` + `ive2glb.wasm`
- * WASM 需要由 Node 起进程（打包态是 Electron 的 Node，见 runHelper），因此
- * win32-x64 / linux-x64 / darwin-x64 不再需要各自的预编译助手（REQ-012 / ADR-012）。
- *
- * @returns {{ kind: 'native'|'wasm'|'', path: string, command: string, prefixArgs: string[],
- *   available: boolean, searched: string[] }}
+ * `isFile` 会对同一个候选去重：覆盖值先按文件校验、再按"成对存在"复核时会被查两次，
+ * 不去重的话 `searched` 里会出现重复路径（BR-012 要求"逐条列出已查找路径"，
+ * 重复项看起来像缺陷）。
  */
-function resolveIveHelper() {
-  const executable = process.platform === 'win32' ? 'ive2glb.exe' : 'ive2glb'
+function makeHelperResolver() {
   const searched = []
   const roots = vendorRootsFor(__dirname)
 
   const isFile = (candidate) => {
-    searched.push(candidate)
+    if (!searched.includes(candidate)) searched.push(candidate)
     try {
       return fs.statSync(candidate).isFile()
     } catch {
@@ -102,8 +96,7 @@ function resolveIveHelper() {
     }
   }
 
-  const missing = { kind: '', path: '', command: '', prefixArgs: [], available: false, searched }
-
+  const nativeHelper = (file) => ({ kind: 'native', path: file, command: file, prefixArgs: [], available: true, searched })
   // WASM 助手由 Node 起进程；.wasm 必须与 .js 成对存在，只检查 .js 会得到一个
   // 起得来但读不到模块的「假可用」，错误信息也会指向别处。
   const wasmHelper = (script) => ({ kind: 'wasm', path: script, command: process.execPath, prefixArgs: [script], available: true, searched })
@@ -114,6 +107,31 @@ function resolveIveHelper() {
     return scriptPresent && binaryPresent
   }
 
+  return { searched, roots, isFile, nativeHelper, wasmHelper, wasmHelperUsable }
+}
+
+/**
+ * @description 解析 IVE 转换助手，兼容源码运行、asar 打包与非默认安装位置。
+ *
+ * 两种形态，优先级从高到低：
+ *   ① 本平台的原生可执行文件 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]`
+ *   ② 跨平台的 WASM 助手 `vendor/ive2glb/wasm/ive2glb.js` + `ive2glb.wasm`
+ * WASM 需要由 Node 起进程（打包态是 Electron 的 Node，见 runHelper），因此
+ * win32-x64 / linux-x64 / darwin-x64 不再需要各自的预编译助手（REQ-012 / ADR-012）。
+ *
+ * 解析顺序是**开发态**的取舍：原生助手更快且本机已实测与 WASM 逐字节等价，所以先试它。
+ * **发布形态**只带 WASM（`package.json` 的 files/asarUnpack 只放 `vendor/ive2glb/wasm/**`），
+ * 因此安装后的应用不会看到原生助手，标准 2「包内不含平台相关的原生可执行文件」由此成立。
+ *
+ * @returns {{ kind: 'native'|'wasm'|'', path: string, command: string, prefixArgs: string[],
+ *   available: boolean, searched: string[] }}
+ */
+function resolveIveHelper() {
+  const executable = process.platform === 'win32' ? 'ive2glb.exe' : 'ive2glb'
+  const { searched, roots, isFile, nativeHelper, wasmHelper, wasmHelperUsable } = makeHelperResolver()
+
+  const missing = { kind: '', path: '', command: '', prefixArgs: [], available: false, searched }
+
   // 显式覆盖优先。覆盖值无效时继续按内置路径查找（保持既有语义，不因写错就整条不可用）；
   // 指向 .js 时按 WASM 助手处理——这是测试与排障时钉住实现的手段。
   if (process.env.GLB_REPAIR_IVE2GLB && isFile(process.env.GLB_REPAIR_IVE2GLB)) {
@@ -121,14 +139,14 @@ function resolveIveHelper() {
     if (/\.js$/i.test(override)) {
       if (wasmHelperUsable(override)) return wasmHelper(override)
     } else {
-      return { kind: 'native', path: override, command: override, prefixArgs: [], available: true, searched }
+      return nativeHelper(override)
     }
   }
 
   for (const root of roots) {
     const candidate = path.join(root, platformDirectory(), executable)
     if (isFile(candidate)) {
-      return { kind: 'native', path: candidate, command: candidate, prefixArgs: [], available: true, searched }
+      return nativeHelper(candidate)
     }
   }
 
@@ -138,6 +156,24 @@ function resolveIveHelper() {
   }
 
   return missing
+}
+
+/**
+ * @description 只解析跨平台的 WASM 助手（不看平台原生目录），用于"原生助手存在却起不来"时的回退。
+ *
+ * 场景：原生助手的文件在、但进程起不来（未签名/被隔离/部分解包/权限不足）。
+ * WASM 助手能顶上，没必要把 IVE 能力整体丢掉，也不必让用户先去手工删目录。
+ *
+ * @returns {{ kind: 'wasm', path: string, command: string, prefixArgs: string[],
+ *   available: boolean, searched: string[] }|null}
+ */
+function resolveWasmHelper() {
+  const { roots, wasmHelper, wasmHelperUsable } = makeHelperResolver()
+  for (const root of roots) {
+    const script = path.join(root, 'wasm', 'ive2glb.js')
+    if (wasmHelperUsable(script)) return wasmHelper(script)
+  }
+  return null
 }
 
 /**
@@ -176,7 +212,10 @@ function runHelper(helper, inputPath, outputDir) {
     env,
   })
   if (result.error) {
-    throw new Error(`调用 IVE 转换助手失败：${result.error.message}`)
+    const error = new Error(`调用 IVE 转换助手失败：${result.error.message}`)
+    // 标记为「起不来」而不是「转换失败」：调用方据此决定是否回退到 WASM 助手。
+    error.launchFailure = true
+    throw error
   }
 
   const stdout = (result.stdout || '').trim()
@@ -190,7 +229,10 @@ function runHelper(helper, inputPath, outputDir) {
 
   if (!summary) {
     const detail = (result.stderr || '').trim() || lastLine || `退出码 ${result.status}`
-    throw new Error(`IVE 转换助手未返回有效结果：${detail}`)
+    const error = new Error(`IVE 转换助手未返回有效结果：${detail}`)
+    // 没有可解析的结果同样属于「起不来」（被杀掉、动态库缺失等），允许回退 WASM。
+    error.launchFailure = true
+    throw error
   }
   if (summary.status !== 'success' || result.status !== 0) {
     throw new Error(summary.error || 'IVE 转换失败')
@@ -870,6 +912,9 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
     oldBytes: 0,
     newBytes: 0,
   }
+  // 转换过程中产生的告警（目前只有"原生助手起不来、已回退 WASM"），最终与助手自身的
+  // warnings 合并写进 report.warnings。
+  const iveWarnings = []
 
   try {
     if (!isIvePath(inputPath)) {
@@ -887,7 +932,21 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
 
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ive2glb-'))
     try {
-      const summary = runHelper(helper, inputPath, workDir)
+      // 原生助手"文件在、但起不来"（未签名 / 被隔离 / 部分解包 / 权限不足）时回退 WASM：
+      // 两者产出已实测逐字节相同，没有理由因此丢掉 IVE 能力。助手真的跑起来并报转换失败
+      //（launchFailure 未标记）则原样抛出，不掩盖真实错误。
+      let summary
+      try {
+        summary = runHelper(helper, inputPath, workDir)
+        report.helperKind = helper.kind
+      } catch (error) {
+        if (!error.launchFailure || helper.kind !== 'native') throw error
+        const wasmHelper = resolveWasmHelper()
+        if (!wasmHelper) throw error
+        summary = runHelper(wasmHelper, inputPath, workDir)
+        report.helperKind = 'wasm'
+        iveWarnings.push(`原生 IVE 助手无法启动（${error.message}），已回退到 WASM 助手。`)
+      }
       const scenePath = path.join(workDir, 'scene.json')
       const binPath = path.join(workDir, 'data.bin')
       const intermediate = JSON.parse(fs.readFileSync(scenePath, 'utf8'))
@@ -927,7 +986,7 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
         0,
       )
       report.imageDiagnostics = built.diagnostics
-      report.warnings = intermediate.warnings || []
+      report.warnings = [...iveWarnings, ...(intermediate.warnings || [])]
       if (built.conversion.after) {
         const { min, max } = built.conversion.after
         report.worldSize = min.map((value, index) => Number((max[index] - value).toFixed(3)))
@@ -958,6 +1017,7 @@ module.exports = {
   pruneMeshlessSubtrees,
   readImagePixels,
   resolveIveHelper,
+  resolveWasmHelper,
   rotateVector,
   transformVectorArray,
   vendorRootsFor,

@@ -29,9 +29,15 @@ Electron 侧**不改代码就能支持新平台**：`src/ive.js::platformDirecto
 | Windows x64 | `vendor/ive2glb/win32-x64/` | ❌ 不能交叉编译 | Windows x64 构建环境，见下节 |
 | Linux x64 | `vendor/ive2glb/linux-x64/` | ❌ 不能交叉编译 | Linux 环境或容器（本机 docker 不可用），`brew`/`apt` 装 OSG 后跑同一套构建脚本思路 |
 
-> **路线说明**：以上属 ADR-012 的**路线 B（多平台预编译）**。路线 A 是把 OSG + IVE 插件编成
-> **WASM**（一次构建四平台通用，`vendor/ive2glb/<平台>/` 不再必需），先在 TASK-027 做可行性
-> spike；spike 结论出来前，本表就是"哪个平台现在能用 IVE"的唯一答案。
+> **路线说明（2026-09-22 更新）**：上表属 ADR-012 的**路线 B（多平台预编译）**，**已被路线 A 取代**——
+> TASK-027 的 spike 证明 OSG + IVE 插件可编成 **WASM**（一次构建四平台通用，见 `WASM-SPIKE.md`），
+> TASK-028 已落地 `vendor/ive2glb/wasm/`。因此：
+> - **发布形态只有 WASM**：`package.json` 的 `files`/`asarUnpack` 只放 `vendor/ive2glb/wasm/**`，
+>   安装包里**不会**有平台原生助手（REQ-012 标准 2）；本表列的平台目录**不再需要**，新的平台不必再补产物；
+> - 本机 `darwin-arm64/` 仍在仓库里，但**只是开发态的对照物**（原生助手启动更快，且"原生↔WASM 逐字节等价"
+>   用例需要两者同时在），不随包分发；
+> - 下表与"新增一个平台的步骤"仅在**排障**或**万一要回到路线 B** 时有用；若真要让某个平台目录随包分发，
+>   必须同时改回 `files`/`asarUnpack`，并先在 REQ-012 标准 2 上取得一致（那是一次规格变更，不是打包细节）。
 
 ### 新增一个平台的步骤
 
@@ -85,10 +91,10 @@ vendor/ive2glb/win32-x64/
     osgdb_serializers_osg.dll
 ```
 
-- `src/ive.js::resolveIveHelper()` 只按平台目录找**可执行文件**：`vendor/ive2glb/win32-x64/ive2glb.exe`（打包后回退 `app.asar.unpacked`），因此文件名必须是 `ive2glb.exe`。
+- `src/ive.js::resolveIveHelper()` 的解析顺序（2026-09-22 起）是：`GLB_REPAIR_IVE2GLB`（指向 `.js` 时按 WASM 处理）→ **本平台原生目录** `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]` → **跨平台 WASM** `vendor/ive2glb/wasm/ive2glb.js`（打包后每步都先看 `app.asar.unpacked`）。原生助手**文件在却起不来**时由 `resolveWasmHelper()` 回退 WASM。因此下面的 Windows 目录若要生效，文件名必须是 `ive2glb.exe`；但**发布形态只带 WASM**，这个目录不会进安装包（REQ-012 标准 2）。
 - `native/ive2glb/src/main.cpp::registerLocalPluginPath()` 只在**可执行文件同级**查找名为 `osgPlugins` 或 `osgPlugins-3.6.5` 的目录，并把它插到 `osgDB` 插件搜索路径的**最前面**（避免命中系统里装的 OSG）。目录名必须正好是这两个之一，换个名字插件就加载不到。
 - **推荐静态三元组**（`x64-windows-static`）：`ive2glb.exe` 单文件即可。Windows 的 DLL 搜索路径只覆盖 exe 所在目录与系统目录，**没有 macOS 那样的 `@rpath/@executable_path/lib`**，所以不要照搬 macOS 的 `lib/` 约定——动态三元组下把 `osg*.dll`、`zlib*.dll`、`libpng*.dll`、`freetype*.dll` 等**直接放在 exe 旁边**。
-- `package.json` 的 `files`/`asarUnpack` 已覆盖 `vendor/ive2glb/**`，`win32-x64/` 目录无需再改打包配置；`.gitignore` 也刻意没有 `*.exe` 之类的一刀切规则（根锚定的打包目录除外），产物可以正常入库。
+- `package.json` 的 `files`/`asarUnpack` 现在**只覆盖 `vendor/ive2glb/wasm/**`**（TASK-031 起），所以 `win32-x64/` 即使建出来也不会被分发；`.gitignore` 刻意没有 `*.exe` 之类的一刀切规则（根锚定的打包目录除外），产物仍可正常入库供开发态使用。
 
 #### 依赖闭包自检
 

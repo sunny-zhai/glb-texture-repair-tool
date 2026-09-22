@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Electron desktop tool for repairing Cesium-incompatible GLB textures, materials, and skinned meshes",
+  "author": {
+    "name": "sunny-zhai",
+    "email": "sunny-zhai@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/sunny-zhai/glb-texture-repair-tool",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sunny-zhai/glb-texture-repair-tool.git"
+  },
   "main": "src/main.js",
   "engines": {
     "node": ">=21"
@@ -15,7 +24,7 @@
     "start": "npm run ensure:cesium && electron .",
     "dist:win": "npm run ensure:cesium && electron-builder --win --x64",
     "dist:mac": "npm run ensure:cesium && electron-builder --mac",
-    "dist:linux": "npm run ensure:cesium && electron-builder --linux",
+    "dist:linux": "npm run ensure:cesium && electron-builder --linux --x64",
     "lint": "for f in src/*.js; do node --check \"$f\" || exit 1; done",
     "test": "node --test \"test/*.test.js\""
   },
@@ -29,7 +38,7 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "vendor/ive2glb/**",
+      "vendor/ive2glb/wasm/**",
       "node_modules/assimpjs/dist/**"
     ],
     "files": [
@@ -37,7 +46,7 @@
       "scripts/**/*",
       "assets/**/*",
       "vendor/cesium/**/*",
-      "vendor/ive2glb/**/*",
+      "vendor/ive2glb/wasm/**/*",
       "package.json"
     ],
     "directories": {
@@ -86,7 +95,8 @@
         "deb"
       ],
       "category": "Development",
-      "icon": "assets/app-icon.png"
+      "icon": "assets/app-icon.png",
+      "maintainer": "sunny-zhai <sunny-zhai@users.noreply.github.com>"
     }
   },
   "dependencies": {
