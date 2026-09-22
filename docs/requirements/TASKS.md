@@ -493,6 +493,15 @@
   ⑪ **文件范围扩列说明**：由登记的 7 个扩为 11 个——`test/convert.test.js`/`test/inspect.test.js`（⑦ 的恢复命令，属同一 minor）、`docs/testing/TEST_PLAN.md` 与 `CLAUDE.md`（⑨ 的台账订正，与冷审 B 的发现同批）。均为冷审发现的低成本项，串行执行，无并行冲突。
   ⑫ **仍未验证（如实标注）**：`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**未做（本机只有 darwin-arm64 宿主；linux-x64 只做到"安装包产出且内容正确"）；单 IVE 夹具（`o-model/蹲姿.ive`）上的逐字节等价性仍是单模型结论。
 
+### TASK-032 REQ-012 复核收口：both-fail 错误可读性、helperKind 语义与台账残留不一致
+- **关联需求**：REQ-012（**不改写 TASK-027~031 的历史结论**）；缺陷由对 TASK-031 返工的两轮冷上下文复核暴露（实现/打包方 PASS + 3 minor；台账方 CONDITIONAL PASS + 7 项）
+- **依赖**：TASK-031
+- **做什么**：① **both-fail 可读性**：原生助手起不来、WASM 也没成时，原生失败原因被丢弃，且 `report.error` 会把子进程 stderr 全文塞进消息（冷审实测 **65,792 字符**）——改为把原生原因一并带出，并把长 stderr **截断+标注**（保留前 600 字符与总长度）；② **`report.helperKind` 语义**：现在只在成功路径有值，错误路径为 `undefined`，而 BR-036 ③ 与 `001-code-design.md` 的措辞读起来像"总是记录"——改为**解析后立即写**（失败时表示"最后尝试的形态"），并把文档措辞改成"成功时=实际使用、失败时=最后尝试"；③ **`TEST_PLAN.md` TC-001 期望行**自相矛盾（写「36 通过 / 0 失败」，同节实际是 35/1/0）——按实测订正；④ **台账残留不一致**（冷审台账方逐条列出）：`RELEASE_CHECKLIST.md` §1 仍称「REQ-008/REQ-009 的规格闸门 ① 与架构闸门 ② 待确认」而两者均已批准（`APPROVALS.md`）、REQ-001/REQ-002 的 `确认` 仍是模板「待确认」与「已完成」冲突、REQ-006 **整个 `确认` 字段缺失**、REQ-012 的「关联任务」与清单预检漏 TASK-030/031、REQ-009 的 abandon 未进 `REQUIREMENTS.md` 变更记录、`TASKS.md` 并行批次表行序 19/20 排在 29 之后；⑤ 把 TASK-027/028/030 在**feature 分支内**写台账这一单写者违规记进 `docs/PLATFORM_ISSUES.md`（`.ai/AGENTS.md` §3 要求）。
+- **产出**：`src/ive.js`、`test/ive.test.js`、`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/requirements/REQUIREMENTS.md`（变更记录由合并点写，见下）
+- **文件范围**：`src/ive.js`, `test/ive.test.js`, `docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `docs/release/RELEASE_CHECKLIST.md`
+- **验证方式**：新增用例——在**没有 `vendor/`** 的临时根下放一份"存在但会被执行且失败"的 WASM 助手（`.js` 打印超长 stderr 后退出非零）并把 `GLB_REPAIR_IVE2GLB` 指向不可执行的原生文件，断言 `report.error` **同时**含原生失败原因与「已截断」标记、且长度受控；`report.helperKind` 在错误路径不再是 `undefined`；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过；冷审方点名的每条措辞按实测订正
+- **状态**：待开始
+
 ## 依赖 DAG
 
 ```text
@@ -522,6 +531,9 @@ TASK-030（REQ-012 打包目标与平台矩阵；**独立于 spike**，与 TASK-
 
 TASK-029 ──▶ TASK-031（REQ-012 冷审返工：打包只带 WASM + deb 元数据 + 原生失败回退 + 文档口径）
 TASK-030 ──▶ TASK-031（与 TASK-030 同改 `package.json`，故必须排在其后串行）
+
+TASK-031 ──▶ TASK-032（REQ-012 复核收口：both-fail 错误可读性 + helperKind 语义 + 台账残留不一致；
+两轮复核均为 PASS/CONDITIONAL PASS，只剩 minor，故这是收尾任务而非返工）
 
 > REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
 >
@@ -561,11 +573,12 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
 | 25 | TASK-027 | ~~REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行~~ **已于 2026-09-21 完成**，结论「路线 A（WASM）可行」；TASK-028 据此落地 |
 | 26 | TASK-028 | ~~依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/`~~ **已于 2026-09-21 完成**，TASK-029 据此回填文档 |
+| 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
+| 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 | 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字；**产物形态与数字已定**：`vendor/ive2glb/wasm/` 2.79 MB、单文件约 102 ms） |
 | 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
 | 29 | TASK-031 | REQ-012 冷审返工；依赖 TASK-029 与 TASK-030（同改 `package.json` 与 `docs/001-code-design.md`），必须串行 |
-| 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
-| 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
+| 30 | TASK-032 | REQ-012 复核收口；依赖 TASK-031（同改 `src/ive.js` 与 `docs/001-code-design.md`），必须串行 |
 
 ## 进度
 
@@ -602,3 +615,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
 | TASK-031 | REQ-012 | 已完成（冷审返工：发布形态收窄为只带 WASM 使标准 2 成立、补 deb 元数据使 `dist:linux` 可产出、原生失败回退 WASM、台账与文档口径校正；验证阶段另修掉 `dist:linux` 未固定 `--x64` 的矩阵不符） | ☑ 自动（打包应用内走 WASM 且与原生逐字节相同；linux-x64 安装包产出实测；仍是单 IVE 夹具） |
+| TASK-032 | REQ-012 | 待开始（复核只剩 minor：both-fail 错误可读性、helperKind 语义、台账残留不一致） | ☐ |
