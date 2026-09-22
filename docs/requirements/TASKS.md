@@ -435,10 +435,18 @@
 - **关联需求**：REQ-012；设计决策见 ADR-012
 - **依赖**：TASK-028
 - **做什么**：`docs/001-code-design.md` 新增 **BR-036**（跨平台 IVE 的交付口径：优先一次构建的 WASM；缺助手时按 BR-012 降级、GLB/FBX/OBJ 不受影响）并更新 MOD-005/006 与 ADR-008 的交叉引用；`RELEASE_CHECKLIST.md` §3/§4 把"只有 Windows 缺助手"改成四平台口径并补 mac/linux 打包检查；`CLAUDE.md` 的 IVE 章节写清产物形态与平台覆盖。
-- **产出**：`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`CLAUDE.md`
-- **文件范围**：`docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `CLAUDE.md`
+- **产出**：`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
 - **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-036/清单措辞与实现一致（数字取自实测）
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **BR-036 与 §6 第 22 条**：新增跨平台 IVE 的交付口径（WASM 优先、平台原生仍优先于 WASM、解析顺序 `GLB_REPAIR_IVE2GLB` → `<platform>-<arch>` → `wasm/`、`app.asar.unpacked` 先于 `app.asar`、`.wasm`/`.js` 必须成对、WASM 由 Node 起进程、缺助手按 BR-012 降级），并写成 §6 第 22 条的 6 小项可判定断言；MOD-005 由"原生助手"改写为**两种形态**（原生 + WASM），MOD-006 补 `resolveIveHelper()` 的解析顺序与 `searched`；BR-030 增加与 ADR-008「一次构建、不按平台分发二进制」的交叉引用。
+  ② **措辞与实现逐条核对**（`src/ive.js:73-141`）：`vendorRootsFor()` 把 `app.asar` 段替换为 `app.asar.unpacked`、开发态两个根相同只返回一个；`wasmHelperUsable()` 同时检查 `.js` 与同目录 `ive2glb.wasm`；解析顺序确为覆盖 → 原生 → WASM。BR-036 的每条描述都能在代码里找到对应行，不是转述结论。
+  ③ **数字取自实测**：`vendor/ive2glb/wasm/` 实测 `ive2glb.js` 136K + `ive2glb.wasm` 2.7M（≈**2.79 MB**，与 ADR-012 一致）；`11516` / `18924` / `0.538×1.364×1.056` 沿用 TASK-027/028 的打包应用内实测，未新编数字；`scripts/build-ive2glb-wasm.sh`、`npm run build:ive2glb:wasm`、`files`/`asarUnpack` 通配均已核对存在。
+  ④ **发布清单四平台口径**：§3 目标环境改为 win32-x64 / darwin-arm64 / darwin-x64 / linux-x64，§4 的 ★ 行改为"目标平台"并新增两行（包内不得出现平台相关 IVE 二进制、缺助手时 BR-012 降级不回归），§6 把"发布已推迟"改为**阻塞已解除**并如实声明实测边界只在 darwin-arm64（其余三平台是由 WASM 与平台无关推出的待回填项）。
+  ⑤ **口径修正（本次发现的既有问题）**：文档把"本地 4 跳过"当成常量，而夹具是本地可变数据（本轮本地语料被裁剪为只剩 `o-model/蹲姿.*`、`model/` 为空）。已改为**与夹具集一起陈述**：当前本地实测 **148 用例 / 142 通过 / 0 失败 / 6 跳过**（多出的 2 个 = 1 个需 `model/蹲姿.glb` + 1 个需 `model/person-stand.glb`），并保留已验证的干净检出 **148 / 126 / 0 / 22**。`TEST_PLAN.md`/`RELEASE_CHECKLIST.md`/`CLAUDE.md` 三处同口径改齐。
+  ⑥ **门禁**：`npm run lint` 通过；`npm test` → 148 / 142 / 0 / 6；干净检出（`git worktree add --detach` + 软链 `node_modules`）实测 148 / 126 / 0 / 22；覆盖率 `all files` 95.32 / 81.19 / 96.72（命令含 `--test-coverage-exclude="vendor/**"`，逐文件数字在裁剪后的夹具集上复测一致，分支率单次运行 ±0.1pp）；`node scripts/memory.mjs check` 通过；`node scripts/platform-issue.mjs check` 通过。
+  ⑦ **文件范围扩列一项并已登记**：`docs/testing/TEST_PLAN.md`（补 TC-026 的 TASK-028 打包实测、新增 TC-027、覆盖率排除命令）不在本任务原定范围内——它属 TASK-028 交付时应回填而漏掉的部分，本次一并补齐，故文件范围由 3 个扩为 4 个。
 
 ### TASK-030 打包目标与平台矩阵（不依赖 spike，先行的净收益部分）
 - **关联需求**：REQ-012（验收标准 3、4、5）；设计决策见 ADR-012
@@ -559,5 +567,5 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
 | TASK-027 | REQ-012 | 已完成（结论：WASM 路线可行；产物逐字节等价、2.91 MB、100.2 ms） | ☑ 自动 |
 | TASK-028 | REQ-012 | 已完成（路线 A：WASM 助手 2.79MB 已 vendoring；顺带修掉打包后 asar 路径导致 IVE 转换失效的既有缺陷） | ☑ 自动 |
-| TASK-029 | REQ-012 | 待开始 | ☐ |
+| TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
