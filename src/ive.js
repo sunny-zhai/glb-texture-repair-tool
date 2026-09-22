@@ -228,16 +228,28 @@ function runHelper(helper, inputPath, outputDir) {
   }
 
   if (!summary) {
-    const detail = (result.stderr || '').trim() || lastLine || `退出码 ${result.status}`
+    const detail = shortenForError((result.stderr || '').trim() || lastLine || `退出码 ${result.status}`)
     const error = new Error(`IVE 转换助手未返回有效结果：${detail}`)
     // 没有可解析的结果同样属于「起不来」（被杀掉、动态库缺失等），允许回退 WASM。
     error.launchFailure = true
     throw error
   }
   if (summary.status !== 'success' || result.status !== 0) {
-    throw new Error(summary.error || 'IVE 转换失败')
+    throw new Error(shortenForError(summary.error || 'IVE 转换失败'))
   }
   return summary
+}
+
+/**
+ * @description 把助手 stderr 之类的长文本压到可读长度。
+ *
+ * 错误信息要能一眼看出问题，而不是把子进程的整段输出塞进一句中文里——
+ * 冷审实测过 `report.error` 被塞进 **65,792** 字符的 stderr 全文。
+ */
+function shortenForError(text, limit = 600) {
+  const value = String(text ?? '')
+  if (value.length <= limit) return value
+  return `${value.slice(0, limit)}…（已截断，原文共 ${value.length} 字符）`
 }
 
 // ---------------------------------------------------------------- 贴图编码
@@ -935,16 +947,25 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
       // 原生助手"文件在、但起不来"（未签名 / 被隔离 / 部分解包 / 权限不足）时回退 WASM：
       // 两者产出已实测逐字节相同，没有理由因此丢掉 IVE 能力。助手真的跑起来并报转换失败
       //（launchFailure 未标记）则原样抛出，不掩盖真实错误。
+      // 解析后就写：失败时它也代表"最后尝试过的形态"。此前只在成功路径赋值，
+      // 于是错误报告里这个字段是 undefined，与 BR-036 ③ 的措辞不符（冷审 2026-09-22）。
+      report.helperKind = helper.kind
       let summary
       try {
         summary = runHelper(helper, inputPath, workDir)
-        report.helperKind = helper.kind
       } catch (error) {
         if (!error.launchFailure || helper.kind !== 'native') throw error
         const wasmHelper = resolveWasmHelper()
         if (!wasmHelper) throw error
-        summary = runHelper(wasmHelper, inputPath, workDir)
         report.helperKind = 'wasm'
+        try {
+          summary = runHelper(wasmHelper, inputPath, workDir)
+        } catch (wasmError) {
+          // 两条路都失败时把原生失败原因一并带出——否则排障只看到后一条，
+          // 不知道"原生本来也在、只是起不来"。两段都截断，避免错误串变成 stderr 全文。
+          wasmError.message = `${shortenForError(wasmError.message, 400)}（原生助手也无法启动：${shortenForError(error.message, 400)}）`
+          throw wasmError
+        }
         iveWarnings.push(`原生 IVE 助手无法启动（${error.message}），已回退到 WASM 助手。`)
       }
       const scenePath = path.join(workDir, 'scene.json')
@@ -1000,6 +1021,8 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
     }
   } catch (error) {
     report.error = error.message || String(error)
+    // 失败路径也把已产生的告警带出（目前只有"原生起不来、正在回退"），否则排障看不到现场。
+    if (iveWarnings.length) report.warnings = [...iveWarnings]
     report.elapsedMs = Date.now() - startedAt
     return report
   }
@@ -1019,6 +1042,7 @@ module.exports = {
   resolveIveHelper,
   resolveWasmHelper,
   rotateVector,
+  shortenForError,
   transformVectorArray,
   vendorRootsFor,
   weldVertices,
