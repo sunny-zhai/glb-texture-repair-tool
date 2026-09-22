@@ -1,18 +1,19 @@
 # 发布检查清单（RELEASE CHECKLIST）
 
 > 由 `release` 技能维护。**预检未全绿不得发布**；发布后回填证据。
-> 关联需求：REQ-002（验证基线）、REQ-005（模型体检）、REQ-007（多格式输入）、REQ-008（贴图规格）、REQ-010（预览记忆）、REQ-011（布局占比）、REQ-009（Windows 分发，发布前置） ｜ 发布版本：v0.1.1（版本分支）｜ 产品版本（`package.json`）：`0.1.0`——**本次决定不升**，见 §3 ｜ 责任人：@sunny-zhai
+> 关联需求：REQ-002（验证基线）、REQ-005（模型体检）、REQ-007（多格式输入）、REQ-008（贴图规格）、REQ-010（预览记忆）、REQ-011（布局占比）、REQ-012（跨平台 IVE：WASM 助手，**四个桌面平台**）、REQ-009（Windows 分发，**已被 REQ-012 取代**，见 §3） ｜ 发布版本：v0.1.1（版本分支）｜ 产品版本（`package.json`）：`0.1.0`——**本次决定不升**，见 §3 ｜ 责任人：@sunny-zhai
 >
-> **状态（2026-09-20）**：预检（§1）已全绿，但 **§3 发布与 §4 冒烟整体未执行——发布已决定推迟**，等 Windows IVE 助手补齐（REQ-009 / TASK-021、TASK-022）后再走一遍本清单。
+> **状态（2026-09-21）**：预检（§1）已全绿。**原先"推迟发布"的唯一原因（Windows 缺 IVE 助手）已由 REQ-012 的 WASM 路线解除**——四平台共用一份 `vendor/ive2glb/wasm/`，不再需要任何按平台分发的原生二进制（TASK-021/022 已取消）。§3 发布与 §4 冒烟仍**未执行**（需在各自平台产出安装包并逐行回填），但已无阻塞性前提。
 
 本清单只写**本项目真实可执行**的项。桌面单机工具没有服务端概念，凡不适用的项都显式标注
 "不适用"而不是留空——留空会让评审人误以为漏做。
 
 ## 1. 预检（Preflight）
 
-- [x] 关联 REQ 已验收：REQ-001（TASK-001/002/003）、REQ-002（TASK-004）、REQ-003/REQ-004（追溯登记）、REQ-005（TASK-007 经两轮独立复审关闭，TASK-008/009 已完成，**人工目视 2026-09-20 通过**）、REQ-006（TASK-010~012 已完成，**人工目视 2026-09-20 通过**）、REQ-007（TASK-013~016 已完成，**人工目视 2026-09-20 通过**）、REQ-008（TASK-017~020 全部完成，11 条验收标准有自动化证据）、REQ-010（TASK-023 完成）、REQ-011（TASK-024~026 完成）、REQ-009（TASK-021/022 **进行中**：环境无关部分已就绪，待 Windows x64 环境，见 §6）
-- [x] 全量测试通过：`npm test` → **141 用例 / 137 通过 / 0 失败 / 4 跳过**（**2026-09-20 REQ-008/010/011 交付后复测**；本地 4 个跳过均为夹具门控——1 个需 `o-model/运输车.glb` 的体检真值用例 + 3 个需 `o-model/person-move.ive` 的 IVE 用例）；**全新克隆（无任何夹具）实测 141 用例 / 121 通过 / 0 失败 / 20 跳过**（`git worktree add --detach` 干净检出，跳过 20 = `repair` 7 + `ive` 5 + `inspect` 3 + `convert` 5）；`npm run lint` 通过
-- [x] 覆盖率已**实测并记录**：`all files` 行 94.35% / 分支 79.03% / 函数 95.76%（**2026-09-20 REQ-008 交付后复测**，含新增的 `convert.js` 94.55%、`inspect.js` 94.31%、`repair.js` 90.87%、`transform.js` 100.00%）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节
+- [x] 关联 REQ 已验收：REQ-001（TASK-001/002/003）、REQ-002（TASK-004）、REQ-003/REQ-004（追溯登记）、REQ-005（TASK-007 经两轮独立复审关闭，TASK-008/009 已完成，**人工目视 2026-09-20 通过**）、REQ-006（TASK-010~012 已完成，**人工目视 2026-09-20 通过**）、REQ-007（TASK-013~016 已完成，**人工目视 2026-09-20 通过**）、REQ-008（TASK-017~020 全部完成，11 条验收标准有自动化证据）、REQ-010（TASK-023 完成）、REQ-011（TASK-024~026 完成）、REQ-012（TASK-027 spike 判定 WASM 可行、TASK-028 已落地：四平台共用 WASM 助手，打包后实测 `ive: true`；TASK-029 文档回填完成）、REQ-009（TASK-021/022 **已取消（被 REQ-012 取代）**，见 §6）
+- [x] 全量测试通过：`npm test` → **148 用例 / 142 通过 / 0 失败 / 6 跳过**（**2026-09-22 复测**；本地跳过数**按当次夹具集陈述**：当前本地语料只剩 `o-model/蹲姿.*`、`model/` 为空，6 个跳过 = `o-model/运输车.glb` 1 + `model/蹲姿.glb` 1 + `model/person-stand.glb` 1 + `o-model/person-move.ive` 3；夹具齐备时（2026-09-21）为 148 用例 / 144 通过 / 0 失败 / 4 跳过）；**全新克隆（无任何夹具）实测 148 用例 / 126 通过 / 0 失败 / 22 跳过**（`git worktree add --detach` 干净检出 + 软链 `node_modules`，跳过 22 = `repair` 7 + `ive` 7 + `inspect` 3 + `convert` 5；`ive` 从 5 涨到 7 是 TASK-028 新增用例里需要 `蹲姿.ive`/原生助手的两条）；`npm run lint` 通过
+- [x] 覆盖率已**实测并记录**：`all files` 行 **95.32%** / 分支 **81.19%** / 函数 **96.72%**（**2026-09-21 REQ-012 交付后复测**；`convert.js` 94.55%、`inspect.js` 94.31%、`ive.js` 95.76%、`repair.js` 90.87%、`report-format.js` 99.35%、`transform.js`/`preview-transform.js` 100.00%。**2026-09-22 在裁剪后的夹具集上复测，逐文件数字一致**，仅分支率有单次运行 ±0.1pp 的波动——跳过的夹具门控用例不覆盖任何独占行）。**未设强制门槛**（无插桩门槛、无 CI），Electron 壳层未纳入插桩——详见 `docs/testing/TEST_PLAN.md` 覆盖率一节。
+  **测量命令必须带 `--test-coverage-exclude="vendor/**"`**：`node --test --experimental-test-coverage --test-coverage-exclude="vendor/**" "test/*.test.js"`。原因是 TASK-028 起 `vendor/ive2glb/wasm/ive2glb.js`（Emscripten 生成的胶水代码）会被子进程继承的 `NODE_V8_COVERAGE` 插桩——它是随包分发的第三方产物，不是本项目源码；不排除会把 `all files` 函数覆盖率从 96.72% 拖到 47.99%，得出没有意义的数字
 - [x] 独立审查（reviewer 冷上下文）已通过：REQ-005 的 TASK-007 经**两轮**独立复审（第一轮不通过 → 修复 → 第二轮「有条件通过」，2 个阻塞级 + 11 项残留缺陷已修）、REQ-006 的 TASK-010 经**两轮**冷审（画布最小高度未兑现等已修）、REQ-007 的 TASK-016 修掉冷审 6 条重要项（含 3 条可复现反例）；见 `docs/requirements/TASKS.md` 的返工记录与完成线。**REQ-008/REQ-009 的规格闸门 ① 与架构闸门 ② 待确认**（ADR-009/ADR-010）
 - [x] 无未解决的阻断级缺陷：已知问题见 §6「已知问题」，均不阻断发布但必须在发布说明中写明
 - [x] 依赖与许可证检查（**2026-09-20 解除阻塞**）：生产依赖为 `jpeg-js@^0.4.4`（**BSD-3-Clause**）、`pngjs@^7.0.0`（MIT）、`assimpjs@^0.0.10`（MIT，内含 assimp 本体 **BSD-3-Clause**；`node_modules/assimpjs/dist/license.assimp.txt` 与 `license.assimpjs.txt` 随包分发）；几者均无原生扩展。此前记录的"`npm audit` 在本机跑不了"是**默认镜像源**的问题（未实现 `/-/npm/v1/security/advisories/bulk`，返回 `NOT_IMPLEMENTED`）；换官方源实测通过：`npm audit --registry=https://registry.npmjs.org --omit=dev` → **found 0 vulnerabilities**
@@ -30,27 +31,33 @@
 
 ## 3. 发布（Release）
 
-- [ ] 目标环境：最终用户 **Windows x64**（NSIS 安装包 + 便携版）；开发/自用 **macOS arm64**（`npm run dev`）
+- [ ] 目标环境：**四个桌面平台**——`win32-x64`（NSIS 安装包 + 便携版，`npm run dist:win`）、`darwin-arm64`（dmg + zip，`npm run dist:mac`）、`darwin-x64`（同上，需在 Intel Mac 上构建）、`linux-x64`（AppImage + deb，`npm run dist:linux`）。**IVE 能力在四者上完全一致**：助手是 WASM，与平台无关（REQ-012 / BR-036），各平台只差安装包本身
 - [ ] **版本号口径（已决定，无需再改）**：平台版本分支是 `release/v0.1.1`，但 `package.json` 的 `version` **保持 `0.1.0`**——本轮内容整体仍按 0.1.0 交付。注意 `electron-builder` 的 `artifactName` 取自 `package.json`，所以产物名是 `0.1.0`；将来真正升版本时必须同步改 `package.json`（`version.mjs bump` 只管版本分支，不会动它），否则产物名会与版本分支长期不一致
 - [ ] 发布产物（`electron-builder` 按 `artifactName` 模板生成，输出目录 `dist/`）：
   - `GLB Texture Repair Tool-Setup-0.1.0.exe`（NSIS，可选安装目录、桌面/开始菜单快捷方式）
   - `GLB Texture Repair Tool-0.1.0-win-x64.exe`（portable）
 - [ ] 执行命令：`npm run dist:win`（脚本内先跑 `ensure:cesium`）
-- [ ] 执行命令（REQ-012）：`npm run dist:mac`（dmg + zip，`identity: null` 不签名）/ `npm run dist:linux`（AppImage + deb）——**在受限环境或 CI 里需要把 electron-builder 的缓存指到可写目录**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder`（默认写 `~/Library/Caches/electron`，本机实测会被拒绝；`.cache/` 已 gitignore）。macOS 半边已实测（见 `docs/testing/TEST_PLAN.md` TC-026）：包内助手与 wasm 齐全、包内助手可直接跑通 `蹲姿.ive`
+- [ ] 执行命令（REQ-012）：`npm run dist:mac`（dmg + zip，`identity: null` 不签名）/ `npm run dist:linux`（AppImage + deb）——**在受限环境或 CI 里需要把 electron-builder 的缓存指到可写目录**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder`（默认写 `~/Library/Caches/electron`，本机实测会被拒绝；`.cache/` 已 gitignore）。本机（darwin-arm64）已用 `npx electron-builder --mac --dir` 实测：`app.asar.unpacked/vendor/ive2glb/wasm/` 两个文件齐备，**打包应用内**跑通 `蹲姿.ive`（`11516` / `18924` / `0.538×1.364×1.056`），且 **UI 冒烟在打包应用上 66 步 / 132 条断言 / 0 失败**。`dist:linux` / `dist:win` 与 `darwin-x64` 需各自平台执行（见 `docs/testing/TEST_PLAN.md` TC-026）
 - [ ] 打包正确性：`package.json` 的 `files` 含 `vendor/ive2glb/**/*`，且 `asarUnpack` 含 `vendor/ive2glb/**`——**助手必须解包到 asar 外**，asar 内的文件无法执行
 - [ ] 打包正确性（REQ-007）：`asarUnpack` 还必须含 `node_modules/assimpjs/dist/**`——`assimpjs.wasm` 是按 `__dirname` 从磁盘读的，留在 asar 内会读不到；安装后 `app-capabilities` 必须报 `assimp: true`（该探测会真正加载一次 wasm——只查 JS 模块会有假阳性）、`o-model/蹲姿.fbx`/`蹲姿.obj` 能预览与落盘（Windows 上同样是 WASM，不依赖任何原生二进制）；dist 里必须能看到 `assimpjs/dist/license.assimp.txt`、`license.assimpjs.txt` 两份许可证文件
 - [ ] 灰度 / feature flag：**不适用**（桌面安装包）
 - [ ] 观测就绪：无遥测、无服务端指标。用户侧可见：界面日志面板（含 `坐标 …/尺寸 …/顶点 …` 行）+ 主进程控制台
 
-> ⚠️ **发布前必须处理的前提（当前正是"推迟发布"的原因）**：`vendor/ive2glb/` 目前**只有 `darwin-arm64`**，没有 `win32-x64/ive2glb.exe`。
-> 这意味着 Windows 安装包里**不含 IVE 转换助手**，用户打开 `.ive` 会得到 BR-012 的中文降级提示（应用不会崩，
-> 但 IVE 功能不可用）。两条路：① 按 `native/ive2glb/README.md` 在 Windows 上构建并入库 `win32-x64/`（**已选**：见
-> REQ-009 / ADR-010 / TASK-021）；② 若最终只能发 GLB 修复能力，则在发布说明中明确声明该限制（REQ-009 验收标准 6）。
-> 另外 `dist/` 里现存产物是 **2026-09-15** 构建的 `0.1.0` 旧包，早于 REQ-005/006/007，**不代表当前代码**，发布前必须重打。
+> ✅ **原先的发布阻塞已解除（2026-09-21，REQ-012 / ADR-012）**：此前 `vendor/ive2glb/` 只有 `darwin-arm64`，
+> Windows / Linux / Intel Mac 上 `.ive` 只能降级为 BR-012 提示，因此发布被推迟。TASK-027 的 spike 证明
+> OSG + IVE 插件可编成 WASM，TASK-028 已落地 `vendor/ive2glb/wasm/`（**2.79 MB**，单文件约 **102 ms**，
+> 与原生助手产物**逐字节相同**）并由 `resolveIveHelper()` 在缺原生助手时自动回退。**四个平台的 IVE 能力
+> 由此统一**，不再需要 `win32-x64/ive2glb.exe`——REQ-009 的 TASK-021/TASK-022 已标为「已取消（被 REQ-012 取代）」。
+>
+> 仍须注意：① `dist/` 里现存产物是 **2026-09-15** 构建的 `0.1.0` 旧包，早于 REQ-005/006/007，**不代表当前代码**，发布前必须重打；
+> ② 打包后 `vendor/ive2glb/**` 必须真的落在 `app.asar.unpacked` 下——排查时以**应用内** `app-capabilities` 报 `ive: true` 与一次真实 `.ive` 转换成功为准，
+> 不要只看解包目录里有没有文件（曾出现"文件在、但解析停在 asar 内路径导致 `ENOTDIR`"的缺陷，见 TASK-028）；
+> ③ 代码签名与公证仍未做（`identity: null`），属另一个议题。
 
 ## 4. 冒烟（Smoke）
 
-> 行首 **★** = 必须在 **Windows x64** 上执行；其余行在 macOS 开发机上即可执行并回填。
+> 行首 **★** = 必须在**目标平台**上执行（`win32-x64` / `darwin-x64` / `linux-x64`）——这些行的共同点是依赖该平台的安装包与解包布局；其余行在 macOS arm64 开发机上即可执行并回填。
+> **IVE 相关的行不再与平台绑定**：助手是 WASM（BR-036），四个平台的期望值完全相同（世界盒 `0.54 × 1.36 × 1.06 m`、顶点 `11516`、三角面 `18924`）。
 
 | 关键路径 | 命令 / 步骤 | 期望 | 实际 | 结果 |
 | :-- | :-- | :-- | :-- | :-- |
@@ -66,10 +73,11 @@
 | 嵌套目录结构 | 选含子目录的输入目录 | 输出保留相对子目录结构（不是全部平铺到输出根） | | ☐ |
 | 输出体积 | 对比源与产物 | 蹲姿 27.25 MB → 2.43 MB；修复后体积不变 | | ☐ |
 | 坏输入不阻断 | 目录内混入损坏 GLB | 该项失败并计入 `failed`，后续文件继续处理 | | ☐ |
-| ★ 包内容（解包后） | 解包安装目录下 `resources\app.asar.unpacked\` | 存在 `vendor\ive2glb\win32-x64\ive2glb.exe`、`node_modules\assimpjs\dist\assimpjs.wasm`、`license.assimp.txt`、`license.assimpjs.txt` | | ☐ |
-| ★ 依赖闭包 | `dumpbin /dependents …\ive2glb.exe`（与 `osgPlugins\osgdb_ive.dll`） | 只剩系统 DLL；无 `osg*`/`zlib*`/`libpng*`/`freetype*` 等第三方 DLL | | ☐ |
-| ★ 助手自检（不依赖 GUI） | 见 `native/ive2glb/README.md` §「不依赖 GUI 的自检」两条命令 | 助手 stdout 一行 `{"status":"ok",…}`；Node 侧 `success [0.538, 1.364, 1.056] 11516 18924` | | ☐ |
-| ★ Windows 安装包 | 安装 → 启动 → 修复一个 `.glb` 与一个 `.ive` | 可启动；`app-capabilities` 报 `ive: true`、`assimp: true`；两种输入都能修复并预览 | | ☐ |
+| ★ 包内容（解包后） | 解包安装目录下 `resources/app.asar.unpacked/` | 存在 `vendor/ive2glb/wasm/ive2glb.js` 与 `ive2glb.wasm`（**两者必须成对**）、`node_modules/assimpjs/dist/assimpjs.wasm`、`license.assimp.txt`、`license.assimpjs.txt`。**包内不应出现平台相关的 IVE 助手可执行文件**——macOS 上可以另外留 `vendor/ive2glb/darwin-arm64/` 作开发期对照，但它不是 Windows/Linux 包的一部分 | | ☐ |
+| ★ 包内无平台相关 IVE 二进制 | 解包后 `find resources/app.asar.unpacked/vendor/ive2glb -name 'ive2glb*'` | 只应命中 `wasm/ive2glb.js`（+ `ive2glb.wasm`）；出现 `win32-x64/ive2glb.exe` 之类说明又回到了按平台分发的老路（REQ-012 标准 2） | | ☐ |
+| ★ 助手自检（不依赖 GUI） | `node resources/app.asar.unpacked/vendor/ive2glb/wasm/ive2glb.js <某个.ive> <输出目录>` | 助手 stdout 一行 `{"status":"success",…"images":3,"meshes":3,"binBytes":28782480}`；Node 侧 `success [0.538, 1.364, 1.056] 11516 18924`。原生助手仍在时，其 `dumpbin /dependents` / `DYLD_PRINT_LIBRARIES` 闭包自检见 `native/ive2glb/README.md` | | ☐ |
+| ★ 目标平台安装包 | 在**每个**目标平台安装 → 启动 → 修复一个 `.glb` 与一个 `.ive` | 可启动；`app-capabilities` 报 `ive: true`、`assimp: true`；两种输入都能修复并预览。**四平台的 IVE 期望值相同**（世界盒 `0.54 × 1.36 × 1.06 m`、顶点 `11516`、三角面 `18924`） | | ☐ |
+| ★ 降级不回归（BR-012） | 临时移走 `vendor/ive2glb/wasm/` 与原生助手目录 → 启动 → 选 `.ive` | 中文提示「缺少 IVE 转换助手」并**列出已查找路径**；应用不崩；同一目录里的 `.glb`/`.fbx`/`.obj` 仍能正常修复（REQ-012 标准 5） | | ☐ |
 
 ## 5. 回滚预案（Rollback）
 
@@ -104,9 +112,10 @@
   - JPEG → PNG 导致输出体积变大，依赖"修完还是小体积"的用户需重新评估（可开启降采样缓解）
   - 修复产物可能被**自动规范化采样器**：NPOT 贴图上的 `REPEAT`+mipmap 会被改成 `CLAMP_TO_EDGE`+`LINEAR`（平铺资产会失去平铺、mipmap 会被去掉，属 ADR-009 已记录的代价）；POT 贴图与已合法组合不受影响
 - **已知问题**：
-  - **发布已决定推迟**（2026-09-20，sunny-zhai）：Windows 侧的 IVE 助手缺失（见 §3 的警告块）在补齐前不发布，由 **REQ-009 / TASK-021、TASK-022** 承载（构建并 vendoring `vendor/ive2glb/win32-x64/` → 重打安装包 → 逐行冒烟回填）。在此之前 §3/§4 保持未勾。**2026-09-20 进展**：该需求的环境无关部分已就绪（`native/ive2glb/README.md` 的 Windows 构建配方 + 两条自检、§4 冒烟表补到 15 行且 Windows 行标 ★、人工目视清单 M-1~M-8），只差 Windows 环境执行
-  - Windows 安装包不含 IVE 助手（见 §3），Windows 用户只能使用 GLB 修复能力
-  - 渲染结果的人眼确认：TC-012 由 sunny-zhai 于 2026-09-18 验收通过；**TC-014~TC-018 与 TC-024/TC-025 的人工目视项已于 2026-09-20 按 `docs/testing/TEST_PLAN.md` 的 M-1~M-7 逐项确认通过**（REQ-005/REQ-006/REQ-007 因此关闭），朝向/落地/贴图方向仍由自动化世界盒断言兜底。**M-8（Windows 上的四格式安装包冒烟）未执行**，随 REQ-009
+  - ~~**发布已决定推迟**（2026-09-20）：Windows 侧的 IVE 助手缺失在补齐前不发布~~ → **2026-09-21 阻塞解除**（REQ-012 / ADR-012）：WASM 助手一次构建覆盖四平台，`vendor/ive2glb/wasm/` 已入库并接入 `resolveIveHelper()` 的回退链；**REQ-009 的 TASK-021/TASK-022 已取消（被 REQ-012 取代）**。§3/§4 仍未勾，但只剩"在各自平台产出安装包并逐行回填"这一执行动作，无技术前提
+  - ~~Windows 安装包不含 IVE 助手，Windows 用户只能使用 GLB 修复能力~~ → **不再成立**：助手是 WASM，与平台无关；四平台的 IVE 期望值完全一致（BR-036）
+  - **平台覆盖的实测边界（如实声明）**：打包与"应用内 IVE 可用"只在 **darwin-arm64** 上实测过（`electron-builder --mac --dir` + 包内转换 + 包内 UI 冒烟）。`win32-x64` / `linux-x64` / `darwin-x64` 的结论是**由 WASM 与平台无关这一机制推出**，并按 REQ-012 标准 1 列为待各自平台执行的回填项——发布前必须在四个平台各跑一次 §4 的 ★ 行
+  - 渲染结果的人眼确认：TC-012 由 sunny-zhai 于 2026-09-18 验收通过；**TC-014~TC-018 与 TC-024/TC-025 的人工目视项已于 2026-09-20 按 `docs/testing/TEST_PLAN.md` 的 M-1~M-7 逐项确认通过**（REQ-005/REQ-006/REQ-007 因此关闭），朝向/落地/贴图方向仍由自动化世界盒断言兜底。**M-8（目标平台上的四格式安装包冒烟）未执行**，随 §4 的 ★ 行
   - 模型体检：`src/inspect.js` 报告 + 界面体检面板（世界盒/accessor 盒双列、偏差告警、事实行、问题清单）与预览方向/缩放/上轴控件均已实现（TASK-008 已完成并合入）；TASK-009 已修掉 `UNREFERENCED_MESHES` 误报与"窗口不可见时预览不落定"（后者根因是后台节流导致 Cesium 一帧未渲染）
   - ~~贴图采样器规范化与贴图降采样尚未实现~~ → **2026-09-20 已交付**（REQ-008 / TASK-017~020，BR-031/032；冒烟见 TC-019/TC-020）
   - ~~`KHR_texture_transform.texCoord` 覆盖被忽略 → `MISSING_TEXCOORD` 可能漏报~~ → **2026-09-20 已修复**（REQ-008 / TASK-019，BR-033；旧代码上该组用例实测 3 红 1 绿）
@@ -122,3 +131,4 @@
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | 2026-09-18 | v0.1.0 | — | 代码并入 `main`（PR #6 → `3506327`、PR #7 → `0063590`），**安装包未产出**（§3 全未勾选） | `docs/approvals/APPROVALS.md` 的两条 delivery 记录 + `docs/testing/TEST_PLAN.md` | 否 |
 | 2026-09-20 | v0.1.1 | — | **推迟发布**（决定人 sunny-zhai）：等 Windows IVE 助手补齐（REQ-009 / TASK-021、TASK-022）；`dist/` 现有产物是 2026-09-15 的 `0.1.0` 旧包，**不代表当前代码** | §1 预检已全勾（含 `npm audit --registry=https://registry.npmjs.org --omit=dev` → 0 漏洞）；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；冒烟四格式各 66 步 / 132 条断言 / 0 失败；覆盖率 all files 94.35 / 79.03 / 95.76；`docs/testing/TEST_PLAN.md` 结果汇总 | 否 |
+| 2026-09-21 | v0.1.1 | darwin-arm64（打包实测） | **仍未发布，但阻塞已解除**：REQ-012 走 WASM 路线（TASK-027 spike 通过 → TASK-028 落地 → TASK-029 文档回填），四平台共用一份助手，`vendor/ive2glb/wasm/` 2.79 MB；REQ-009 的 TASK-021/022 已取消（被取代）。剩下的是**执行动作**：在 win32-x64 / linux-x64 / darwin-x64 各产一次安装包并回填 §3/§4 的 ★ 行 | `npm test` → 148 用例 / 144 通过 / 0 失败 / 4 跳过（干净检出 148/126/0/22）；`npm run lint` 通过；覆盖率 all files 95.32 / 81.19 / 96.72（命令含 `--test-coverage-exclude="vendor/**"`）；`ui-smoke` 在开发态与**打包应用**上各 66 步 / 132 条断言 / 0 失败；打包应用内 `convertIveToGlb('o-model/蹲姿.ive')` → `11516` / `18924` / `0.538×1.364×1.056`；`node scripts/memory.mjs check` 通过 | 否 |
