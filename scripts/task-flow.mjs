@@ -8,7 +8,7 @@
 //   node scripts/task-flow.mjs request [--base master] [--remote origin] [--dry-run]
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, relative } from 'node:path'
 
 const PROTECTED = ['main', 'master']
 const argv = process.argv.slice(2)
@@ -289,13 +289,21 @@ if (command === 'request') {
     compareUrl = ''
   }
 
-  const hasGh = (() => {
-    try {
-      execFileSync('gh', ['--version'], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
+  // `gh` 必须**尽力而为**：把"工具存在"当成"工具可用"会让 request 在 gh 未登录时抛栈崩溃，
+  // 而此时正文与 compare URL 都已就绪（实测缺陷见台账 ISSUE-013）。可用 = 装了 + 已登录 + 远端是 GitHub。
+  const ghState = (() => {
+    const run = (args) => {
+      try {
+        execFileSync('gh', args, { cwd: root, stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
     }
+    if (!run(['--version'])) return { usable: false, reason: '未安装 gh CLI' }
+    if (!run(['auth', 'status'])) return { usable: false, reason: 'gh 已安装但未登录（gh auth login）' }
+    if (!/github\.com/.test(compareUrl)) return { usable: false, reason: '远端不是 GitHub（无可创建 PR 的地址）' }
+    return { usable: true, reason: '' }
   })()
 
   if (dryRun) {
@@ -304,17 +312,27 @@ if (command === 'request') {
     process.exit(0)
   }
 
-  console.log(`task-flow: wrote merge request body to docs/release/MERGE_REQUEST.md`)
-  if (hasGh) {
-    execFileSync('gh', [
-      'pr', 'create', '--base', base, '--head', version.current,
-      '--title', title, '--body-file', requestPath,
-    ], { cwd: root, stdio: 'inherit' })
-    console.log('task-flow: merge request created — a human merges it on the protected branch')
-  } else {
-    console.log('task-flow: gh CLI not found; open the compare page and create the PR manually:')
+  console.log('task-flow: wrote merge request body to docs/release/MERGE_REQUEST.md')
+  const manual = (why) => {
+    console.log(`task-flow: ${why}；用手动路径创建合并申请（正文已写好）：`)
     if (compareUrl) console.log(`  ${compareUrl}`)
     else console.log('  (add a remote with `git remote add origin <url>` to get a compare link)')
+    console.log(`  正文：${relative(root, requestPath) || requestPath}`)
+  }
+  if (ghState.usable) {
+    try {
+      execFileSync('gh', [
+        'pr', 'create', '--base', base, '--head', version.current,
+        '--title', title, '--body-file', requestPath,
+      ], { cwd: root, stdio: 'inherit' })
+      console.log('task-flow: merge request created — a human merges it on the protected branch')
+    } catch (error) {
+      // gh 可用但创建失败（无权限/网络/分支未推送）——不能让已经写好的申请白写
+      const detail = `${error.stderr ?? ''}${error.stdout ?? ''}`.trim().split('\n').slice(0, 3).join(' / ')
+      manual(`gh pr create 失败${detail ? `：${detail}` : ''}`)
+    }
+  } else {
+    manual(ghState.reason)
   }
   console.log('task-flow: after the human merges, record it: node scripts/record-approval.mjs --gate delivery --decision approved --actor <you>')
   process.exit(0)
