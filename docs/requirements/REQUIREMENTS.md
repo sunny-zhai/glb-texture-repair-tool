@@ -91,7 +91,7 @@
   5. When 体检遇到异常输入（缺 accessor `min`/`max`、外部 `uri` 缺失、非 GLB）Then 报告给出可读中文问题条目而不是抛异常。
 - **关联任务**：TASK-007、TASK-008、TASK-009（缺陷修复）
 - **关联代码/测试**：`src/inspect.js`、`src/transform.js`、`src/report-format.js`、`src/preview-transform.js`、`src/renderer.js`、`test/inspect.test.js`、`test/report-format.test.js`、`test/preview-transform.test.js`、`test/ui-smoke.cjs`
-- **确认**：待确认
+- **确认**：已确认（人工目视 · sunny-zhai · 2026-09-20；见 `docs/approvals/APPROVALS.md` 的 delivery 记录与 `docs/testing/TEST_PLAN.md` 的 M-1。**此前该字段停留在模板默认的「待确认」，与状态行的「已完成」矛盾，2026-09-22 按实情订正**——不改写状态行本身）
 
 ### REQ-006 编辑器式界面重排：让主次关系与操作路径对上
 - **状态**：已完成（7 条验收标准已实现并通过自动化验证；**人工目视 2026-09-20 通过**——sunny-zhai 按 M-2~M-4 核对布局、折叠、900px 降级与单层滚动条，留痕见 `docs/approvals/APPROVALS.md`）
@@ -153,7 +153,7 @@
 - **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20，见 `docs/approvals/APPROVALS.md`）
 
 ### REQ-009 Windows 分发可用性：IVE 助手入库 + 安装包重打与冒烟
-- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；**待实现**，TASK-021 需外部 Windows x64 环境，发布时点由人决定）
+- **状态**：**已取消（被 REQ-012 取代）**（2026-09-22 经交付闸门 ③ 由 sunny-zhai 决定 abandon，留痕见 `docs/approvals/APPROVALS.md`）。原为「已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；待实现，TASK-021 需外部 Windows x64 环境）」。取代依据：TASK-027 的 spike 判定 WASM 路线可行，Windows 原生助手（TASK-021/022）不再需要构建；其覆盖面「包内容 / `ive: true` / 世界盒一致」改由 REQ-012 的发布清单 §3/§4 ★ 行在四个目标平台承接，`native/ive2glb/README.md` 的 Windows 配方与依赖闭包自检仍在排障时有效
 - **优先级**：P0（发布前置）
 - **描述**：v0.1.1 决定**暂不发布**，原因是 Windows 侧不完整：① `vendor/ive2glb/` 只有 `darwin-arm64`，Windows 安装包里没有 `ive2glb.exe`，用户打开 `.ive` 只能拿到 BR-012 的中文降级提示（不静默，但功能不可用）；② `dist/` 里现有产物是 **2026-09-15** 构建的 `0.1.0` 包，早于 REQ-005/006/007，不含体检面板、编辑器式布局与 FBX/OBJ 链路，不能代表当前代码。本需求把"能发"变成可核验的目标：Windows 助手入库、安装包重打、冒烟表逐行回填。
 - **范围**：`native/ive2glb/`（Windows 构建与 `README.md` 补 Windows 步骤）、`vendor/ive2glb/win32-x64/`（构建产物入库，与既有的 `vendor/ive2glb/**` 打包约定一致）、`package.json`（`files` / `asarUnpack` 如需）、`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`。
@@ -167,7 +167,7 @@
   6. Given 由于环境原因无法完成 Windows 构建，When 决定只发 GLB/FBX/OBJ 能力，Then 必须在发布说明中显式声明"Windows 上 `.ive` 不可用、降级为 BR-012 中文提示"，并把该声明本身作为验收证据（**不得**以沉默略过，也不得让清单里那条保持在含糊状态）。
 - **关联任务**：TASK-021、TASK-022
 - **关联代码/测试**：`native/ive2glb/`、`vendor/ive2glb/win32-x64/`、`scripts/build-ive2glb.sh`、`package.json`、`docs/release/RELEASE_CHECKLIST.md`；ADR-010
-- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20，见 `docs/approvals/APPROVALS.md`；发布时点仍由人决定）
+- **确认**：**已取消**（交付闸门 ③ · abandon · sunny-zhai · 2026-09-22，见 `docs/approvals/APPROVALS.md`）；此前的闸门 ① 规格记录仍保留在上方批准历史里
 
 ### REQ-010 预览修正的记忆：上轴/方向/缩放选择在重启后保持
 - **状态**：已完成（闸门 ① 规格 · sunny-zhai · 2026-09-20；TASK-023 已交付：`glb-repair.preview` 只记显式选择、启动与新模型加载都沿用并记日志、坏载荷回落合法区间；冒烟 5 条断言通过）
@@ -201,10 +201,10 @@
   7. **不回归**：`npm run lint` + `npm test` 全绿；`test/ui-smoke.cjs` 既有断言在 GLB / IVE / FBX / OBJ 四格式上仍全绿（新增断言后同步抬高 `EXPECTED_CHECK_COUNT`）；`node scripts/memory.mjs check` 通过。
 - **关联任务**：TASK-024、TASK-025、TASK-026
 - **关联代码/测试**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`；ADR-011；规则 BR-034
-- **确认**：待确认
+- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-011 · 2026-09-20，见 `docs/approvals/APPROVALS.md`。**此前该字段停留在模板默认的「待确认」，与状态行的「已完成」矛盾，2026-09-22 按实情订正**）
 
 ### REQ-012 让 IVE 输入在所有桌面平台可用（Windows / Linux / macOS Intel+ARM）
-- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-012 · 2026-09-20。**先做 spike 再定架构**，本机可做的打包目标与平台矩阵另立 TASK-030 先行）。**实现侧已收口（2026-09-22）**：TASK-027（spike 判 WASM 可行）→ TASK-028（WASM 助手落地并修掉打包后 asar 路径缺陷）→ TASK-029（BR-036 与四平台发布清单回填）→ TASK-030（mac/linux 打包目标与平台矩阵）全部交付，REQ-009 的 TASK-021/022 已取消（被本需求取代）。**仍未完成**：验收标准 1 要求四个平台**各自实测**，目前只有 darwin-arm64（`electron-builder --mac --dir` + 应用内转换 + 打包应用 UI 冒烟）有实测证据；`win32-x64` / `linux-x64` / `darwin-x64` 是由"WASM 与平台无关"推出的待回填项，须按 `docs/release/RELEASE_CHECKLIST.md` §3/§4 的 ★ 行逐平台执行，并通过交付闸门 ③ 后方可置为「已完成」
+- **状态**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-012 · 2026-09-20。**先做 spike 再定架构**，本机可做的打包目标与平台矩阵另立 TASK-030 先行）。**实现侧已收口，并已走完一轮冷审返工（2026-09-22）**：TASK-027（spike 判 WASM 可行）→ TASK-028（WASM 助手落地并修掉打包后 asar 路径缺陷）→ TASK-029（BR-036 与四平台发布清单回填）→ TASK-030（mac/linux 打包目标与平台矩阵）→ **TASK-031**（两轮冷上下文独立审查的返工：发布形态收窄为**只带 WASM** 使**标准 2** 真正成立、补 deb 元数据使 **`dist:linux`** 能产出安装包、原生助手起不来时回退 WASM、文档口径校正）。已实测：darwin-arm64 打包后**应用内** `resolveIveHelper()` 报 `kind: wasm` 且转换产物与开发态原生助手**逐字节相同**；`electron-builder --linux --x64` 产出 AppImage(x86_64) + deb(amd64) 且 `Maintainer`/`Vendor`/`Homepage` 齐备；包内 `find -name 'ive2glb*'` 只命中 wasm 两个文件。**仍未完成**：验收标准 1 要求四个平台**各自实测**——`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**仍待各自环境按 `docs/release/RELEASE_CHECKLIST.md` §3/§4 的 ★ 行回填，且交付闸门 ③（含对 TASK-031 返工的独立复核）通过后方可置为「已完成」
 - **优先级**：P1
 - **描述**：用户要求"不能改成支持所有系统吗"。现状：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 就到 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]` 找助手，换平台不需要改代码；真正的缺口是**只有 `darwin-arm64` 一份产物**，于是 Windows / Linux / Intel Mac 上 `.ive` 直接降级为 BR-012 的中文提示。本需求把"所有桌面平台都能转 IVE"落成可判定目标，并顺带补齐打包目标（`package.json` 目前只有 `win`）。
 - **范围**：`native/ive2glb/`（若走 WASM 则在其中新增 emscripten 构建路径）、`scripts/`（构建脚本）、`vendor/ive2glb/**`（产物形态可能从"每平台一份"改为"一份 WASM"）、`package.json`（`dependencies`/`asarUnpack`/新增 `mac`、`linux` 打包目标）、`src/ive.js`（若 WASM 路线需要新的调用方式；**解析语义与世界盒口径不得改变**）、文档与台账。
@@ -220,7 +220,7 @@
   8. **不回归**：`npm run lint` + `npm test` 全绿；`test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上仍全绿；`node scripts/memory.mjs check` 通过。
 - **关联任务**：TASK-027（spike，先决）、TASK-028（按结论实现）、TASK-029（文档与发布清单回填）
 - **关联代码/测试**：`native/ive2glb/`、`scripts/build-ive2glb.sh`（或新增 WASM 构建脚本）、`vendor/ive2glb/**`、`package.json`、`src/ive.js`、`test/ive.test.js`、`test/ui-smoke.cjs`；ADR-012；REQ-009（可能被本需求取代部分范围）
-- **确认**：待确认
+- **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-012 · 2026-09-20；REQ-009 的取代关系已于 2026-09-22 经交付闸门 ③ 以 abandon 留痕，见 `docs/approvals/APPROVALS.md`。**交付闸门 ③ 本身仍待完成**——需先对 TASK-031 的返工做独立复核）
 
 ## 变更记录
 

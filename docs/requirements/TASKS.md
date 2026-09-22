@@ -475,10 +475,23 @@
   ④ `resolveIveHelper()` 的 `searched` 去重（传入配对的 `.js` 覆盖时实测为 `[js, js, wasm]`）。
   ⑤ `test/ive.test.js` 的跳过信息补**恢复命令**，与 `test/repair.test.js` 同口径（否则 CLAUDE.md「跳过都会打印恢复命令」的说法对 IVE 用例不成立）。
   ⑥ **文档口径校正**：BR-036 ①② 现自相矛盾（①「WASM 优先交付」vs ②「原生优先」）→ 把「**交付形态**」与「**开发态解析顺序**」分开写；`RELEASE_CHECKLIST.md` §4 里「macOS 可以留 darwin-arm64，但它不是 Windows/Linux 包的一部分」这句在无条件通配下不成立，改为与收窄后的实际一致；ADR-012/BR-036 的 `100.2 / 101.6 ms` 标注为**起助手**耗时并补全链路实测（冷审实测 0.55~0.65 s）；`native/ive2glb/README.md` 的平台矩阵与 `resolveIveHelper()` 描述按 TASK-028 后的实现更新。
-- **产出**：`package.json`、`src/ive.js`、`test/ive.test.js`、`native/ive2glb/README.md`、`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/design/ADR.md`
-- **文件范围**：`package.json`, `src/ive.js`, `test/ive.test.js`, `native/ive2glb/README.md`, `docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/design/ADR.md`
-- **验证方式**：`npx electron-builder --mac --dir` 后，包内 `find resources/app.asar.unpacked/vendor/ive2glb -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` 与 `wasm/ive2glb.wasm`；打包应用内 `convertIveToGlb('o-model/蹲姿.ive')` 仍 `success`（`11516` / `18924` / `0.538×1.364×1.056`）且解析到 WASM；`npm run dist:linux` 能产出 AppImage 与 deb（本机不可行时如实记录失败点与环境）；把原生助手替换为不可执行文件后转换**回退 WASM 并成功**；`searched` 无重复；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过
-- **状态**：待开始
+- **产出**：`package.json`、`src/ive.js`、`test/ive.test.js`、`test/convert.test.js`、`test/inspect.test.js`、`native/ive2glb/README.md`、`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/design/ADR.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`package.json`, `src/ive.js`, `test/ive.test.js`, `test/convert.test.js`, `test/inspect.test.js`, `native/ive2glb/README.md`, `docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/design/ADR.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`npx electron-builder --mac --dir` 后，包内 `find resources/app.asar.unpacked/vendor/ive2glb -type f -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` 与 `wasm/ive2glb.wasm`；打包应用内 `convertIveToGlb('o-model/蹲姿.ive')` 仍 `success`（`11516` / `18924` / `0.538×1.364×1.056`）且解析到 WASM；`npm run dist:linux` 能产出 AppImage 与 deb（本机不可行时如实记录失败点与环境）；把原生助手替换为不可执行文件后转换**回退 WASM 并成功**；`searched` 无重复；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **标准 2 成立（原为 major）**：`files`/`asarUnpack` 收窄为 `vendor/ive2glb/wasm/**` 后重打 macOS 包，`find … -type f -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` + `wasm/ive2glb.wasm`，`@electron/asar list app.asar` 里 `darwin-arm64` 出现 **0** 次（修复前包内实测带着 11 MB 的 `darwin-arm64/`，且无条件通配会把同一目录塞进 win/linux 包）；`npx electron-builder --linux --x64` 产物同样是 wasm 两个文件，坐实了"每个平台都带原生助手"的判断。
+  ② **打包应用内可用（走 WASM）**：以 `ELECTRON_RUN_AS_NODE=1` 起打包应用自身的 Electron，`resolveIveHelper()` → `kind: 'wasm'`、路径解析到 `app.asar.unpacked/vendor/ive2glb/wasm/ive2glb.js`；`convertIveToGlb('o-model/蹲姿.ive')` → `success`、`[0.538,1.364,1.056]` / `11516` / `18924` / 2544480 B，与开发态原生助手（`kind: 'native'`）产物 **`cmp` 逐字节相同**。
+  ③ **`dist:linux` 可产出（原为 major）**：补 `author.email`（`sunny-zhai@users.noreply.github.com`）/`homepage`/`repository`/`linux.maintainer` 后，`npx electron-builder --linux --x64` **实跑成功**产出 `AppImage`(x86_64) + `deb`(amd64)；解包 control 实测 `Maintainer`/`Vendor`/`Homepage` 齐备（修复前 `FpmTarget.js:62-72` 必抛 `authorEmailIsMissed`）。
+  ④ **验证阶段新发现并修掉的一处矩阵不符**：`dist:linux` 原先不带 `--x64`，不带时按**宿主架构**产出——本机第一次跑出的是 linux-arm64 包，而矩阵里只有 linux-x64。已把脚本固定为 `--linux --x64`，`darwin-x64` 的产出方式（`--mac --x64`）写进清单与 README。
+  ⑤ **原生失败回退（minor）**：`runHelper()` 对"起不来"标记 `launchFailure`，`convertIveToGlb()` 据此调 `resolveWasmHelper()` 回退；新增用例把覆盖值指向存在但不可执行的文件，实测转换仍 `success`、`report.helperKind === 'wasm'`、`warnings` 含「已回退到 WASM 助手」；助手真的跑起来并报转换失败则**不**回退（不掩盖真实错误）。
+  ⑥ **`searched` 去重（minor）**：`makeHelperResolver()` 统一去重，配对的 `.js` 覆盖不再出现 `[js, js, wasm]`；新增断言 `new Set(searched).size === searched.length`。
+  ⑦ **跳过信息可照做（minor）**：`test/ive.test.js` 区分"缺样例"（指向 `TEST_PLAN.md` 的夹具行）与"缺助手"（给两条构建命令）；`test/convert.test.js`、`test/inspect.test.js` 一并补上（CLAUDE.md 原先"跳过都会打印恢复命令"的说法此前对这三个文件都不成立）。
+  ⑧ **文档口径（minor）**：BR-036 把「发布形态只有 WASM」与「开发态解析顺序原生优先」分成两条，消除自相矛盾，并补 ③ 回退、④ `searched` 去重；`RELEASE_CHECKLIST.md` §4 的 `find` 断言改为 `-type f` 且如实写明修复前它在真实包上跑不通；ADR-012 的 `100.2 / 101.6 ms` 标注为**起助手**耗时并补全链路实测 **0.55~0.65 s**（同为标准 7 的证据，远低于 10 s 预算）；`native/ive2glb/README.md` 的平台矩阵改为"路线 B 已被 A 取代、发布形态只有 WASM"。
+  ⑨ **顺带修掉的台账不一致（冷审 B 发现）**：`CLAUDE.md` 的 `git ls-files docs/` 数 13 → **14**（补 `docs/PLATFORM_ISSUES.md`）；`TEST_PLAN.md` 的 TC-001/TC-002/TC-013 各套件计数与汇总行按实测订正（TC-001 20→36/35/1、TC-002 24→35/32/3、TC-013 35/1→44/42/2、TC-007「五个文件」→10 个）；「待执行」段改为"已完成/已取代"（REQ-010/TC-023 已完成且由 TC-025 覆盖、TC-022 被 REQ-012 的 ★ 行取代）；ADR-012 收尾段把已交付项从"尚未验证"改为已核。
+  ⑩ **门禁**：`npm run lint` 通过；`npm test` → **152 用例 / 146 通过 / 0 失败 / 6 跳过**；干净检出（`git worktree add --detach` + 软链 `node_modules`）实测 **152 / 128 / 0 / 24**；覆盖率 `all files` **95.39 / 81.23 / 96.78**（`ive.js` 96.00 / 72.66 / 98.41，命令含 `--test-coverage-exclude="vendor/**"`，分支率单次运行 ±0.1pp）；`node scripts/memory.mjs check` 通过。
+  ⑪ **文件范围扩列说明**：由登记的 7 个扩为 11 个——`test/convert.test.js`/`test/inspect.test.js`（⑦ 的恢复命令，属同一 minor）、`docs/testing/TEST_PLAN.md` 与 `CLAUDE.md`（⑨ 的台账订正，与冷审 B 的发现同批）。均为冷审发现的低成本项，串行执行，无并行冲突。
+  ⑫ **仍未验证（如实标注）**：`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**未做（本机只有 darwin-arm64 宿主；linux-x64 只做到"安装包产出且内容正确"）；单 IVE 夹具（`o-model/蹲姿.ive`）上的逐字节等价性仍是单模型结论。
 
 ## 依赖 DAG
 
@@ -588,4 +601,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-028 | REQ-012 | 已完成（路线 A：WASM 助手 2.79MB 已 vendoring；顺带修掉打包后 asar 路径导致 IVE 转换失效的既有缺陷） | ☑ 自动 |
 | TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
-| TASK-031 | REQ-012 | 待开始（两轮冷审判定「有条件通过」，修 2 major + 5 minor） | ☐ |
+| TASK-031 | REQ-012 | 已完成（冷审返工：发布形态收窄为只带 WASM 使标准 2 成立、补 deb 元数据使 `dist:linux` 可产出、原生失败回退 WASM、台账与文档口径校正；验证阶段另修掉 `dist:linux` 未固定 `--x64` 的矩阵不符） | ☑ 自动（打包应用内走 WASM 且与原生逐字节相同；linux-x64 安装包产出实测；仍是单 IVE 夹具） |
