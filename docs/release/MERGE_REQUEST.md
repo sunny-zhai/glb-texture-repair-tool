@@ -2,9 +2,88 @@
 
 - version branch: `release/v0.1.1`
 - target: `main`（受保护分支，需人工合并）
-- commits: 77
+- snapshot: `3fa0eb7`（本清单与计数对应的版本分支顶端）
+- commits: 155（`main..release/v0.1.1` 在 snapshot 处的计数）
 
 ## 变更
+- 3fa0eb7 docs(REQ-012): 记录交付闸门 ③ 批准（含标准 1 四平台实测的已知偏差）
+- b647c39 chore(REQ-012/TASK-032): 记录完成线并收口台账残留不一致
+- 16dad84 Merge branch 'feature/REQ-012_verify-minor' into release/v0.1.1
+- 7aef457 fix(REQ-012/TASK-032): both-fail 错误可读性、helperKind 语义与台账口径收口
+- ca0b625 docs(REQ-012): 登记 TASK-032 复核收口任务
+- 030456c chore(REQ-012/TASK-031): 记录完成线，并按交付闸门处置 REQ-009
+- ad79246 Merge branch 'feature/REQ-012_review-rework' into release/v0.1.1
+- d5e7c20 fix(REQ-012/TASK-031): dist:linux 固定 --x64，并回填返工的实测证据
+- e9272d1 feat(REQ-012/TASK-031): 打包只带 WASM、补 deb 元数据与原生失败回退
+- 31f73c6 docs(REQ-012): 登记 TASK-031 冷审返工任务
+- df3a2f1 chore(REQ-012/TASK-029): 记录完成线
+- ffef852 Merge branch 'feature/REQ-012_docs' into release/v0.1.1
+- 39599c3 docs(REQ-012/TASK-029): 回填 BR-036、四平台发布清单与 IVE 章节
+- 516b881 chore(platform): 同步 task-flow（合并申请快照锚点 + gh 尽力而为）
+- 034e774 docs(platform): 关闭 ISSUE-002（progress 契约信号已尊重 meta.excluded）
+- 0619102 chore(platform): 同步平台修复并解决 ISSUE-002（progress 契约信号）
+- c32af87 chore(REQ-012/TASK-028): 记录完成线
+- 996db9e Merge branch 'feature/REQ-012_wasm-integration' into release/v0.1.1
+- 90866d1 feat(REQ-012/TASK-028): 落地跨平台 WASM IVE 助手，并修掉打包后转换失效的缺陷
+- 0c8a942 chore(REQ-012/TASK-027): 记录完成线
+- a179ba7 Merge branch 'feature/REQ-012_ive-wasm-spike' into release/v0.1.1
+- 8b88afc feat(REQ-012/TASK-027): 完成 IVE→WASM 可行性 spike，判定路线 A 可行
+- 7b92462 chore(REQ-012/TASK-027): 忽略 WASM spike 的本地工具链与源码
+- cd818a3 chore(REQ-012/TASK-030): 记录完成线
+- 2fd1d0a Merge branch 'feature/REQ-012_packaging-targets' into release/v0.1.1
+- 10febfe feat(REQ-012/TASK-030): 补 mac/linux 打包目标与平台支持矩阵，并实测 macOS 包内容
+- 6b2df95 chore(REQ-012): 留痕闸门 ①② 并回填 ADR-012 / REQ-012 状态
+- 0d05a44 Merge branch 'feature/REQ-012_cross-platform-ive' into release/v0.1.1
+- 45c9991 docs(REQ-012): 登记「IVE 支持所有桌面平台」需求、TASK-027~029 与 ADR-012
+- dc29135 docs: 回填人工目视闸门（M-1~M-7 通过），关闭 REQ-005 / REQ-006 / REQ-007
+- 9c7826f Merge branch 'feature/REQ-009_win-prep' into release/v0.1.1
+- a00e085 docs: 刷新 REQ-008/010/011 交付后过期的台账与发布说明
+- 8814183 Merge branch 'feature/REQ-009_win-prep' into release/v0.1.1
+- 53b3bdc docs(REQ-009/TASK-021,022): Windows 构建配方、发布冒烟表与人工目视清单就绪
+- 8599016 docs: 冒烟口径补上四格式各 66 步 / 132 条断言
+- 14d8ace chore(REQ-010/TASK-023): 记录完成线
+- a5c9042 Merge branch 'feature/REQ-010_preview-memory' into release/v0.1.1
+- 70148b3 feat(REQ-010/TASK-023): 预览三态记忆（只记显式选择，坏载荷不崩）
+- 7da5c24 docs(REQ-011): 状态改为已完成
+- 4a5c861 chore(REQ-011/TASK-026): 记录完成线
+- fbc0707 Merge branch 'feature/REQ-011_layout-docs' into release/v0.1.1
+- f44fa88 docs(REQ-011/TASK-026): 回填 BR-034、TC-024 与占比口径文档
+- 661083c chore(REQ-011/TASK-025): 记录完成线
+- 8af675b Merge branch 'feature/REQ-011_adaptive-sweep' into release/v0.1.1
+- 3ca0127 test(REQ-011/TASK-025): 多尺寸自适应矩阵普查，未发现缺陷但留下回归网
+- a5086cc chore(REQ-011/TASK-024): 记录完成线
+- 9237fc9 Merge branch 'feature/REQ-011_layout-ratio' into release/v0.1.1
+- ad31f2d feat(REQ-011/TASK-024): 布局改为占比模型，窗口缩放不再改写构图
+- ef2085d docs(REQ-011): 登记「布局按占比固定」需求、TASK-024~026 与 ADR-011
+- 50ec34d chore(REQ-008/TASK-020): 记录完成线
+- c53adcb Merge branch 'feature/REQ-008_docs' into release/v0.1.1
+- e5511ab docs(REQ-008/TASK-020): 回填 BR-031~033、TC-019~021 与修复管线文档
+- 8804c58 chore(REQ-008/TASK-019): 记录完成线
+- 6ec4181 Merge branch 'feature/REQ-008_texture-transform' into release/v0.1.1
+- 9a860de chore(REQ-008/TASK-019): 回填任务完成线与"旧代码必红"的实测证据
+- 6bacd20 feat(REQ-008/TASK-019): 采纳 KHR_texture_transform.texCoord 覆盖，补上 UV 漏报
+- 1486dac chore(REQ-008/TASK-018): 记录完成线
+- f7b7207 Merge branch 'feature/REQ-008_texture-downsample' into release/v0.1.1
+- bc8117f chore(REQ-008/TASK-018): 回填任务完成线与实测数字
+- 807b302 feat(REQ-008/TASK-018): 贴图降采样四档，并在界面上接线
+- fd0b03f chore(REQ-008/TASK-017): 记录完成线
+- 1d32d28 Merge branch 'feature/REQ-008_m3-texture-spec' into release/v0.1.1
+- a358276 chore(REQ-008/TASK-017): 回填任务完成线与实现中追加的范围
+- efb3e4a feat(REQ-008/TASK-017): 采样器规范化，并让体检的 NPOT 判定逐绑定对齐
+- 8e0a3d0 chore(REQ-008/009/010): 留痕闸门 ①② 并回填 ADR/需求状态
+- ec88bd6 chore(platform): 声明 openapi 契约不适用，并把 progress 契约信号记入问题台账
+- 2ecc15d docs: 按实测刷新台账与测试/发布基线，并记录 v0.1.1 推迟发布
+- ca8ff9d docs(design): 新增 ADR-009（贴图规格收口）与 ADR-010（Windows IVE 仍走原生助手）
+- 30a2810 docs(REQ-008/009/010): 登记贴图规格收口、Windows 分发与预览记忆，并订正过时状态
+- 983be85 chore(platform): 同步平台规则（自检只在提交状态上自动落账）
+- a07a3fd chore(platform): 同步平台记忆线（导出 MEMORY_FILE 消除路径字面量）
+- 2246c4b docs(platform): 关闭 ISSUE-001（台账被 .gitignore 吞掉）
+- 7e0760d chore(platform): 采纳问题上报能力并放行台账入库
+- b3c9b78 Merge remote-tracking branch 'origin/main' into release/v0.1.1
+- f68cfd2 chore(release): 记录 v0.1.1 交付闸门留痕（PR #9 → main b155d0e）
+- b155d0e Merge pull request #9 from sunny-zhai/release/v0.1.1
+- ffe8865 Merge pull request #8 from sunny-zhai/release/v0.1.0
+- 4f9736d chore(release): request the merge of release/v0.1.1 into main
 - c31feb3 docs(platform): 修正 .gitignore 口径与 docs 入库份数
 - 876dd32 chore(release): request the merge of release/v0.1.1 into main
 - cb13998 chore(platform): declare docs/coding-standard not applicable and track the remaining seeds
@@ -82,6 +161,8 @@
 - 3dd8356 chore(version): track version state on version branch
 - 39408df docs: 追溯登记平台采纳前已交付的功能（REQ-003/REQ-004）
 - 3bad6dd chore: 记录第二批完整交付的闸门留痕
+
+> 承载本文件的申请提交在 snapshot `3fa0eb7` 之后落地，因此**不在清单与计数内**——分支顶端可能比 snapshot 多 1 个提交。这是自指，不是漏列。
 
 ## 验收前请确认
 - [ ] 版本分支上的测试/门禁全绿（`docs/testing/TEST_PLAN.md`）
