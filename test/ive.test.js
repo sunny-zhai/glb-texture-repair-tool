@@ -17,6 +17,7 @@ const {
   resolveIveHelper,
   resolveWasmHelper,
   rotateVector,
+  shortenForError,
   vendorRootsFor,
   weldVertices,
   worldBounds,
@@ -744,5 +745,89 @@ test('ive: 原生助手起不来时回退 WASM 并成功转换（BR-036 ③）',
     assert.match((report.warnings || []).join('\n'), /已回退到 WASM 助手/)
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- 复核收口（TASK-032）
+//
+// 冷审的两条 minor：① 原生与 WASM 都失败时原生原因被丢弃、且 stderr 全文会被塞进
+// report.error（实测 65,792 字符）；② report.helperKind 在错误路径是 undefined，
+// 与 BR-036 ③ 的措辞不符。下面三条用**真环境**（把 src/ 复制到临时根 + 软链
+// node_modules）验证，不依赖任何样例夹具，因此在干净检出上也会执行。
+
+test('ive: shortenForError 截断超长文本并标注原文长度', () => {
+  assert.equal(shortenForError('短'), '短')
+  assert.equal(shortenForError(undefined), '')
+  const long = 'x'.repeat(5000)
+  const short = shortenForError(long)
+  assert.ok(short.length < 700, `截断后应受控，实际 ${short.length}`)
+  assert.match(short, /已截断，原文共 5000 字符/)
+  assert.ok(short.startsWith('x'.repeat(600)))
+})
+
+/** @description 造一个"没有 vendor/ 的 src 副本"，可按需塞入 WASM 助手桩。 */
+function makeIsolatedIveRoot({ wasmScript } = {}) {
+  const tempRoot = makeTempDir()
+  fs.cpSync(path.join(projectRoot, 'src'), path.join(tempRoot, 'src'), { recursive: true })
+  fs.symlinkSync(path.join(projectRoot, 'node_modules'), path.join(tempRoot, 'node_modules'))
+  fs.writeFileSync(path.join(tempRoot, 'in.ive'), '不是真的 IVE，但转换在起助手之前只用扩展名与存在性\n')
+  if (wasmScript) {
+    const wasmDir = path.join(tempRoot, 'vendor', 'ive2glb', 'wasm')
+    fs.mkdirSync(wasmDir, { recursive: true })
+    fs.writeFileSync(path.join(wasmDir, 'ive2glb.js'), wasmScript)
+    fs.writeFileSync(path.join(wasmDir, 'ive2glb.wasm'), '桩：只要求与 .js 成对存在\n')
+  }
+  return tempRoot
+}
+
+function withBrokenNative(tempRoot, run) {
+  const brokenNative = path.join(tempRoot, 'ive2glb') // 存在但不可执行 → spawnSync EACCES
+  fs.writeFileSync(brokenNative, 'not an executable\n', { mode: 0o644 })
+  const previous = process.env.GLB_REPAIR_IVE2GLB
+  process.env.GLB_REPAIR_IVE2GLB = brokenNative
+  try {
+    return run(require(path.join(tempRoot, 'src', 'ive.js')))
+  } finally {
+    if (previous === undefined) delete process.env.GLB_REPAIR_IVE2GLB
+    else process.env.GLB_REPAIR_IVE2GLB = previous
+  }
+}
+
+test('ive: 原生与 WASM 都起不来时，错误串保留原生原因且被截断（TASK-032）', () => {
+  // WASM 桩：存在但跑起来只往 stderr 吐 5000 字符再退出非零。
+  const tempRoot = makeIsolatedIveRoot({
+    wasmScript: "process.stderr.write('x'.repeat(5000)); process.exit(1)\n",
+  })
+  try {
+    const report = withBrokenNative(tempRoot, (ive) => ive.convertIveToGlb(
+      path.join(tempRoot, 'in.ive'),
+      path.join(tempRoot, 'out.glb'),
+    ))
+    assert.equal(report.status, 'error')
+    // ① 后一条失败不再是唯一信息：原生为什么没顶上必须带出来。
+    assert.match(report.error, /原生助手也无法启动/)
+    assert.match(report.error, /EACCES|EACCES|permission|not permitted/i)
+    // ② stderr 全文不得进错误串。
+    assert.match(report.error, /已截断/)
+    assert.ok(report.error.length < 1500, `错误串应受控，实际 ${report.error.length}`)
+    // ③ 失败路径也要有 helperKind（最后尝试的形态）。
+    assert.equal(report.helperKind, 'wasm')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('ive: 原生起不来且没有 WASM 兜底时，helperKind 仍是尝试过的形态（TASK-032）', () => {
+  const tempRoot = makeIsolatedIveRoot() // 故意不放 vendor/ive2glb/wasm
+  try {
+    const report = withBrokenNative(tempRoot, (ive) => ive.convertIveToGlb(
+      path.join(tempRoot, 'in.ive'),
+      path.join(tempRoot, 'out.glb'),
+    ))
+    assert.equal(report.status, 'error')
+    assert.equal(report.helperKind, 'native', '没有 WASM 可退时，形态应记为原生')
+    assert.match(report.error, /调用 IVE 转换助手失败/)
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
   }
 })
