@@ -16,6 +16,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
 import { ISSUE_FILE, logIssue } from './platform-issue.mjs'
+import { isExcluded, readLock, readLockMeta } from './lock-meta.mjs'
 
 // 记忆线文件路径：这里是**唯一**定义（doctor 的入库检查也用它，避免两处各写一份字面量）。
 export const MEMORY_FILE = 'docs/PROJECT_MEMORY.md'
@@ -131,15 +132,8 @@ function trackedPaths() {
   }
 }
 
-function readLock() {
-  const path = join(root, '.ai/platform-lock.json')
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'))
-  } catch {
-    return null
-  }
-}
+// 受管清单读取与排除判定统一走交付模块 `lock-meta.mjs`：排除语义只有一处定义
+const lockMeta = readLockMeta(root)
 
 function packageScripts() {
   const path = join(root, 'package.json')
@@ -205,7 +199,7 @@ function generateStructure() {
   lines.push('')
 
   const lockPath = join(root, '.ai/platform-lock.json')
-  const lock = readLock()
+  const lock = readLock(root)
   let typeLine
   if (!existsSync(lockPath)) {
     typeLine = '本仓库是平台母体（无 `.ai/platform-lock.json`）'
@@ -241,6 +235,8 @@ function generateStructure() {
 
   const docs = DOC_SEEDS.map((name) => {
     const rel = `${DOC_DIRS[name]}/${name}`
+    // 已声明不适用的种子显示「不适用」——显示 `—` 会被读成"缺失"（交付脚本不得引用母体需求编号）
+    if (isExcluded(rel, lockMeta)) return `${name} 不适用`
     const ok = tracked === null ? existsSync(join(root, rel)) : tracked.has(rel)
     return `${name} ${ok ? '✓' : '—'}`
   })
@@ -265,6 +261,11 @@ function generateStructure() {
 }
 
 // ---- 完成线 ----
+// 导出：完成线行格式的**唯一**解析器（`scripts/spec-first.mjs` 复用它读 REQ→实现提交）。
+export function parseCompletionRows(text) {
+  return parseCompletion(text)
+}
+
 function parseCompletion(text) {
   const body = section(text, C_BEGIN, C_END)
   if (body === null) return null
