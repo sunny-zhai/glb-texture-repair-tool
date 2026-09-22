@@ -465,6 +465,21 @@
   ⑥ **本机做不到的部分（如实记录）**：`darwin-x64` 需要 x86_64 的 OSG（本机 Rosetta 可用，但 `/usr/local` 下没有 x86_64 Homebrew/OSG，装它属系统级改动）；`win32-x64` 需 Windows 环境；`linux-x64` 需 Linux 或容器（本机 docker 不可用）。`native/ive2glb/README.md` 的平台支持矩阵已逐条写明，并给出"新增一个平台"的六步清单。
   ⑦ `npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
 
+### TASK-031 REQ-012 冷审返工：打包只带 WASM、deb 元数据、原生失败回退 WASM 与文档口径校正
+- **关联需求**：REQ-012（**不改写 TASK-027~030 的历史结论**；缺陷由它们的交付暴露）；冷审发现逐条见下方「验证结果」
+- **依赖**：TASK-029、TASK-030
+- **做什么**：两轮冷上下文独立审查（2026-09-22）判定「有条件通过」，本任务修掉全部 major 与低成本 minor：
+  ① **打包只带 WASM**（人决策 2026-09-22，sunny-zhai）：`package.json` 的 `files`/`asarUnpack` 由 `vendor/ive2glb/**` 收窄为 `vendor/ive2glb/wasm/**`——REQ-012 标准 2 要求包内不含平台相关的原生助手可执行文件，而原通配会把 `darwin-arm64/`（1 exe + 14 dylib + 2 插件，11 MB）打进**每一个**平台的安装包（实测 `find … -name 'ive2glb*'` 在真实 macOS 包上命中了它，`RELEASE_CHECKLIST.md` §4 原写的断言因此不成立）。原生助手**仍留在仓库**，供开发态与「原生↔WASM 逐字节等价」用例使用；**不改**已批准的标准 2。
+  ② **补齐 electron-builder 元数据**（人决策 2026-09-22：用 GitHub noreply 邮箱）：补 `author`（含 email）、`homepage`、`repository`，使 `dist:linux` 的 `deb` 目标不再因 `authorEmailIsMissed`（`app-builder-lib/out/targets/FpmTarget.js:62-72`）中止——REQ-012 标准 4 要求 `npm run dist:linux` 能产出安装包，而当前配置下 deb 必失败。
+  ③ **原生失败回退 WASM**：`runHelper()` 在原生助手存在但**起不来**（EACCES / 被隔离 / 部分解包）时改走 WASM，而不是直接按 BR-012 报错丢弃 IVE 能力（实测：原生不可执行时报 `spawnSync … EACCES`，同一环境删掉原生目录即走 WASM 成功）。
+  ④ `resolveIveHelper()` 的 `searched` 去重（传入配对的 `.js` 覆盖时实测为 `[js, js, wasm]`）。
+  ⑤ `test/ive.test.js` 的跳过信息补**恢复命令**，与 `test/repair.test.js` 同口径（否则 CLAUDE.md「跳过都会打印恢复命令」的说法对 IVE 用例不成立）。
+  ⑥ **文档口径校正**：BR-036 ①② 现自相矛盾（①「WASM 优先交付」vs ②「原生优先」）→ 把「**交付形态**」与「**开发态解析顺序**」分开写；`RELEASE_CHECKLIST.md` §4 里「macOS 可以留 darwin-arm64，但它不是 Windows/Linux 包的一部分」这句在无条件通配下不成立，改为与收窄后的实际一致；ADR-012/BR-036 的 `100.2 / 101.6 ms` 标注为**起助手**耗时并补全链路实测（冷审实测 0.55~0.65 s）；`native/ive2glb/README.md` 的平台矩阵与 `resolveIveHelper()` 描述按 TASK-028 后的实现更新。
+- **产出**：`package.json`、`src/ive.js`、`test/ive.test.js`、`native/ive2glb/README.md`、`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/design/ADR.md`
+- **文件范围**：`package.json`, `src/ive.js`, `test/ive.test.js`, `native/ive2glb/README.md`, `docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/design/ADR.md`
+- **验证方式**：`npx electron-builder --mac --dir` 后，包内 `find resources/app.asar.unpacked/vendor/ive2glb -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` 与 `wasm/ive2glb.wasm`；打包应用内 `convertIveToGlb('o-model/蹲姿.ive')` 仍 `success`（`11516` / `18924` / `0.538×1.364×1.056`）且解析到 WASM；`npm run dist:linux` 能产出 AppImage 与 deb（本机不可行时如实记录失败点与环境）；把原生助手替换为不可执行文件后转换**回退 WASM 并成功**；`searched` 无重复；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过
+- **状态**：待开始
+
 ## 依赖 DAG
 
 ```text
@@ -491,6 +506,9 @@ TASK-021 ──▶ TASK-022（REQ-009 Windows 分发：助手入库 → 安装�
 
 TASK-027 ──▶ TASK-028 ──▶ TASK-029（REQ-012 跨平台 IVE：WASM 可行性 spike → 按结论落地 → 文档与清单）
 TASK-030（REQ-012 打包目标与平台矩阵；**独立于 spike**，与 TASK-027 文件范围不重叠，可并行）
+
+TASK-029 ──▶ TASK-031（REQ-012 冷审返工：打包只带 WASM + deb 元数据 + 原生失败回退 + 文档口径）
+TASK-030 ──▶ TASK-031（与 TASK-030 同改 `package.json`，故必须排在其后串行）
 
 > REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
 >
@@ -532,6 +550,7 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | 26 | TASK-028 | ~~依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/`~~ **已于 2026-09-21 完成**，TASK-029 据此回填文档 |
 | 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字；**产物形态与数字已定**：`vendor/ive2glb/wasm/` 2.79 MB、单文件约 102 ms） |
 | 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
+| 29 | TASK-031 | REQ-012 冷审返工；依赖 TASK-029 与 TASK-030（同改 `package.json` 与 `docs/001-code-design.md`），必须串行 |
 | 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
 | 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
 
@@ -569,3 +588,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-028 | REQ-012 | 已完成（路线 A：WASM 助手 2.79MB 已 vendoring；顺带修掉打包后 asar 路径导致 IVE 转换失效的既有缺陷） | ☑ 自动 |
 | TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
+| TASK-031 | REQ-012 | 待开始（两轮冷审判定「有条件通过」，修 2 major + 5 minor） | ☐ |
