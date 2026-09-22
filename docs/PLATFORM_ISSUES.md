@@ -34,4 +34,5 @@ node <平台路径>/scripts/platform-doctor.mjs --target .
 | ISSUE-001 | 2026-09-20 | — | — | — |  | fixed-by: 7e0760d｜在 .gitignore 放行 !docs/PLATFORM_ISSUES.md；台账已入库 | fixed |
 | ISSUE-002 | 2026-09-20 | tool-gap | minor | progress.mjs:contract | progress 的契约信号不查 platform-lock 的 meta.excluded：已声明不适用的 openapi 种子仍被印成「契约 模板」 | scripts/progress.mjs:81 readOptional('docs/api/openapi.json') 与 :90 contractReal 只看文件内容；.ai/platform-lock.json 的 meta.excluded 已含 docs/api/openapi.json（本项目为桌面工具，无 HTTP API） | open |
 | ISSUE-002 | 2026-09-22 | — | — | — |  | fixed-by: REQ-019｜平台已让交付脚本尊重 meta.excluded（lock-meta.mjs 单一定义）；progress 契约信号与 memory 快照均改为「不适用」 | fixed |
+| ISSUE-003 | 2026-09-22 | tool-gap | minor | task-flow:start/finish | feature 分支内可以写入共享台账（TASKS.md 状态行）而没有任何拦截，实测 TASK-027/028/030 三个任务在各自 feature 分支里改了它，违反 .ai/AGENTS.md §3 的单写者约定 | git show --stat 8b88afc 90866d1 10febfe 均含 docs/requirements/TASKS.md；对照 2026-09-22 的 TASK-031/TASK-032 两轮改为合并点单写（030456c 及本次收口提交），git diff --stat 显示 feature 提交不再触碰台账 | open |
 <!-- issues:end -->

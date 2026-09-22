@@ -500,7 +500,15 @@
 - **产出**：`src/ive.js`、`test/ive.test.js`、`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/requirements/REQUIREMENTS.md`（变更记录由合并点写，见下）
 - **文件范围**：`src/ive.js`, `test/ive.test.js`, `docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `docs/release/RELEASE_CHECKLIST.md`
 - **验证方式**：新增用例——在**没有 `vendor/`** 的临时根下放一份"存在但会被执行且失败"的 WASM 助手（`.js` 打印超长 stderr 后退出非零）并把 `GLB_REPAIR_IVE2GLB` 指向不可执行的原生文件，断言 `report.error` **同时**含原生失败原因与「已截断」标记、且长度受控；`report.helperKind` 在错误路径不再是 `undefined`；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过；冷审方点名的每条措辞按实测订正
-- **状态**：待开始
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **both-fail 可读性（minor A）**：新增 `shortenForError(text, limit=600)`——超长文本截断为前 600 字符并标注「已截断，原文共 N 字符」；`runHelper()` 的「未返回有效结果」与助手自报错误都过这一层。两路都失败时在错误串尾部补「（原生助手也无法启动：…）」，并各自再截到 400 字符——此前原生原因被完全丢弃、错误串实测达 **65,792** 字符。新增用例（无 `vendor/` 的 src 副本 + 打印 5000 字符 stderr 的 WASM 桩 + 不可执行的原生覆盖值）断言：错误串同时含原生原因与「已截断」、总长 < 1500、`helperKind === 'wasm'`。
+  ② **`helperKind` 语义（minor B）**：`report.helperKind` 改为**解析后立即写**——成功时=实际使用的形态，失败时=最后尝试的形态（无 WASM 兜底时仍是 `native`），错误路径不再 `undefined`；失败路径同时带出 `iveWarnings`。BR-036 ③、MOD-006、CLAUDE.md 的措辞按此改写。
+  ③ **TC-001 期望行（minor C）**：由「36 通过 / 0 失败」改为「36 用例 / 35 通过 / 1 跳过 / 0 失败」，与同节「实际 35/1/0」一致。
+  ④ **台账残留（冷审台账方 7 项）**：`RELEASE_CHECKLIST.md` §1 的「REQ-008/REQ-009 规格闸门 ① 与架构闸门 ② 待确认」已失实（两者均已批准）→ 改为已批准并注明订正；REQ-012 的预检条目补 TASK-030/031；REQ-001/REQ-002 的 `确认` 按 v0.1.0 的 PR #6/#7 留痕补齐、REQ-006 **新增缺失的 `确认` 字段**、REQ-012 的「关联任务」补 TASK-030/031/032、变更记录补 REQ-009 abandon 与 REQ-012 交付两行；`TASKS.md` 并行批次表的 19/20 行序归位（上述 REQUIREMENTS 项在合并点写入，见 `030456c` 之后的收口提交）。
+  ⑤ **单写者违规留痕**：TASK-027/028/030 曾在 feature 分支内直接改 `TASKS.md` 状态行（`.ai/AGENTS.md` §3 要求只在合并点写），已按平台问题流程记入 `docs/PLATFORM_ISSUES.md`，不改写历史提交。
+  ⑥ **门禁**：`npm run lint` 通过；`npm test` → **155 用例 / 149 通过 / 0 失败 / 6 跳过**（新增 3 条，且**不依赖夹具**）；覆盖率 `all files` **95.38 / 81.22 / 96.82**（`ive.js` 95.62 / 72.54 / 98.44，行率因新增分支略降、函数率上升）；`node scripts/memory.mjs check` 通过。
+  ⑦ **仍未验证（如实标注）**：`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**；逐字节等价性仍是单 IVE 夹具结论。与 TASK-031 ⑫ 同。
 
 ## 依赖 DAG
 
@@ -615,4 +623,4 @@ TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/
 | TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
 | TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
 | TASK-031 | REQ-012 | 已完成（冷审返工：发布形态收窄为只带 WASM 使标准 2 成立、补 deb 元数据使 `dist:linux` 可产出、原生失败回退 WASM、台账与文档口径校正；验证阶段另修掉 `dist:linux` 未固定 `--x64` 的矩阵不符） | ☑ 自动（打包应用内走 WASM 且与原生逐字节相同；linux-x64 安装包产出实测；仍是单 IVE 夹具） |
-| TASK-032 | REQ-012 | 待开始（复核只剩 minor：both-fail 错误可读性、helperKind 语义、台账残留不一致） | ☐ |
+| TASK-032 | REQ-012 | 已完成（复核收口：both-fail 错误串保留原生原因并截断、`helperKind` 解析后即写、TC-001 期望行订正、台账残留 7 项；单写者违规已留痕） | ☑ 自动（新增 3 条**不依赖夹具**的用例，干净检出上也执行） |

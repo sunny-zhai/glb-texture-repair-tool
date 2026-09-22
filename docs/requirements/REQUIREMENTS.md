@@ -27,7 +27,7 @@
   5. When 执行 `npm run lint` 与 `npm test` Then 二者均通过（43 个用例全绿），证明纯文档改动未破坏任何实现行为。
 - **关联任务**：TASK-001
 - **关联代码/测试**：`CLAUDE.md`、`AGENTS.md`、`.gitignore`、`docs/001-code-design.md`、`docs/002-requirements.md`、`docs/cesium-glb-load-issues.md`
-- **确认**：待确认
+- **确认**：已确认（v0.1.0 交付闸门 ③ · sunny-zhai · 2026-09-18，PR #6 → `3506327`；见 `docs/approvals/APPROVALS.md`。**此字段此前停在模板默认的「待确认」，与状态行的「已完成」矛盾**，冷审 2026-09-22 指出后订正）
 
 ### REQ-002 测试与发布基线可执行、可核验
 - **状态**：已完成
@@ -43,7 +43,7 @@
   5. When 执行 `git ls-files docs/testing docs/release` Then 恰列出 `TEST_PLAN.md` 与 `RELEASE_CHECKLIST.md` 两份，`MERGE_REQUEST.md` 与 `PERF_BUDGET.md` 仍被忽略。
 - **关联任务**：TASK-004
 - **关联代码/测试**：`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`.gitignore`
-- **确认**：待确认
+- **确认**：已确认（v0.1.0 交付闸门 ③ · sunny-zhai · 2026-09-18，PR #7 → `0063590`；见 `docs/approvals/APPROVALS.md`。**此字段此前停在模板默认的「待确认」，与状态行的「已完成」矛盾**，冷审 2026-09-22 指出后订正）
 
 ### REQ-003 IVE 转 GLB（上轴转换、贴地归心、顶点焊接）— 追溯登记
 - **状态**：已完成
@@ -107,6 +107,7 @@
   5. When 用户调整分栏或折叠面板后重启应用 Then 布局状态被记住（`localStorage`），无需重新调整。
   6. 常驻状态栏显示：当前预览模型名、文件大小、体检耗时与问题计数（错误/警告/提示）、批量修复进度（成功 N / 失败 M / 共 T）。键盘可达：Tab 可遍历工具栏与预览控件，焦点样式可见，主按钮可用键盘触发。
   7. 不回归：`npm test` 全绿；`test/ui-smoke.cjs` 的既有断言（面板数值/配色、拖动不刷日志、`change` 记录最终 `modelMatrix`、上轴复合矩阵、体检失败不打断预览、输入文件哈希不变）在新布局下仍全部通过。
+- **确认**：已确认（人工目视 · sunny-zhai · 2026-09-20，覆盖 REQ-005/006/007，见 `docs/approvals/APPROVALS.md` 的 delivery 记录与 `docs/testing/TEST_PLAN.md` 的 M-2~M-4。**此字段原先整个缺失**，冷审 2026-09-22 指出后补齐）
 
 ### REQ-007 多格式输入：FBX / OBJ 走 assimpjs(WASM) 转换后进入现有管线
 - **状态**：已完成（TASK-013~016 已交付：转换内核 → 三条 IPC 接线与打包 → 文档规则 → 冷审 6 条重要项全修；10 条验收标准已由自动化证据覆盖，**人工目视 2026-09-20 通过**——sunny-zhai 按 M-5 核对 FBX/OBJ 直立贴地与贴图正确，OBJ 的 1×1 占位贴图属预期。原状态"待实现"是登记时的快照，2026-09-20 按实情订正）
@@ -218,7 +219,7 @@
   6. **spike 必须留痕（含失败）**：WASM 可行性 spike 的结论写进 ADR-012，**无论成败**都要给出证据——成功给体积/耗时/世界盒实测；失败给**具体失败点**（例如"OSG 的某模块在 emscripten 下无法链接"）与已尝试的命令，不允许只写"不可行"。
   7. **资源预算**：WASM 路线下实测并记录（a）助手产物体积、（b）单个 IVE 转换的墙钟耗时（`o-model/蹲姿.ive`，基准：darwin 助手 1.5s、全链路 ~2.5s）；（a）超 30MB 或（b）超 10s 必须在 ADR 里说明取舍，否则视为超预算。
   8. **不回归**：`npm run lint` + `npm test` 全绿；`test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上仍全绿；`node scripts/memory.mjs check` 通过。
-- **关联任务**：TASK-027（spike，先决）、TASK-028（按结论实现）、TASK-029（文档与发布清单回填）
+- **关联任务**：TASK-027（spike，先决）、TASK-028（按结论实现）、TASK-029（文档与发布清单回填）、TASK-030（打包目标与平台矩阵）、TASK-031（冷审返工：发布形态收窄为只带 WASM、deb 元数据、原生失败回退）、TASK-032（复核收口：both-fail 错误可读性、`helperKind` 语义与台账口径）
 - **关联代码/测试**：`native/ive2glb/`、`scripts/build-ive2glb.sh`（或新增 WASM 构建脚本）、`vendor/ive2glb/**`、`package.json`、`src/ive.js`、`test/ive.test.js`、`test/ui-smoke.cjs`；ADR-012；REQ-009（可能被本需求取代部分范围）
 - **确认**：已确认（闸门 ① 规格 · sunny-zhai · 2026-09-20；闸门 ② 架构 · ADR-012 · 2026-09-20；REQ-009 的取代关系已于 2026-09-22 经交付闸门 ③ 以 abandon 留痕，见 `docs/approvals/APPROVALS.md`。**交付闸门 ③ 本身仍待完成**——需先对 TASK-031 的返工做独立复核）
 
@@ -243,3 +244,6 @@
 | 2026-09-20 | REQ-011 | 澄清验收标准 6 | 原判据写"状态栏与预览控件条**不换行**"。TASK-025 的尺寸矩阵实测：预览控件条在较窄的中栏宽度下会换行（900 窄布局 99px → 1100 宽布局 126px），这是合理且无法用"单行省略号"消除的（控件是静态按钮/输入框，不是可变文本）。判据改为"**状态栏**不换行（高度恒定）+ 预览控件条**允许换行**但不得横向溢出、不得被裁切、不得把画布压到下限以下"，并把"画布不许永远贴在下限"写成显式判据（原判据在极限占位下会恒真） |
 | 2026-09-20 | REQ-005 / REQ-006 / REQ-007 | 人工目视闸门通过 | sunny-zhai 按 `docs/testing/TEST_PLAN.md` 的人工目视清单在应用内逐项核对：**M-1~M-7 全部通过**（M-8 是 Windows-only，随 REQ-009 / TASK-021、TASK-022）。三个需求状态由"进行中 / 待确认"改为"已完成"，`TASKS.md` 进度表的人工列同步改为已确认，留痕见 `docs/approvals/APPROVALS.md` |
 | 2026-09-20 | REQ-012 | 新增 | 用户要求"不能改成支持所有系统吗"。核查后确认**代码本身已平台无关**（`platformDirectory()` = `${process.platform}-${process.arch}`，换平台只需产物），缺口在产物与打包目标：只有 `darwin-arm64`，GitHub 上 Windows/Linux/Intel Mac 的 `.ive` 一律降级为 BR-012 提示。首选 WASM（一次构建全平台、不按平台分发二进制，与 REQ-007/ADR-008 同思路），故先立 spike 任务 TASK-027，spike 结论决定架构（ADR-012） |
+| 2026-09-22 | REQ-009 | 取消（被 REQ-012 取代） | TASK-027 的 spike 判 WASM 路线可行后，Windows 原生助手（TASK-021/022）不再需要构建。经**交付闸门 ③** 由 sunny-zhai 决定 `abandon`（留痕见 `docs/approvals/APPROVALS.md`），状态由「已确认 · 待实现」改为「已取消（被 REQ-012 取代）」；其覆盖面（包内容 / `ive: true` / 世界盒一致）改由 REQ-012 的发布清单 §3/§4 ★ 行在四个目标平台承接 |
+| 2026-09-22 | REQ-012 | 交付与复核 | TASK-027~031 依次合入 `release/v0.1.1`：WASM 助手落地（并修掉打包后 asar 路径导致 IVE 失效的既有缺陷）→ BR-036 与四平台发布清单回填 → 打包目标与平台矩阵 → **冷审返工**（发布形态收窄为只带 WASM 使标准 2 成立、补 deb 元数据使 `dist:linux` 可产出、`dist:linux` 固定 `--x64`、原生失败回退 WASM）。两轮冷上下文复核为 PASS / CONDITIONAL PASS，再把剩余 minor 收进 TASK-032。**验收标准 1 的四平台"实际安装与运行"仍待各自环境回填**，故需求状态保持「已确认」 |
+| 2026-09-22 | REQ-001 / REQ-002 / REQ-006 | 确认字段订正 | REQ-001/REQ-002 的「确认」仍是模板默认的「待确认」、REQ-006 **整个字段缺失**，与各自「已完成」的状态行矛盾。按既有留痕（v0.1.0 的 PR #6/#7 与 2026-09-20 的人工目视记录）补齐，不改写状态行本身；同批订正 REQ-005/REQ-011/REQ-012 的同类问题 |
