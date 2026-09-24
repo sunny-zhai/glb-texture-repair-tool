@@ -9,10 +9,10 @@
 | :-- | :-- |
 | 项目 | GLB Texture Repair Tool（GLB 贴图修复桌面工具） |
 | 覆盖目标 | 核心逻辑 `src/repair.js`、`src/ive.js` 以**实测覆盖率**记录（见「覆盖率」一节），**不设强制门槛**：设门槛必须先接插桩与 CI，现状是本地手工执行 |
-| 执行命令 | `npm test`（= `node --test`，自动发现 `test/*.test.js`） |
-| 覆盖率命令 | `node --test --experimental-test-coverage` |
-| 语法门禁 | `npm run lint`（`node --check` 五个 `src/*.js`：`main`/`preload`/`renderer`/`repair`/`ive`） |
-| 夹具 | `refs/models/{person-move,person-stand,蹲姿}.glb`（6.5 MB，**未入库**）；恢复：`mkdir -p refs/models && cp o-model/*.glb refs/models/`。IVE 用例另需 `o-model/*.ive` 与 `vendor/ive2glb/<平台>/ive2glb` |
+| 执行命令 | `npm test`（= `node --test "test/*.test.js"`，glob 由 `package.json` 声明，新用例文件自动纳入） |
+| 覆盖率命令 | `node --test --experimental-test-coverage --test-coverage-exclude="vendor/**" "test/*.test.js"`（`--test-coverage-exclude` 用于排除随包分发的 Emscripten 胶水代码，理由见「覆盖率」一节） |
+| 语法门禁 | `npm run lint`（`node --check` 遍历**全部** `src/*.js`，当前 10 个：`main`/`preload`/`renderer`/`repair`/`ive`/`inspect`/`transform`/`report-format`/`preview-transform`/`convert`） |
+| 夹具 | `refs/models/{person-move,person-stand,蹲姿}.glb`（6.5 MB，**未入库**）；恢复：`mkdir -p refs/models && cp o-model/*.glb refs/models/`。IVE 用例另需 `o-model/*.ive`；多格式用例需 `o-model/蹲姿.{fbx,obj,mtl}` 与 `model/蹲姿.glb`；体检语料为 `o-model/*.glb` + `model/*.glb`（**均未入库**，缺失时按 `fixtureSkipReason()` 跳过并打印恢复命令） |
 
 用例覆盖的是平台采纳**之前**交付的功能，需求来源是 `docs/001-code-design.md` 的 BR-001～BR-017；
 `REQ-002` 是这些验证基线本身的登记需求，`REQ-001` 是文档一致性需求。
@@ -24,16 +24,16 @@
 - **层级**：单元 + 集成
 - **前置**：`refs/models/*.glb` 已在位
 - **步骤**：`node --test test/repair.test.js`
-- **期望**：19 通过 / 0 失败
-- **实际/证据**：`pass 19 / fail 0`
+- **期望**：36 用例 / 35 通过 / 1 跳过 / 0 失败（2026-09-22 实测；此前的 20 是 REQ-008 时代的快照。**该行原先写「36 通过 / 0 失败」，与同节的「实际 35/1/0」自相矛盾**，冷审 2026-09-22 指出后订正）
+- **实际/证据**：`pass 35 / skip 1 / fail 0`（跳过项需 `model/person-stand.glb`；全新克隆下 7 个跳过 = 6 个需 `refs/models/*.glb` + 该基线）
 
 ### TC-002 IVE 转换全量套件
 - **关联需求**：REQ-002；覆盖 BR-008～BR-017
 - **层级**：单元 + 集成（含 3 个端到端）
 - **前置**：`o-model/*.ive` 存在且 `resolveIveHelper()` 能找到助手
 - **步骤**：`node --test test/ive.test.js`
-- **期望**：24 通过 / 0 失败
-- **实际/证据**：`pass 24 / fail 0`
+- **期望**：38 用例 / 35 通过 / 3 跳过 / 0 失败（2026-09-22 实测，含 TASK-031 的 4 条与 TASK-032 的 3 条——`shortenForError`、both-fail 错误串、错误路径 `helperKind`，后两条用"无 `vendor/` 的 src 副本 + WASM 桩"构造，**不依赖样例夹具**；此前的 24 是 TASK-018 时代的快照）
+- **实际/证据**：`pass 35 / skip 3 / fail 0`（3 个跳过均需 `o-model/person-move.ive`）
 
 ### TC-003 轴位与贴地归心金标准（D1/D2 缺陷回归）
 - **关联需求**：REQ-002；判据见 BR-013/014
@@ -63,14 +63,14 @@
 - **层级**：元测试（对测试套件自身行为的断言）
 - **前置**：把 `o-model/` 与 `refs/models/` 临时移走
 - **步骤**：`npm test`
-- **期望**：不出现失败；跳过 11 个（`repair` 6 + `ive` 5），其余 33 个仍执行；每条跳过都打印缺失文件与恢复命令
-- **实际/证据**：实测 `pass 33 / skipped 11 / fail 0`
+- **期望**：不出现失败；跳过数与缺失夹具成正比——**全新克隆（无任何夹具）实测跳过 19 个**（`repair` 6 + `ive` 5 + `inspect` 3 + `convert` 5），其余 100 个仍执行；每条跳过都打印缺失文件与恢复命令
+- **实际/证据**：2026-09-20 在 `git worktree add --detach <clean> release/v0.1.1`（仅受跟踪文件）实测 `tests 119 / pass 100 / fail 0 / skipped 19`；本地夹具齐备时为 `pass 115 / skipped 4`（`inspect` 1 个需 `o-model/运输车.glb` + `ive` 3 个需 `o-model/person-move.ive`）。**不要**把跳过数写死成常量：夹具随本地增减，用例自身按实际语料伸缩
 
 ### TC-007 语法门禁
 - **关联需求**：REQ-002
 - **层级**：单元（静态检查）
 - **步骤**：`npm run lint`
-- **期望**：五个文件全部通过 `node --check`
+- **期望**：全部 `src/*.js` 通过 `node --check`（当前 **10 个**：`main`/`preload`/`renderer`/`repair`/`ive`/`inspect`/`transform`/`report-format`/`preview-transform`/`convert`；lint 用 `for f in src/*.js` 遍历，新增模块自动纳入）
 - **实际/证据**：通过
 
 ### TC-008 端到端链路：IVE → GLB → 修复
@@ -118,7 +118,7 @@
   2. `node src/inspect.js o-model/运输车.glb`
   3. 逐个体检样例集（`o-model/*.glb` + `model/*.glb`；本次实测 4 个：`o-model/蹲姿.glb` 与 `model/{person-move,person-stand,蹲姿}.glb`）
 - **期望**：① 运输车世界盒 `2.59 × 4.10 × 5.98` m、`deviationFactor > 1000`、列出荒谬的 accessor 盒；② 样例集零崩溃且单文件 < 2s（历史上限样本 `M1A2艾布拉姆斯坦克.glb` 174,937 顶点；扫全语料的用例要求基数 ≥1 并随本地语料伸缩）；③ `mode=4` 图元的索引数可被 3 整除（无此类索引图元时为 `null`）、person 参考件 `vertexReuseRatio` = 0.61（定义为顶点数 ÷ 三角面数）；④ 非 GLB / 不可读 / 解析失败 / 缺 TEXCOORD / 外部贴图缺失等异常都变成中文问题条目而非抛异常
-- **实际/证据**：`node --test test/inspect.test.js` → **35 通过 / 1 跳过 / 0 失败**（跳过项依赖已删除的样例 `o-model/运输车.glb`）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉核对是本次按 `mode=4` + 索引数重算的
+- **实际/证据**：`node --test test/inspect.test.js` → **42 通过 / 2 跳过 / 0 失败**（2026-09-22 实测；两个跳过项分别依赖 `o-model/运输车.glb` 与 `model/蹲姿.glb`，均属本地已删除的样例）。历史全量语料（当时 21 个）实测：运输车 `2.59 × 4.10 × 5.98`、偏差 `4461.888`（accessor 盒 `11571.59 × 15430.28 × 23539.10`）、0 崩溃、最慢 **11 ms**。语料裁剪为 4 个 GLB / 12 张内嵌贴图后复测：**0 崩溃**、最慢 **1 ms**（`蹲姿.glb`，上限 2 s）、12/12 内嵌贴图宽高可读、4/4 文件 `triangles` 与 `Σ(mode=4 索引数)/3` 一致、person 参考件 `vertexReuseRatio` `0.6085`。注：原证据③写作「21/21 `trianglesMatch`」，该判据在无非索引图元时是恒等式、存在非索引图元时必然为假，冷审查已判无效并替换（见 TASK-007 返工记录）；此处的三角面数交叉检查是本次按 `mode=4` + 索引数重算的
 
 ### TC-014 界面体检面板与预览方向/缩放/上轴（REQ-005 验收标准 4）
 - **关联需求**：REQ-005（验收标准 4）；设计决策见 `docs/design/ADR.md` 的 ADR-002（上轴三态）与 ADR-004（预览修正不写回）
@@ -189,47 +189,87 @@
 
 ## 覆盖率
 
-`node --test --experimental-test-coverage "test/*.test.js"` 实测（2026-09-18；样例集裁剪、`inspect.js`/`transform.js`/`report-format.js`/`preview-transform.js` 加入后复测）：
+`node --test --experimental-test-coverage --test-coverage-exclude="vendor/**" "test/*.test.js"` 实测（**2026-09-22 TASK-032 后复测**，含 TASK-027/028 的 WASM 助手解析与原生↔WASM 等价性、TASK-031 的打包/回退/去重、TASK-032 的 `shortenForError`/both-fail/错误路径 `helperKind`；夹具集为裁剪后的本地语料，分支率有单次运行 ±0.1pp 波动）：
 
 | 文件 | 行 % | 分支 % | 函数 % |
 | :-- | --: | --: | --: |
-| `src/ive.js` | 95.99 | 70.34 | 98.18 |
-| `src/repair.js` | 89.30 | 63.39 | 90.28 |
-| `src/inspect.js` | 93.61 | 82.96 | 94.87 |
+| `src/convert.js` | 94.55 | 74.50 | 93.10 |
+| `src/ive.js` | 95.62 | 72.54 | 98.44 |
+| `src/repair.js` | 90.87 | 69.84 | 91.76 |
+| `src/inspect.js` | 94.31 | 85.00 | 94.87 |
 | `src/transform.js` | 100.00 | 93.80 | 100.00 |
 | `src/report-format.js` | 99.35 | 95.86 | 100.00 |
 | `src/preview-transform.js` | 100.00 | 97.30 | 100.00 |
-| **all files** | **93.80** | **77.80** | **95.83** |
+| **all files** | **95.38** | **81.22** | **96.82** |
 
 说明：
 
-- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支、`ive.js` 的错误处理分支与 `inspect.js`/`report-format.js` 的少数异常分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE、畸形 GLB 的具体形态），当前夹具没有。
+- **`--test-coverage-exclude="vendor/**"` 是必需的，不是可选优化**：`vendor/ive2glb/wasm/ive2glb.js` 是随包分发的 Emscripten 胶水代码，跑用例时由子进程继承的 `NODE_V8_COVERAGE` 采集成覆盖率，不排除会把 `all files` 函数覆盖率从 96.82% 压到 47.99%（它 25.37% 的函数被本项目的用例触达，本身不说明本项目质量）。这与 `node_modules` 不该计入是同一条理由。
+- `all files` 的统计范围包含 `src/` 与 `test/`，不含 `vendor/`。
+- 未覆盖行集中在 `repair.js` 的动画采样/骨骼烘焙分支、`convert.js`/`ive.js` 的错误处理分支与 `inspect.js`/`report-format.js` 的少数异常分支——需要专门样本（带动画的 skinned 模型、损坏的 IVE、畸形 GLB 的具体形态），当前夹具没有。
 - **Electron 壳层（`src/main.js`、`src/preload.js`、`src/renderer.js`）不在插桩范围内**（测试不 require 它们），所以"UI ≥85%"这一项**没有测量**，不要按通过理解。
 - 因此本计划**不设覆盖率门槛**；把门槛写进 CI 需先补样本与插桩，属后续工作。
+- 覆盖率数字**随用例集与夹具演进**：本表只记录当次实测值，需求正文不钉死快照（REQ-002 验收标准 3 的口径）。
+
+## 人工目视清单（TC-014~TC-018 / TC-024 / TC-025 的人工部分）
+
+> 自动化覆盖不到"看起来对不对"。以下每项给出**可复现步骤**与**判定口径**；确认后把
+> `TASKS.md` 进度表与「结果汇总」里对应行的"待人工"改为"已确认"，并记下确认人与日期。
+> 建议先 `npm run dev`；样例取 `model/` 与 `o-model/`（都不入库，缺失时按各用例的前置说明准备）。
+
+> **2026-09-20 结果**：sunny-zhai 按本清单在应用内逐项核对，**M-1~M-7 全部通过**（留痕见
+> `docs/approvals/APPROVALS.md` 的 delivery 记录）。**M-8 未执行**——它只能在 Windows x64 上做，
+> 随 REQ-009 / TASK-021、TASK-022。
+
+| # | 关联 | 步骤 | 判定口径 | 确认 |
+| :-- | :-- | :-- | :-- | :-- |
+| M-1 | TC-014 / REQ-005 | 选 `o-model/蹲姿.ive` 预览；拖「预览方向」「预览缩放」；上轴切 `Z-up` 再切回 `auto` | 模型**直立、贴地、居中**；拖动即时生效、日志**只在松手时**记一行 `modelMatrix`；切 `Z-up` 后从"躺着"变直立；提示「仅影响预览，不写入输出文件」可见 | ☑ 2026-09-20 sunny-zhai |
+| M-2 | TC-015 / REQ-006 | 1280×800 下观察；拖左右分隔条与底部日志；折叠日志再展开；窗口缩到 900px | 一屏内左队列/中 3D/右体检/底日志同时可见且**不整页滚动**；3D 始终最宽；折叠后 3D 变高、展开精确复原；900px 降级两栏 + 抽屉、无横向滚动 | ☑ 2026-09-20 sunny-zhai |
+| M-3 | TC-016 / REQ-006 | 打开/收起「帮助」；加载一个**超长路径**的模型 | 帮助只临时占用高度、不改日志高度；超长路径不把预览条撑高、不顶掉 3D 画布 | ☑ 2026-09-20 sunny-zhai |
+| M-4 | TC-017 / REQ-006 | 左栏灌几十个输入、右栏几十条体检问题、日志几百行 | 每区只有**一根**细滚动条（8px 自绘）、无嵌套第二根；页面本身不滚动 | ☑ 2026-09-20 sunny-zhai |
+| M-5 | TC-018 / REQ-007 | 选 `o-model/蹲姿.fbx` 与 `o-model/蹲姿.obj` 预览 | FBX/OBJ **直立、贴地、贴图正确**；OBJ 会有一张 1×1 占位贴图（MTL 里是乱码绝对路径，属预期）；无着色器编译错误 | ☑ 2026-09-20 sunny-zhai |
+| M-6 | TC-024 / REQ-011 | 拖出非默认构图 → 依次拉宽到 1100 / 1440 / 1920 → 重启应用 | 各区占宽高比例**看起来不变**（不出现"中栏越来越胖"）；重启后构图一致；输入/结果内容再多也不改变栏位尺寸 | ☑ 2026-09-20 sunny-zhai |
+| M-7 | TC-025 / REQ-010 | 设 `Z-up / 90° / 2×` → 重启 → 换一个模型 → 点「重置预览修正」 | 重启后三态保持且日志说明「已沿用上次选择」；重置后回到 `auto/0°/1.00×`，再重启仍是默认 | ☑ 2026-09-20 sunny-zhai |
+| M-8 | REQ-009（Windows） | 在 Windows 上安装新包 → 各选一个 `.ive`/`.glb`/`.fbx`/`.obj` | 四种输入都能修复并预览；`app-capabilities` 报 `ive: true`、`assimp: true`；日志出现按格式区分的「… 转换完成」文案 | ☐ 待 Windows 环境（TASK-021/022） |
 
 ## 结果汇总
 
 | 用例 | 关联 REQ | 结果 | 证据 |
 | :-- | :-- | :-- | :-- |
-| TC-001 | REQ-002 | 通过 | `pass 19 / fail 0` |
-| TC-002 | REQ-002 | 通过 | `pass 24 / fail 0` |
+| TC-001 | REQ-002 | 通过 | `node --test test/repair.test.js` → 36 用例，本地 `pass 35 / skip 1（缺 model/person-stand.glb）/ fail 0`（全新克隆下 7 跳过） |
+| TC-002 | REQ-002 | 通过 | `node --test test/ive.test.js` → 35 用例，本地 `pass 32 / skip 3 / fail 0`（3 个跳过均缺 `o-model/person-move.ive`；2026-09-22 含 TASK-031 新增 4 条） |
 | TC-003 | REQ-002 | 通过 | 世界盒 `0.538 × 1.364 × 1.056`，`min.y = 0` |
 | TC-004 | REQ-002 | 通过 | 56,772 → 11,516 顶点；18,924 面逐三角形等价 |
 | TC-005 | REQ-002 | 通过 | 4/4 用例；PNG 签名与 `JPEG 转 PNG 失败` 均断言 |
-| TC-006 | REQ-002 | 通过 | `pass 33 / skipped 11 / fail 0` |
-| TC-007 | REQ-002 | 通过 | `npm run lint` 五文件全过 |
+| TC-006 | REQ-002 | 通过 | 全新克隆 `tests 119 / pass 100 / fail 0 / skipped 19`；本地 `pass 115 / skipped 4` |
+| TC-007 | REQ-002 | 通过 | `npm run lint` 遍历全部 10 个 `src/*.js` 全过 |
 | TC-008 | REQ-002 | 通过 | 三个 IVE 全链路 `success` |
 | TC-009 | REQ-002 | 通过 | 2/2 用例 |
 | TC-010 | REQ-002 | 通过 | 异常路径全部有断言 |
 | TC-011 | REQ-002 | 通过 | 嵌套相对路径保留 |
 | TC-012 | REQ-002 | **通过**（人工） | sunny-zhai 于 2026-09-18 在应用内确认 IVE 与 GLB 均可渲染 |
-| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` 35 通过 / 1 跳过（缺样例 `o-model/运输车.glb`）/ 0 失败；本地 4 个 GLB 0 崩溃、最慢 1ms、三角面数 4/4 全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
+| TC-013 | REQ-005 | 通过 | `node --test test/inspect.test.js` → 44 用例，本地 `pass 42 / skip 2（缺 o-model/运输车.glb 与 model/蹲姿.glb）/ fail 0`；本地语料 0 崩溃、最慢 1ms、三角面数全等；历史全量语料 21 个时运输车偏差 4461.888 倍、最慢 11ms |
+| TC-014 | REQ-005 | **通过**（自动 + 人工 2026-09-20） | 纯函数 24/24（`report-format` 16 + `preview-transform` 8）；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
+| TC-015 | REQ-006 | **通过**（自动 + 人工 2026-09-20） | 冒烟 34 步 / 110 条断言 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
+| TC-016 | REQ-006 | **通过**（自动 + 人工 2026-09-20） | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
+| TC-017 | REQ-006 | **通过**（自动 + 人工 2026-09-20） | TASK-012：自绘 8px 细滚动条规则存在；内容灌满后左/右/日志三区各恰好 1 个滚动容器且都真滚动、页面仍不整页滚动。旧样式上这 5 条中 3 条实测红（细条规则缺失、左栏 3 个、右栏 2 个）；修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
+| TC-018 | REQ-007 | **通过**（自动 + 人工 2026-09-20） | 多格式输入：FBX 18,924 面/3 张内嵌贴图/保留蒙皮动画、OBJ 世界盒与 `model/蹲姿.glb` 一致；焊接 56,772→11,516 面数不变；解析不到的贴图以 warning+占位如实上报；撞名不再互相覆盖；`test/convert.test.js` 13 用例（本地全跑，缺夹具时 5 跳过） |
+| TC-019 | REQ-008 | 通过（自动） | TASK-017 采样器规范化（BR-031）：NPOT(512×341)+`REPEAT`+`9987` → `CLAMP_TO_EDGE`+`9729` 且体检不再报；POT 与已合法组合逐字段不变；共用采样器时复制一份（原采样器不动）；缺省采样器 / 漏写 `minFilter` 两种情况必报（旧口径漏报）；POT 共用场景不得误报（旧口径误报）；`model/person-stand.glb`（采样器 `{}` + 3 张 POT）修复后 `samplersNormalized = 0` |
+| TC-020 | REQ-008 | 通过（自动） | TASK-018 贴图降采样（BR-032）：2048²→1024² 逐像素等于 2×2 盒式平均（期望值由解码后源像素独立算出，mismatches=0）；透明像素 alpha 预乘；3000×1000+1024→1024×341；不传/0/负数都不降且字节不变；几何 bufferView 逐字节不变；外部 `uri` 贴图落盘缩小字节；降采样造出 NPOT 后采样器同趟退化（顺序证明）；person-stand 本地基线 14.31MB(不降) → 4.95MB(1024,2 张) → 1.86MB(512,3 张) |
+| TC-021 | REQ-008 | 通过（自动） | TASK-019 `KHR_texture_transform.texCoord` 覆盖（BR-033）：图元有 `TEXCOORD_0`、扩展指向 `TEXCOORD_1` 时体检报 `MISSING_TEXCOORD`（error）并点名 `TEXCOORD_1`，修复补出全零 `VEC2 TEXCOORD_1` 且原 `TEXCOORD_0` 保留；对照（无扩展）不报。**改动前的代码上这 4 条实测 3 红 1 绿** |
+| TC-024 | REQ-011 | **通过**（自动 + 人工 2026-09-20） | TASK-024/025 布局占比与内部自适应（BR-034/ADR-011）：同一组拖拽结果在 1100×760 / 1440×900 / 1920×1200 下各区占比与 1280×800 参照相比变化 ≤ 1 个百分点、resize 不得改写落盘占比、中栏仍最宽、极小窗口（880×640）夹取后恢复到 1600×900 占比回到设定值、`version:1` 像素载荷迁移成 v2 且像素还原 ±1px；900×700 ~ 1920×1200 五档下每区滚动容器 1/1/1/0、无横向溢出、3D 画布 243~590px（≥160 且不永远贴底）、状态栏恒 28px、页面不滚动。**改动前的像素模型上占比断言实测为红**（1280×800 → 1920×1200：左 20.44%→13.60%、右 26.73%→17.78%、中 52.83%→68.62%、底 26.46%→17.30%） |
 
-| TC-017 | REQ-006 | 通过（自动）/ 待人工 | TASK-012：自绘 8px 细滚动条规则存在；内容灌满后左/右/日志三区各恰好 1 个滚动容器且都真滚动、页面仍不整页滚动。旧样式上这 5 条中 3 条实测红（细条规则缺失、左栏 3 个、右栏 2 个）；修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
-| TC-016 | REQ-006 | 通过（自动）/ 待人工 | TASK-011 缺陷回归：模型信息长短文本 + 帮助开关都不得改变预览条/日志高度与落盘布局；换回短文本必须精确复原。修复前代码上这 6 条实测全红，修复后 GLB/IVE 各 34 步 / 110 条断言 0 失败 |
-| TC-015 | REQ-006 | 通过（自动）/ 待人工 | 冒烟 34 步 0 失败（GLB/IVE 各一遍）；默认布局无整页滚动、3D 最宽；分隔条拖拽真实调用 `viewer.resize()`；布局恢复与垃圾载荷鲁棒；人工目视待 sunny-zhai 确认 |
-| TC-014 | REQ-005 | 通过（自动）/ 待人工 | 纯函数 24/24；接线冒烟在 `model/蹲姿.glb` 与 `o-model/蹲姿.ive` 上各 8 步、0 项失败（含改造后必须真出现「加载成功」）；输入文件哈希前后一致；人工目视待 sunny-zhai 确认 |
+| TC-025 | REQ-010 | **通过**（自动 + 人工 2026-09-20） | TASK-023 预览三态记忆（BR-035）：从未动过预览控件时**不写** `glb-repair.preview` 且控件为默认；显式设成 `Z-up/90°/2×` 后落盘为 `version:1` 记录、重载后三态复原且日志含「已沿用上次选择」；显式选回 `auto` 后记录仍在、重载仍是 `auto`；坏 JSON 与越界/未知档位（`999 / -3 / 'nope'`）被规整到合法区间且不抛异常。旧实现必然为红（重载后回到默认、且探针缺失会让断言数下限先失败） |
+| TC-026 | REQ-012 | **通过**（macOS arm64 打包 + 应用内转换已实测；linux-x64 安装包**产出**已实测、运行期待 Linux 机器；win32-x64 / darwin-x64 待各自平台执行） | TASK-030 跨平台打包目标与平台矩阵：`package.json` 新增 `mac`(dmg+zip, identity null)/`linux`(AppImage+deb) 与 `dist:mac`/`dist:linux`；本机实跑 `npx electron-builder --mac --dir` 产出未签名 `.app`（Electron 32.3.3 arm64，cache 重定向到工作区后成功）；包内 `app.asar.unpacked/vendor/ive2glb/darwin-arm64/` 共 17 文件（exe + 14 dylib + 2 插件），assimpjs.wasm 与两份许可证齐全；**直接执行包内助手**跑 `蹲姿.ive` → `{"status":"success",...,"binBytes":28782480}`、退出码 0、`DYLD_PRINT_LIBRARIES` 下 Homebrew 加载数 0。**TASK-028 补充（2026-09-21）**：包内新增 `app.asar.unpacked/vendor/ive2glb/wasm/{ive2glb.js,ive2glb.wasm}`；**在打包应用内**（非"直接执行包内助手"）`convertIveToGlb('o-model/蹲姿.ive')` → `success`、`11516` / `18924` / `0.538×1.364×1.056`；强制 WASM 助手时产物与原生路径**逐字节相同**；`node test/ui-smoke.cjs o-model/蹲姿.ive` 在**打包应用**上 66 步 / 132 条断言 / 0 失败。同一轮修掉一个此前未发现的缺陷：旧 `resolveIveHelper()` 按 asar 优先查找，打包后解析停在 asar 内路径、`spawnSync` 报 `ENOTDIR`（本条原先只验证了"包内助手能直接执行"，没走应用自身的解析，故漏检）；已改为 `app.asar.unpacked` 优先并加回归用例。**TASK-031 补充（2026-09-22）**：包内助手收窄为**只有** `wasm/` 两个文件——`find … -type f -name 'ive2glb*'` 只命中 `ive2glb.js`/`ive2glb.wasm`，`app.asar` 里 `darwin-arm64` 出现 **0** 次（此前 11 MB 的 `darwin-arm64/` 会进**每个**平台的包，REQ-012 标准 2）；打包应用内 `resolveIveHelper()` → `kind: wasm`（解析到 `app.asar.unpacked/vendor/ive2glb/wasm/ive2glb.js`），转换产物与开发态原生助手**逐字节相同**。`npx electron-builder --linux --x64` 在本机（darwin-arm64 宿主）实跑成功，产出 `AppImage`(x86_64) + `deb`(amd64)，deb 的 `Maintainer`/`Vendor`/`Homepage` 齐备（修复前会因 `authorEmailIsMissed` 中止），包内同样只有 wasm 两个文件；`dist:linux` 脚本已固定 `--x64`（不加会按宿主架构产出 arm64，与 linux-x64 的矩阵不符）。**仍未验证**：Linux / Windows / darwin-x64 上的实际安装与运行 |
+| TC-027 | REQ-012 | **通过** | TASK-027 IVE→WASM 可行性 spike（ADR-012）：Emscripten 6.0.9 + OSG 3.6.5，630 个目标全部编译；`wasm-ld` 严格模式零未定义符号（53 个固定管线 GL 入口点全部由 `native/ive2glb/wasm/gl-trap-stubs.cpp` 做成陷阱桩，被调用即报错退出码 3，实测该路径一次都不调用）；IVE 插件静态注册、无需改动 OSG 源码；`-sNODERAWFS=1` 文件 IO 与原生退出码逐项一致；产物 2.79 MB、单文件约 102 ms（darwin 对照 62.7 ms）；WASM 与原生助手在 `o-model/蹲姿.ive` 上 `scene.json`/`data.bin` 及全链路 GLB **SHA-256 相同**。复现：`scripts/build-ive2glb-wasm.sh o-model/蹲姿.ive` |
 
-| TC-018 | REQ-007 | 通过（自动）/ 待人工 | 多格式输入：FBX 18,924 面/3 张内嵌贴图/保留蒙皮动画、OBJ 世界盒与 model/蹲姿.glb 一致；焊接 56,772→11,516 面数不变；解析不到的贴图以 warning+占位如实上报；撞名不再互相覆盖 |
+**总计**（2026-09-22 实测，含 REQ-012 的 TASK-027~032）：`npm test` → **155 用例 / 149 通过 / 0 失败 / 6 跳过**（本地夹具只有 `o-model/蹲姿.*`、`model/` 为空；6 个跳过 = `o-model/运输车.glb` 1 + `model/蹲姿.glb` 1 + `model/person-stand.glb` 1 + `o-model/person-move.ive` 3）。**本地跳过数必须按当次夹具集陈述，不得写成常量**（口径见上文 TC-001）：夹具齐备时（2026-09-21，当时 148 用例）为 144 通过 / 0 失败 / 4 跳过。全新克隆（无任何夹具）为 **155 用例 / 131 通过 / 0 失败 / 24 跳过**（24 = `repair` 7 + `ive` 9 + `inspect` 3 + `convert` 5；用 `git worktree add --detach HEAD` 的干净检出实测。`ive` 的 9 个跳过全部依赖 `o-model/*.ive` 或原生助手；TASK-031/032 新增的用例要么依赖 `蹲姿.ive`、要么是纯桩环境用例）。冒烟另计：`node test/ui-smoke.cjs` 在 **GLB / IVE / FBX / OBJ 四格式上各 66 步 / 132 条断言 / 0 失败**（TC-024 的占比与多尺寸断言把计数从 114 抬到 126，TC-025 的预览记忆断言再抬到 132；"36 步 / 114 条断言"是 TASK-018 时代的口径）。**打包后**的 `o-model/蹲姿.ive` 冒烟同样 66 步 / 132 条断言 / 0 失败（TASK-028 实测，见 TC-026）。
 
-**总计**：`npm test` → **102 通过 / 0 失败 / 4 跳过**（本地夹具：样例集已裁剪，跳过 3 个需 `o-model/*.ive` 的用例与 1 个需 `o-model/运输车.glb` 的用例；共 106 个用例）。全新克隆无任何夹具时为 **92 通过 / 14 跳过 / 0 失败**（14 = 6 个 `refs/models/*` + 5 个 `o-model/*.ive` + 3 个样例语料门控用例）。
+## 待执行 / 已取代
+
+> REQ-008 的 TC-019~TC-021 已执行完毕，见上方结果汇总。
+
+| 用例 | 关联 REQ | 状态 | 覆盖内容 |
+| :-- | :-- | :-- | :-- |
+| TC-022 | REQ-009 | **已取代（被 REQ-012）**：REQ-009 的 TASK-021/022 已取消，Windows 原生助手不再构建。同一覆盖面（包内容、`ive: true`、世界盒一致）改由 **REQ-012 的 §4 ★ 行**在四个目标平台上承接（见 `RELEASE_CHECKLIST.md` §3/§4） | Windows：`ive2glb.exe` 依赖闭包无第三方非系统 DLL；`app-capabilities` 报 `ive: true` 且 `.ive` 世界盒与 darwin 一致；`dist:win` 包内容；§4 冒烟逐行回填 |
+| TC-023 | REQ-010 | **已完成 → 由 TC-025 覆盖**（TASK-023 已交付，REQ-010 已完成；同一验收在 TC-025 判定为通过） | 预览三态记忆：重启恢复 `Z-up/90°/2×` 且提示可见；从未动过不落盘；显式选回 `auto` 被记住；垃圾载荷落回默认且页面异常 0；输入文件哈希不变 |

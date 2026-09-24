@@ -31,9 +31,14 @@ const raw = execFileSync('git', ['log', range, '--pretty=format:%H%x09%s%x1e'], 
 const buckets = new Map(GROUPS.map(([key, title]) => [key, { title, items: [] }]))
 const other = { title: 'Other', items: [] }
 
+// 记录与字段按**语义**取：`git log` 会在记录之间插入换行，若按原始字节位置切，
+// 除第一条外每条记录的 hash 都会以 `\n` 开头（slice(0,7) 得到 "\n860de3"），
+// 生成的 CHANGELOG 每条都会断行——实测缺陷见台账 ISSUE-010。
 for (const entry of raw.split('\x1e').filter((item) => item.trim())) {
   const [hash = '', subject = ''] = entry.split('\x09')
-  const short = hash.slice(0, 7)
+  // 字段级归一：hash 必须 trim（否则带着记录间的换行，见 ISSUE-010）；
+  // 主题来自 `%s`，本就是单行（提交正文不会出现在这里）
+  const short = hash.trim().slice(0, 7)
   const match = /^([a-z]+)(\(([^)]*)\))?!?:\s*(.+)$/.exec(subject.trim())
   if (match) {
     const [, type, , scope, text] = match

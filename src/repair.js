@@ -538,6 +538,26 @@ function isPng(buffer) {
   return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
 }
 
+// 采样器常量（glTF 枚举）与缺省值——口径必须与 src/inspect.js 的 NPOT 判定一致（BR-031）。
+const WRAP_REPEAT = 10497
+const WRAP_CLAMP_TO_EDGE = 33071
+const MIN_FILTER_LINEAR = 9729
+const MIPMAP_FILTERS = new Set([9984, 9985, 9986, 9987]) // NEAREST/LINEAR_MIPMAP_*
+
+// 只读 PNG 的 IHDR 宽高。修复管线走到采样器规范化时贴图已全部是 PNG（BR-002），所以这里
+// 只需要认 PNG；src/inspect.js 有一份更完整的 imageDimensions（还能认 JPEG 与 data URI），
+// 但 inspect.js 依赖本模块，互相 require 会形成循环，故不直接复用。
+function pngDimensions(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 24) return null
+  if (!isPng(bytes)) return null
+  if (bytes.toString('latin1', 12, 16) !== 'IHDR') return null
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+}
+
+function isPowerOfTwo(value) {
+  return Number.isInteger(value) && value > 0 && (value & (value - 1)) === 0
+}
+
 function decodeUriComponent(value) {
   try {
     return decodeURIComponent(value)
@@ -694,12 +714,22 @@ function rebuildBinary(json, bin, replacements) {
   return newBin
 }
 
+// 贴图槽实际采样的 UV 通道（REQ-008 / BR-033）：`KHR_texture_transform` 挂在 textureInfo 上，
+// 它的 `texCoord` **覆盖**槽位自身的 `texCoord`（glTF 规范：扩展值优先）。忽略它会把"实际采样
+// TEXCOORD_1"误判成 TEXCOORD_0，于是 MISSING_TEXCOORD 漏报——漏报的后果是 Cesium 因着色器
+// 编译失败连整个场景都不渲染。inspect 与 repair 必须共用这一个口径（inspect 从这里 require）。
+function textureTexCoordOf(reference) {
+  const override = reference?.extensions?.KHR_texture_transform?.texCoord
+  if (typeof override === 'number') return override
+  return typeof reference?.texCoord === 'number' ? reference.texCoord : 0
+}
+
 // 收集材质引用的全部 texCoord 索引（含扩展里的贴图槽）。
 function collectMaterialTexCoords(material) {
   const coords = new Set()
   if (!material) return coords
   const add = (reference) => {
-    if (reference && typeof reference.index === 'number') coords.add(reference.texCoord || 0)
+    if (reference && typeof reference.index === 'number') coords.add(textureTexCoordOf(reference))
   }
   const pbr = material.pbrMetallicRoughness || {}
   add(pbr.baseColorTexture)
@@ -1142,6 +1172,176 @@ function appendBufferViewToBinary(json, bin, bytes) {
   return { bin: newBin, bufferView: json.bufferViews.length - 1 }
 }
 
+// BR-032：贴图降采样——按最长边目标值等比缩小，用**面积加权的盒式平均**（不是最近邻抽样，
+// 后者在贴图上会出现锯齿与闪烁）。透明像素先按 alpha 预乘再平均，避免透明边缘把颜色"拉黑"。
+// 返回 null 表示无需缩放（尺寸已达标，或读不出宽高所以不猜）。
+function downsamplePng(bytes, maxSize) {
+  const dimensions = pngDimensions(bytes)
+  if (!dimensions) return null
+  const { width, height } = dimensions
+  const longest = Math.max(width, height)
+  if (!Number.isFinite(maxSize) || maxSize <= 0 || longest <= maxSize) return null
+
+  const scale = maxSize / longest
+  // 取整规则固定为 Math.round 且至少 1 像素：3000×1000 配 maxSize 1024 → 1024×341
+  const targetWidth = Math.max(1, Math.round(width * scale))
+  const targetHeight = Math.max(1, Math.round(height * scale))
+  const source = PNG.sync.read(bytes)
+  const target = new PNG({ width: targetWidth, height: targetHeight })
+
+  for (let y = 0; y < targetHeight; y += 1) {
+    const y0 = (y * height) / targetHeight
+    const y1 = ((y + 1) * height) / targetHeight
+    for (let x = 0; x < targetWidth; x += 1) {
+      const x0 = (x * width) / targetWidth
+      const x1 = ((x + 1) * width) / targetWidth
+      let sumR = 0
+      let sumG = 0
+      let sumB = 0
+      let sumA = 0
+      let sumWeight = 0
+      for (let sy = Math.floor(y0); sy < Math.min(height, Math.ceil(y1)); sy += 1) {
+        const weightY = Math.min(y1, sy + 1) - Math.max(y0, sy)
+        for (let sx = Math.floor(x0); sx < Math.min(width, Math.ceil(x1)); sx += 1) {
+          const weight = weightY * (Math.min(x1, sx + 1) - Math.max(x0, sx))
+          const offset = (sy * width + sx) * 4
+          const alpha = source.data[offset + 3]
+          sumR += source.data[offset] * alpha * weight
+          sumG += source.data[offset + 1] * alpha * weight
+          sumB += source.data[offset + 2] * alpha * weight
+          sumA += alpha * weight
+          sumWeight += weight
+        }
+      }
+      const offset = (y * targetWidth + x) * 4
+      if (sumA > 0) {
+        // 预乘后再除以 alpha 总和，得到面积加权的颜色均值
+        target.data[offset] = clampByte(sumR / sumA)
+        target.data[offset + 1] = clampByte(sumG / sumA)
+        target.data[offset + 2] = clampByte(sumB / sumA)
+      }
+      target.data[offset + 3] = clampByte(sumWeight > 0 ? sumA / sumWeight : 0)
+    }
+  }
+  return {
+    bytes: PNG.sync.write(target),
+    width: targetWidth,
+    height: targetHeight,
+    sourceWidth: width,
+    sourceHeight: height,
+  }
+}
+
+function clampByte(value) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(255, Math.round(value)))
+}
+
+// 对整批贴图执行降采样，并产出报告字段与"最终宽高"表（供采样器规范化使用）。
+// `maxTextureSize` 缺省/0/非法一律视为"不降"（BR-032：默认不降，画质是有损且不可逆的决定）。
+function downsampleImages(imageEntries, options = {}) {
+  const requested = Number(options.maxTextureSize)
+  const maxSize = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 0
+  const result = {
+    maxTextureSize: maxSize,
+    texturesDownsampled: 0,
+    textureBytesBefore: 0,
+    textureBytesAfter: 0,
+    imageDimensionsByIndex: new Map(),
+  }
+  for (const [imageIndex, entry] of imageEntries) {
+    // 字节前后对比只在"贴图归一化（含 JPEG→PNG）之后、降采样之前"这个区间里量，
+    // 免得把 BR-002 造成的膨胀算到降采样头上。
+    result.textureBytesBefore += entry.bytes.length
+    if (maxSize > 0) {
+      const scaled = downsamplePng(entry.bytes, maxSize)
+      if (scaled) {
+        entry.bytes = scaled.bytes
+        result.texturesDownsampled += 1
+      }
+    }
+    result.textureBytesAfter += entry.bytes.length
+    result.imageDimensionsByIndex.set(imageIndex, pngDimensions(entry.bytes))
+  }
+  return result
+}
+
+// BR-031：非 2 次幂（NPOT）贴图 + REPEAT + mipmap 在 WebGL1 下是非法组合（Cesium 可能显示
+// 异常）。修法按本仓既有口径退化为 CLAMP_TO_EDGE + LINEAR——与 src/inspect.js 那条问题的中文
+// 提示、src/ive.js 的 NPOT 退化规则一致（ADR-009）。
+//
+// 判定粒度是「贴图 × 采样器」逐个绑定，而不是"文件里有 NPOT 就整体退化"：
+//   · 采样器可能被 POT 贴图共用，原地改会误伤合法贴图 —— 共用时**复制**一份退化后的采样器，
+//     只把 NPOT 那条贴图指过去；独占时才原地改。
+//   · texture.sampler 缺省时按 glTF 规范默认（REPEAT + LINEAR_MIPMAP_LINEAR）判定，这时必须
+//     新建一个显式采样器，否则产物仍然落在非法的缺省组合上。
+//   · POT 贴图与已合法的组合一个字段都不改。
+function normalizeTextureSamplers(json, imageDimensionsByIndex) {
+  const empty = { normalized: 0, clonedSamplers: 0, createdSamplers: 0 }
+  const textures = Array.isArray(json.textures) ? json.textures : []
+  if (!textures.length) return empty
+  const samplers = Array.isArray(json.samplers) ? json.samplers : (json.samplers = [])
+
+  const usage = new Map()
+  for (const texture of textures) {
+    if (texture && typeof texture.sampler === 'number') {
+      usage.set(texture.sampler, (usage.get(texture.sampler) || 0) + 1)
+    }
+  }
+
+  // 缺省即规范默认值：wrap 缺省是 REPEAT，minFilter 缺省是 LINEAR_MIPMAP_LINEAR（含 mipmap）
+  const repeats = (value) => value === undefined || value === WRAP_REPEAT
+  const mipmapped = (value) => value === undefined || MIPMAP_FILTERS.has(value)
+
+  const degraded = (sampler) => ({
+    ...(sampler && typeof sampler === 'object' ? sampler : {}),
+    wrapS: WRAP_CLAMP_TO_EDGE,
+    wrapT: WRAP_CLAMP_TO_EDGE,
+    minFilter: MIN_FILTER_LINEAR,
+  })
+  const sameSampler = (a, b) => {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const key of keys) if (a[key] !== b[key]) return false
+    return true
+  }
+  // 复用已有的等价采样器，避免每次修一个贴图就往 samplers 里塞一份重复项
+  const findOrCreate = (target) => {
+    const existing = samplers.findIndex((sampler) => sampler && sameSampler(sampler, target))
+    if (existing >= 0) return { index: existing, created: false }
+    samplers.push(target)
+    return { index: samplers.length - 1, created: true }
+  }
+
+  const result = { ...empty }
+  for (const texture of textures) {
+    if (!texture || typeof texture.source !== 'number') continue
+    const dimensions = imageDimensionsByIndex.get(texture.source)
+    // 读不出宽高就不猜（体检会另外报 TEXTURE_DIMENSIONS_UNKNOWN）
+    if (!dimensions) continue
+    if (isPowerOfTwo(dimensions.width) && isPowerOfTwo(dimensions.height)) continue
+
+    const samplerIndex = typeof texture.sampler === 'number' ? texture.sampler : null
+    const sampler = samplerIndex === null ? null : samplers[samplerIndex]
+    if (!repeats(sampler?.wrapS) && !repeats(sampler?.wrapT)) continue
+    if (!mipmapped(sampler?.minFilter)) continue
+
+    if (samplerIndex !== null && usage.get(samplerIndex) === 1) {
+      sampler.wrapS = WRAP_CLAMP_TO_EDGE
+      sampler.wrapT = WRAP_CLAMP_TO_EDGE
+      sampler.minFilter = MIN_FILTER_LINEAR
+      result.normalized += 1
+      continue
+    }
+
+    const found = findOrCreate(degraded(sampler))
+    texture.sampler = found.index
+    if (found.created) result.createdSamplers += 1
+    else result.clonedSamplers += 1
+    result.normalized += 1
+  }
+  return result
+}
+
 function repairGlbFile(inputPath, outputPath, options = {}) {
   const replacements = new Map()
   const externalImages = []
@@ -1158,6 +1358,11 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
     let workingBin = bin
     const skinnedMeshesBaked = bakeSkinnedMeshes(json, bin, replacements, options)
 
+    // 贴图字节与宽高在降采样、采样器规范化两步里都要用：无论内嵌还是外部、原本 PNG 还是
+    // JPEG 转来的，这里统一把"归一化后的最终字节"收进一个条目对象，后续步骤就地更新它。
+    // 外部贴图的字节要到 rebuildBinary 之后才追加，因此 externalImages 与这里**共用同一个对象**，
+    // 否则降采样改的是这一份、真正落盘的是另一份。
+    const imageEntries = new Map()
     for (const [imageIndex, image] of (json.images || []).entries()) {
       let original
       if (typeof image.bufferView === 'number') {
@@ -1171,21 +1376,27 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
         continue
       }
 
-      if (isPng(original)) {
-        image.mimeType = 'image/png'
-        if (typeof image.uri === 'string') externalImages.push({ image, bytes: original })
-        continue
-      }
-
-      const converted = encodePng(original)
-      imagesConverted += 1
-      if (typeof image.bufferView === 'number') {
-        replacements.set(image.bufferView, converted)
-      } else {
-        externalImages.push({ image, bytes: converted })
+      let bytes = original
+      if (!isPng(original)) {
+        // BR-002：JPEG 一律转 PNG；之后的降采样与采样器判定都建立在 PNG 字节上
+        bytes = encodePng(original)
+        imagesConverted += 1
       }
       image.mimeType = 'image/png'
+      const entry = { image, bytes, embedded: typeof image.bufferView === 'number' }
+      imageEntries.set(imageIndex, entry)
+      if (!entry.embedded) externalImages.push(entry)
     }
+
+    // BR-032：贴图降采样（默认不降）。必须排在采样器规范化**之前**——降采样可能把 POT 变成
+    // NPOT（3000×1000 → 1024×341），采样器判定要用最终宽高（ADR-009 决策 d）。
+    const downsample = downsampleImages(imageEntries, options)
+    for (const entry of imageEntries.values()) {
+      if (entry.embedded) replacements.set(entry.image.bufferView, entry.bytes)
+    }
+
+    // BR-031：采样器规范化排在贴图内嵌与降采样之后，判定的是最终宽高。
+    const samplerNormalization = normalizeTextureSamplers(json, downsample.imageDimensionsByIndex)
 
     stripSpecularExtensions(json)
 
@@ -1222,6 +1433,15 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
       externalImagesEmbedded: externalImages.length,
       texCoordsFilled: texCoords.filled,
       primitivesMerged: merge.merged,
+      // BR-031：被退化为 CLAMP_TO_EDGE + LINEAR 的 NPOT 贴图数，以及为此新建/复制的采样器数
+      samplersNormalized: samplerNormalization.normalized,
+      samplersCloned: samplerNormalization.clonedSamplers + samplerNormalization.createdSamplers,
+      // BR-032：贴图降采样（档位 / 张数 / 归一化后与降采样后的字节对比）。
+      // 档位为 0 时 `texturesDownsampled === 0` 且两个字节数相等，即"未降采样"，不是静默省略。
+      maxTextureSize: downsample.maxTextureSize,
+      texturesDownsampled: downsample.texturesDownsampled,
+      textureBytesBefore: downsample.textureBytesBefore,
+      textureBytesAfter: downsample.textureBytesAfter,
       extensionsRemoved: ['KHR_materials_specular'],
       status: 'success',
     }
@@ -1236,6 +1456,12 @@ function repairGlbFile(inputPath, outputPath, options = {}) {
       externalImagesEmbedded: 0,
       texCoordsFilled: 0,
       primitivesMerged: 0,
+      samplersNormalized: 0,
+      samplersCloned: 0,
+      maxTextureSize: 0,
+      texturesDownsampled: 0,
+      textureBytesBefore: 0,
+      textureBytesAfter: 0,
       extensionsRemoved: [],
       status: 'error',
       error: error.message,
@@ -1357,6 +1583,9 @@ module.exports = {
   collectGlbEntries,
   collectGlbFiles,
   createGlbBuffer,
+  // REQ-008/BR-032：贴图降采样（导出供单测直接调用）
+  downsampleImages,
+  downsamplePng,
   encodePng,
   fillMissingTexCoords,
   getNodeLocalMatrix,
@@ -1364,6 +1593,8 @@ module.exports = {
   mergePrimitivesByMaterial,
   mergeUniquePaths,
   multiplyMatrix,
+  // REQ-008/BR-031：NPOT × REPEAT × mipmap 的采样器退化（导出供单测直接调用）
+  normalizeTextureSamplers,
   readGlb,
   repairGlbFile,
   repairMany,
@@ -1371,6 +1602,8 @@ module.exports = {
   // .fbm 目录 / 乱码绝对路径），不为多格式另写一份
   resolveExternalImage,
   stripSpecularExtensions,
+  // REQ-008/BR-033：贴图槽的 UV 通道判定（KHR_texture_transform 覆盖优先），inspect 复用同一口径
+  textureTexCoordOf,
   transformPoint,
   transformVector,
   writeGlb,

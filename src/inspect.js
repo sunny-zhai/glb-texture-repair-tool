@@ -20,6 +20,8 @@ const {
   identityMatrix,
   multiplyMatrix,
   readGlb,
+  // REQ-008/BR-033：槽位实际采样的 UV 通道（KHR_texture_transform 覆盖优先）与 repair 同源
+  textureTexCoordOf,
 } = require('./repair')
 const {
   boundsSize,
@@ -32,6 +34,20 @@ const {
 // 采样器常量（glTF 枚举）
 const WRAP_REPEAT = 10497
 const MIPMAP_FILTERS = new Set([9984, 9985, 9986, 9987]) // NEAREST/LINEAR_MIPMAP_*
+
+// glTF 规范：sampler 的 `minFilter` 缺省即 `LINEAR_MIPMAP_LINEAR`（含 mipmap），
+// `wrapS`/`wrapT` 缺省即 `REPEAT`。所以"没写采样器"与"写了但没写 minFilter"同样是 mipmap 路径——
+// 旧实现按"显式写了才算"处理，会漏报「NPOT 贴图 + 缺省采样器」这一真实非法组合（REQ-008 口径）。
+function describeSampler(sampler, index = null) {
+  return {
+    index,
+    wrapS: sampler?.wrapS ?? WRAP_REPEAT,
+    wrapT: sampler?.wrapT ?? WRAP_REPEAT,
+    minFilter: sampler?.minFilter ?? null,
+    repeats: (sampler?.wrapS ?? WRAP_REPEAT) === WRAP_REPEAT || (sampler?.wrapT ?? WRAP_REPEAT) === WRAP_REPEAT,
+    mipmapped: sampler?.minFilter == null ? true : MIPMAP_FILTERS.has(sampler.minFilter),
+  }
+}
 
 const ISSUE_LEVELS = { error: '错误', warn: '警告', info: '提示' }
 
@@ -146,7 +162,8 @@ function collectTextureSlots(material) {
     if (!holder || typeof holder !== 'object' || depth > 3) return
     for (const [key, value] of Object.entries(holder)) {
       if (/Texture$/.test(key) && value && typeof value.index === 'number') {
-        const texCoord = value.texCoord ?? 0
+        // 槽位自身的 texCoord 会被 KHR_texture_transform.texCoord 覆盖（同一口径见 repair.js）
+        const texCoord = textureTexCoordOf(value)
         const identity = `${key}:${value.index}:${texCoord}`
         if (seen.has(identity)) continue
         seen.add(identity)
@@ -334,6 +351,7 @@ function analyze(report, json, bin, filePath) {
   let nonIndexed = 0
   let nonTrianglePrimitives = 0
   let missingTexCoordPrimitives = 0
+  const missingTexCoordSlots = new Set()
   let missingPositionBounds = 0
   const modeHistogram = {}
   for (const primitive of primitives) {
@@ -355,7 +373,11 @@ function analyze(report, json, bin, filePath) {
     }
     if (!Array.isArray(position?.min) || !Array.isArray(position?.max)) missingPositionBounds += 1
     const material = json?.materials?.[primitive?.material]
-    // 按**图元**计数（同一图元的多个纹理槽共用 UV，按槽位计数会重复报数）
+    // 按**图元**计数（同一图元的多个纹理槽共用 UV，按槽数计数会重复报数），
+    // 同时记下缺失的语义名，好让问题清单点名到底是哪一个（REQ-008 验收标准 9）
+    for (const slot of collectTextureSlots(material)) {
+      if (!primitive?.attributes?.[`TEXCOORD_${slot.texCoord}`]) missingTexCoordSlots.add(`TEXCOORD_${slot.texCoord}`)
+    }
     if (collectTextureSlots(material).some((slot) => !primitive?.attributes?.[`TEXCOORD_${slot.texCoord}`])) {
       missingTexCoordPrimitives += 1
     }
@@ -418,14 +440,7 @@ function analyze(report, json, bin, filePath) {
     dimensionsKnown: images.filter((image) => typeof image.width === 'number').length,
   }
 
-  report.samplers = asArray(json?.samplers).map((sampler, index) => ({
-    index,
-    wrapS: sampler?.wrapS ?? WRAP_REPEAT,
-    wrapT: sampler?.wrapT ?? WRAP_REPEAT,
-    minFilter: sampler?.minFilter ?? null,
-    repeats: (sampler?.wrapS ?? WRAP_REPEAT) === WRAP_REPEAT || (sampler?.wrapT ?? WRAP_REPEAT) === WRAP_REPEAT,
-    mipmapped: MIPMAP_FILTERS.has(sampler?.minFilter),
-  }))
+  report.samplers = asArray(json?.samplers).map((sampler, index) => describeSampler(sampler, index))
 
   // ---- 问题清单 ----
   if (report.counts.scenes === 0) {
@@ -486,16 +501,35 @@ function analyze(report, json, bin, filePath) {
           : '多半是资产制作时的残留，视觉上无意义，可考虑剔除')
     }
   }
-  const usesRepeatMipmap = report.samplers.some((sampler) => sampler.repeats && sampler.mipmapped)
-  const npotImages = images.filter((image) => image.npot)
-  if (usesRepeatMipmap && npotImages.length) {
+  // NPOT 判定按「贴图 × 采样器」逐个绑定，而不是"文件里有 NPOT"×"文件里有 REPEAT+mipmap 采样器"
+  // 两条独立事实相乘——旧实现既会误报（REPEAT+mipmap 属于另一张 POT 贴图），也会漏报（缺省采样器）。
+  // 该判定必须与 src/repair.js 的 normalizeTextureSamplers 保持同一口径（BR-031）。
+  const knownSamplers = asArray(json?.samplers)
+  const npotSamplerBindings = []
+  for (const [textureIndex, texture] of textures.entries()) {
+    const source = texture?.source
+    if (typeof source !== 'number') continue
+    const image = images[source]
+    if (!image || !image.npot) continue
+    const samplerIndex = typeof texture.sampler === 'number' ? texture.sampler : null
+    const described = describeSampler(samplerIndex === null ? null : knownSamplers[samplerIndex], samplerIndex)
+    if (described.repeats && described.mipmapped) {
+      npotSamplerBindings.push({ texture: textureIndex, image: source, sampler: samplerIndex })
+    }
+  }
+  report.npotSamplerBindings = npotSamplerBindings
+  if (npotSamplerBindings.length) {
+    const named = npotSamplerBindings.map((binding) => binding.texture).slice(0, 5).join('、')
     addIssue(issues, 'warn', 'NPOT_WITH_REPEAT_MIPMAP',
-      `${npotImages.length} 张非 2 次幂贴图，但采样器同时使用 REPEAT + mipmap`,
-      'WebGL1 下这种组合不完整（Cesium 可能显示异常），需改为 CLAMP_TO_EDGE + LINEAR')
+      `${npotSamplerBindings.length} 张贴图尺寸非 2 次幂，且采样器同时使用 REPEAT + mipmap（贴图 ${named}${npotSamplerBindings.length > 5 ? '…' : ''}）`,
+      'WebGL1 下这种组合不合法（Cesium 可能显示异常）；修复会按本仓既有口径退化为 CLAMP_TO_EDGE + LINEAR，POT 贴图不动')
   }
   if (missingTexCoordPrimitives > 0) {
+    // 点名到底缺哪个语义：`KHR_texture_transform.texCoord` 覆盖可能让材质实际采样 TEXCOORD_1，
+    // 只写「TEXCOORD_n」会让用户去补错通道（REQ-008 验收标准 9）
+    const names = [...missingTexCoordSlots].sort().join('、')
     addIssue(issues, 'error', 'MISSING_TEXCOORD',
-      `${missingTexCoordPrimitives} 个图元采样了贴图但缺少对应 TEXCOORD_n`,
+      `${missingTexCoordPrimitives} 个图元采样了贴图但缺少对应 UV（缺 ${names}）`,
       'Cesium 会因着色器编译失败而停止整个场景的渲染，必须补零 UV（本工具可自动修复）')
   }
   if (report.counts.skins) {

@@ -117,6 +117,13 @@
             <h3 class="pane-subhead">修复选项</h3>
             <div class="options">
               <label><input type="checkbox" id="freezePose" checked /> 带动画的蒙皮模型：烘焙为动画起始姿势（不勾选则烘焙为绑定站姿）</label>
+              <label>贴图降采样：<select id="textureMaxSize">
+                <option value="0" selected>不降采样（默认）</option>
+                <option value="2048">最长边 2048</option>
+                <option value="1024">最长边 1024</option>
+                <option value="512">最长边 512</option>
+              </select></label>
+              <p class="hint-inline">JPEG 统一转 PNG 会让照片类贴图明显变大；需要控体积时按最长边等比缩小（盒式平均），几何不受影响。</p>
             </div>
           </div>
           <div class="pane-section">

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
+import { isExcluded, readLockMeta } from './lock-meta.mjs'
 
 const argv = process.argv.slice(2)
 const index = argv.indexOf('--root')
@@ -78,7 +79,11 @@ const approvals = parseApprovals(readOptional('docs/approvals/APPROVALS.md'))
 const testPlan = parseTestPlan(readOptional('docs/testing/TEST_PLAN.md'))
 const release = parseRelease(readOptional('docs/release/RELEASE_CHECKLIST.md'))
 const adr = readOptional('docs/design/ADR.md')
-const contract = readOptional('docs/api/openapi.json')
+// 已声明「不适用」的契约种子（`meta.excluded`）不能算契约：实测消费项目把
+// docs/api/openapi.json 声明为不适用（桌面工具、无 HTTP API），这里仍印成「契约 模板」。
+const contractPath = 'docs/api/openapi.json'
+const contractExcluded = isExcluded(contractPath, readLockMeta(root))
+const contract = contractExcluded ? null : readOptional(contractPath)
 const git = gitInfo()
 
 const tasksDone = tasks.filter((task) => TASK_DONE.test(task.status)).length
@@ -115,7 +120,7 @@ const phases = [
   },
   {
     name: '设计',
-    signal: `真实 ADR ${adrCount} 条 · 契约 ${contractReal ? '已定稿' : contract ? '模板' : '无'}`,
+    signal: `真实 ADR ${adrCount} 条 · 契约 ${contractExcluded ? '不适用（已声明）' : contractReal ? '已定稿' : contract ? '模板' : '无'}`,
     state: designReady ? 'done' : requirements.length > 0 ? 'active' : 'pending',
   },
   {

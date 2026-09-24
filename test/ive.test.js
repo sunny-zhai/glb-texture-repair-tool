@@ -1,5 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -14,7 +15,10 @@ const {
   pruneMeshlessSubtrees,
   readImagePixels,
   resolveIveHelper,
+  resolveWasmHelper,
   rotateVector,
+  shortenForError,
+  vendorRootsFor,
   weldVertices,
   worldBounds,
 } = require('../src/ive')
@@ -24,17 +28,23 @@ const projectRoot = path.join(__dirname, '..')
 const iveFixture = path.join(projectRoot, 'o-model', 'person-move.ive')
 const crouchFixture = path.join(projectRoot, 'o-model', '蹲姿.ive')
 
+// 跳过信息必须**可照做**，与 test/repair.test.js 的夹具门控同口径：只说"缺少"会让下一个人
+// 自己去翻文档找恢复方法（CLAUDE.md 声称跳过信息都带恢复命令，之前在 IVE 用例上并不成立）。
+// 两类原因分开写：缺样例要找语料，缺助手要构建助手，恢复动作完全不同。
+const IVE_FIXTURE_RECOVERY = '；样例不入库，恢复方法见 docs/testing/TEST_PLAN.md 的「夹具」行'
+const IVE_HELPER_RECOVERY = '；恢复：npm run build:ive2glb（本平台原生）或 npm run build:ive2glb:wasm（跨平台 WASM）'
+
 function fixtureSkipReason() {
-  if (!fs.existsSync(iveFixture)) return `缺少 IVE 样例：${iveFixture}`
-  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）`
+  if (!fs.existsSync(iveFixture)) return `缺少 IVE 样例：${iveFixture}${IVE_FIXTURE_RECOVERY}`
+  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）${IVE_HELPER_RECOVERY}`
   return false
 }
 
 // 蹲姿相关用例只依赖蹲姿.ive —— 不要复用 fixtureSkipReason()（那个查的是 person-move.ive），
 // 否则样例被局部清理时，明明还在的蹲姿金标准用例也会被一起跳过
 function crouchSkipReason() {
-  if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}`
-  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）`
+  if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}${IVE_FIXTURE_RECOVERY}`
+  if (!iveConversionAvailable()) return `当前平台缺少 ive2glb 助手（${resolveIveHelper().searched.join('、')}）${IVE_HELPER_RECOVERY}`
   return false
 }
 
@@ -505,5 +515,319 @@ test('ive: 转换产物可继续进入修复管线', { skip: fixtureSkipReason()
     assert.equal(json.buffers[0].byteLength > 0, true)
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- WASM 助手（REQ-012 / ADR-012）
+//
+// WASM 助手是「一次构建覆盖 win32-x64 / linux-x64 / darwin-x64」的交付形态：本平台没有
+// 原生助手时由 resolveIveHelper() 回退到它。它在 darwin-arm64 上不会自然被覆盖到（原生
+// 助手优先），所以这里用 GLB_REPAIR_IVE2GLB 指向 .js 的方式把它显式钉进回归网。
+
+const wasmHelper = path.join(projectRoot, 'vendor', 'ive2glb', 'wasm', 'ive2glb.js')
+
+function wasmSkipReason() {
+  if (!fs.existsSync(crouchFixture)) return `缺少 IVE 样例：${crouchFixture}`
+  if (!fs.existsSync(wasmHelper)) return `缺少 WASM 助手：${wasmHelper}`
+  return false
+}
+
+// 原生↔WASM 的等价比对要求本机**同时**具备两种助手；只有 WASM 的平台上无从对照。
+function equivalenceSkipReason() {
+  const reason = wasmSkipReason()
+  if (reason) return reason
+  if (resolveIveHelper().kind !== 'native') return '本机没有原生助手，无法做原生↔WASM 等价比对'
+  return false
+}
+
+function withHelperOverride(value, run) {
+  const previous = process.env.GLB_REPAIR_IVE2GLB
+  process.env.GLB_REPAIR_IVE2GLB = value
+  try {
+    return run()
+  } finally {
+    if (previous === undefined) delete process.env.GLB_REPAIR_IVE2GLB
+    else process.env.GLB_REPAIR_IVE2GLB = previous
+  }
+}
+
+test('ive: GLB_REPAIR_IVE2GLB 指向 .js 时解析为 WASM 助手（由 Node 起进程）', () => {
+  const helper = withHelperOverride(wasmHelper, () => resolveIveHelper())
+  assert.equal(helper.kind, 'wasm')
+  assert.equal(helper.available, true)
+  assert.equal(helper.path, wasmHelper)
+  assert.deepEqual(helper.prefixArgs, [wasmHelper])
+  // WASM 产物不是可执行文件，必须由 Node 执行；打包态那是 Electron 的 Node。
+  assert.equal(helper.command, process.execPath)
+})
+
+test('ive: 无效的 GLB_REPAIR_IVE2GLB 回退到内置路径，而不是把坏路径当结果', () => {
+  const bogus = path.join(os.tmpdir(), 'no-such-ive2glb-anywhere')
+  const helper = withHelperOverride(bogus, () => resolveIveHelper())
+  assert.notEqual(helper.path, bogus, '覆盖值无效时不应把它当成已解析的助手')
+  // 覆盖值仍然要出现在已查找列表里，否则缺助手时的中文提示会漏掉用户实际设置的那个路径。
+  assert.ok(helper.searched.includes(bogus), '已查找列表应包含被覆盖的路径')
+})
+
+test('ive: WASM 助手缺同名 .wasm 时不算可用（避免「假可用」）', () => {
+  const workDir = makeTempDir()
+  try {
+    const lonelyScript = path.join(workDir, 'ive2glb.js')
+    fs.writeFileSync(lonelyScript, '// 只有 .js，没有配对的 ive2glb.wasm\n')
+    const helper = withHelperOverride(lonelyScript, () => resolveIveHelper())
+    // 起得来但读不到模块的助手比明确的「缺少助手」更难排查，所以这里必须被拒。
+    assert.notEqual(helper.path, lonelyScript)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('ive: WASM 助手与原生助手产出逐字节相同（跨平台等价）', { skip: equivalenceSkipReason() }, () => {
+  const workDir = makeTempDir()
+  try {
+    const nativePath = path.join(workDir, 'native.glb')
+    const wasmPath = path.join(workDir, 'wasm.glb')
+
+    const viaNative = convertIveToGlb(crouchFixture, nativePath, { keepJpeg: true })
+    assert.equal(viaNative.status, 'success', viaNative.error)
+
+    const viaWasm = withHelperOverride(wasmHelper, () => convertIveToGlb(crouchFixture, wasmPath, { keepJpeg: true }))
+    assert.equal(viaWasm.status, 'success', viaWasm.error)
+
+    // 报告的关键指标一致：跨平台换的只是「谁来读 IVE」，解析语义不许变。
+    assert.deepEqual(viaWasm.worldSize, viaNative.worldSize)
+    assert.deepEqual(viaWasm.worldCenter, viaNative.worldCenter)
+    assert.equal(viaWasm.vertices, viaNative.vertices)
+    assert.equal(viaWasm.verticesBefore, viaNative.verticesBefore)
+    assert.equal(viaWasm.triangles, viaNative.triangles)
+    assert.equal(viaWasm.axisMode, viaNative.axisMode)
+
+    // 顺带钉住 REQ-012 标准 1 的实测值（0.538 × 1.364 × 1.056 / 11516 / 18924）。
+    const close = (actual, expected) => assert.ok(
+      Math.abs(actual - expected) < 0.02,
+      `期望 ${expected}，实际 ${actual}（整盒 ${JSON.stringify(viaWasm.worldSize)}）`,
+    )
+    close(viaWasm.worldSize[0], 0.538)
+    close(viaWasm.worldSize[1], 1.364)
+    close(viaWasm.worldSize[2], 1.056)
+    assert.equal(viaWasm.vertices, 11516)
+    assert.equal(viaWasm.triangles, 18924)
+
+    // 最强证据：产物逐字节相同。WASM 与原生走的是同一套 OSG 3.6.5，不该有任何字节差异。
+    assert.deepEqual(
+      fs.readFileSync(wasmPath),
+      fs.readFileSync(nativePath),
+      'WASM 助手与原生助手的 GLB 产物应逐字节相同',
+    )
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('ive: 只有 WASM 助手时（隐藏原生助手）仍能完成转换', { skip: wasmSkipReason() }, () => {
+  const workDir = makeTempDir()
+  try {
+    // 直接以「覆盖为 .js」模拟无原生助手的平台：这正是 win32-x64 / linux-x64 上的解析结果。
+    const report = withHelperOverride(wasmHelper, () => convertIveToGlb(crouchFixture, path.join(workDir, 'only-wasm.glb'), { keepJpeg: true }))
+    assert.equal(report.status, 'success', report.error)
+    assert.equal(report.vertices, 11516)
+    assert.equal(report.triangles, 18924)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('ive: 打包后必须优先查 app.asar.unpacked —— asar 内的文件不能被执行', () => {
+  // 这条规则曾经是反的（asar 优先）。asarUnpack 的文件在 asar 索引里仍然可见，
+  // fs.statSync 也会成功，于是解析停在了 asar 内路径上，spawnSync 报 ENOTDIR，
+  // 打包后的应用完全无法转换 .ive。用纯函数把顺序钉住，避免再退化。
+  const packed = vendorRootsFor('/x/App.app/Contents/Resources/app.asar/src')
+  assert.deepEqual(packed, [
+    path.join('/x/App.app/Contents/Resources/app.asar.unpacked', 'vendor', 'ive2glb'),
+    path.join('/x/App.app/Contents/Resources/app.asar', 'vendor', 'ive2glb'),
+  ])
+  // 开发态两个根目录相同，只应查一次，否则 searched 里会出现重复路径。
+  assert.deepEqual(vendorRootsFor(path.join(projectRoot, 'src')), [path.join(projectRoot, 'vendor', 'ive2glb')])
+})
+
+test('ive: 任何助手都找不到时按 BR-012 给出中文降级并列出已查找路径', () => {
+  const workDir = makeTempDir()
+  try {
+    // 不用 mock：把 src/ 复制到一个**没有 vendor/** 的临时根下，__dirname 决定的
+    // vendor 位置自然为空，于是解析真的什么都找不到。NODE_PATH 负责让 src/ 里的
+    // pngjs/jpeg-js 仍能解析到本项目的 node_modules（临时目录在仓库之外）。
+    fs.cpSync(path.join(projectRoot, 'src'), path.join(workDir, 'src'), { recursive: true })
+    const probe = path.join(workDir, 'probe.cjs')
+    fs.writeFileSync(probe, `
+      const ive = require(${JSON.stringify(path.join(workDir, 'src', 'ive.js'))})
+      const helper = ive.resolveIveHelper()
+      process.stdout.write(JSON.stringify({
+        available: ive.iveConversionAvailable(),
+        kind: helper.kind,
+        searched: helper.searched,
+        message: ive.missingIveHelperMessage(),
+      }))
+    `)
+
+    const env = { ...process.env, NODE_PATH: path.join(projectRoot, 'node_modules') }
+    delete env.GLB_REPAIR_IVE2GLB
+    const result = spawnSync(process.execPath, [probe], { encoding: 'utf8', env })
+    assert.equal(result.status, 0, result.stderr)
+    const probed = JSON.parse(result.stdout)
+
+    assert.equal(probed.available, false)
+    assert.equal(probed.kind, '', '找不到助手时不应给出 kind')
+    assert.ok(probed.searched.length >= 2, '已查找路径应同时覆盖 asar 内外两种位置')
+    // 降级信息必须是中文、可照做，且列出实际查过的路径 —— 这是 BR-012 的全部要求。
+    assert.match(probed.message, /缺少 IVE 转换助手/)
+    assert.match(probed.message, /scripts\/build-ive2glb-wasm\.sh/)
+    assert.match(probed.message, /GLB_REPAIR_IVE2GLB/)
+    for (const candidate of probed.searched) {
+      assert.ok(probed.message.includes(candidate), '降级信息应列出已查找路径：' + candidate)
+    }
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- 冷审返工（TASK-031）
+//
+// 三条断言分别对应冷审的两条 major 与一条 minor：
+//   ① 打包只带 WASM（REQ-012 标准 2）——files/asarUnpack 不得含平台原生目录；
+//   ② dist:linux 的 deb 需要 maintainer 身份（否则 FpmTarget 抛 authorEmailIsMissed）；
+//   ③ 原生助手"文件在、但起不来"时必须回退 WASM，而不是丢掉 IVE 能力。
+
+test('ive: 打包只带 WASM —— files/asarUnpack 不得把平台原生助手打进安装包（REQ-012 标准 2）', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  for (const key of ['files', 'asarUnpack']) {
+    const entries = pkg.build[key] || []
+    const iveEntries = entries.filter((entry) => entry.startsWith('vendor/ive2glb'))
+    assert.ok(iveEntries.length > 0, `${key} 应显式放行 WASM 助手目录`)
+    for (const entry of iveEntries) {
+      // 收窄成 wasm/ 之后，"打进每个平台安装包的平台原生助手"（11MB 的 darwin-arm64/）就不再出现。
+      assert.match(entry, /vendor\/ive2glb\/wasm\//, `${key} 里的 ${entry} 必须限定在 wasm/ 下`)
+    }
+  }
+})
+
+test('ive: electron-builder 元数据齐备 —— dist:linux 的 deb 需要 maintainer 身份', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
+  // FpmTarget.js 读 options.maintainer ?? metadata.author，两者都缺就抛 authorEmailIsMissed。
+  assert.ok(pkg.build.linux.maintainer || pkg.author?.email, 'deb 目标需要 maintainer 或 author.email')
+  assert.ok(pkg.homepage, 'deb 目标需要 homepage（appInfo 可从 .git/config 兜底，但不该依赖它）')
+})
+
+test('ive: 解析结果里没有重复的已查找路径（BR-012 的中文降级要逐条、不重复）', { skip: wasmSkipReason() }, () => {
+  const helper = withHelperOverride(wasmHelper, () => resolveIveHelper())
+  assert.equal(new Set(helper.searched).size, helper.searched.length, `searched 不应重复：${helper.searched.join('、')}`)
+  // resolveWasmHelper 只看 wasm/，不受平台原生助手存在与否影响。
+  const wasmOnly = resolveWasmHelper()
+  assert.equal(wasmOnly.kind, 'wasm')
+  assert.equal(wasmOnly.path, wasmHelper)
+  assert.ok(fs.existsSync(path.join(path.dirname(wasmHelper), 'ive2glb.wasm')))
+})
+
+test('ive: 原生助手起不来时回退 WASM 并成功转换（BR-036 ③）', { skip: wasmSkipReason() }, () => {
+  const workDir = makeTempDir()
+  try {
+    // 造一个"存在但不可执行"的路径当原生助手（EACCES 是"未签名/被隔离/部分解包"的同类故障）
+    const brokenNative = path.join(workDir, 'ive2glb')
+    fs.writeFileSync(brokenNative, 'not an executable\n', { mode: 0o644 })
+    const report = withHelperOverride(brokenNative, () => convertIveToGlb(
+      crouchFixture,
+      path.join(workDir, 'fallback.glb'),
+      { keepJpeg: true },
+    ))
+    assert.equal(report.status, 'success', report.error)
+    assert.equal(report.helperKind, 'wasm', '原生起不来时应真的走 WASM')
+    assert.equal(report.vertices, 11516)
+    assert.equal(report.triangles, 18924)
+    assert.match((report.warnings || []).join('\n'), /已回退到 WASM 助手/)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- 复核收口（TASK-032）
+//
+// 冷审的两条 minor：① 原生与 WASM 都失败时原生原因被丢弃、且 stderr 全文会被塞进
+// report.error（实测 65,792 字符）；② report.helperKind 在错误路径是 undefined，
+// 与 BR-036 ③ 的措辞不符。下面三条用**真环境**（把 src/ 复制到临时根 + 软链
+// node_modules）验证，不依赖任何样例夹具，因此在干净检出上也会执行。
+
+test('ive: shortenForError 截断超长文本并标注原文长度', () => {
+  assert.equal(shortenForError('短'), '短')
+  assert.equal(shortenForError(undefined), '')
+  const long = 'x'.repeat(5000)
+  const short = shortenForError(long)
+  assert.ok(short.length < 700, `截断后应受控，实际 ${short.length}`)
+  assert.match(short, /已截断，原文共 5000 字符/)
+  assert.ok(short.startsWith('x'.repeat(600)))
+})
+
+/** @description 造一个"没有 vendor/ 的 src 副本"，可按需塞入 WASM 助手桩。 */
+function makeIsolatedIveRoot({ wasmScript } = {}) {
+  const tempRoot = makeTempDir()
+  fs.cpSync(path.join(projectRoot, 'src'), path.join(tempRoot, 'src'), { recursive: true })
+  fs.symlinkSync(path.join(projectRoot, 'node_modules'), path.join(tempRoot, 'node_modules'))
+  fs.writeFileSync(path.join(tempRoot, 'in.ive'), '不是真的 IVE，但转换在起助手之前只用扩展名与存在性\n')
+  if (wasmScript) {
+    const wasmDir = path.join(tempRoot, 'vendor', 'ive2glb', 'wasm')
+    fs.mkdirSync(wasmDir, { recursive: true })
+    fs.writeFileSync(path.join(wasmDir, 'ive2glb.js'), wasmScript)
+    fs.writeFileSync(path.join(wasmDir, 'ive2glb.wasm'), '桩：只要求与 .js 成对存在\n')
+  }
+  return tempRoot
+}
+
+function withBrokenNative(tempRoot, run) {
+  const brokenNative = path.join(tempRoot, 'ive2glb') // 存在但不可执行 → spawnSync EACCES
+  fs.writeFileSync(brokenNative, 'not an executable\n', { mode: 0o644 })
+  const previous = process.env.GLB_REPAIR_IVE2GLB
+  process.env.GLB_REPAIR_IVE2GLB = brokenNative
+  try {
+    return run(require(path.join(tempRoot, 'src', 'ive.js')))
+  } finally {
+    if (previous === undefined) delete process.env.GLB_REPAIR_IVE2GLB
+    else process.env.GLB_REPAIR_IVE2GLB = previous
+  }
+}
+
+test('ive: 原生与 WASM 都起不来时，错误串保留原生原因且被截断（TASK-032）', () => {
+  // WASM 桩：存在但跑起来只往 stderr 吐 5000 字符再退出非零。
+  const tempRoot = makeIsolatedIveRoot({
+    wasmScript: "process.stderr.write('x'.repeat(5000)); process.exit(1)\n",
+  })
+  try {
+    const report = withBrokenNative(tempRoot, (ive) => ive.convertIveToGlb(
+      path.join(tempRoot, 'in.ive'),
+      path.join(tempRoot, 'out.glb'),
+    ))
+    assert.equal(report.status, 'error')
+    // ① 后一条失败不再是唯一信息：原生为什么没顶上必须带出来。
+    assert.match(report.error, /原生助手也无法启动/)
+    assert.match(report.error, /EACCES|EACCES|permission|not permitted/i)
+    // ② stderr 全文不得进错误串。
+    assert.match(report.error, /已截断/)
+    assert.ok(report.error.length < 1500, `错误串应受控，实际 ${report.error.length}`)
+    // ③ 失败路径也要有 helperKind（最后尝试的形态）。
+    assert.equal(report.helperKind, 'wasm')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('ive: 原生起不来且没有 WASM 兜底时，helperKind 仍是尝试过的形态（TASK-032）', () => {
+  const tempRoot = makeIsolatedIveRoot() // 故意不放 vendor/ive2glb/wasm
+  try {
+    const report = withBrokenNative(tempRoot, (ive) => ive.convertIveToGlb(
+      path.join(tempRoot, 'in.ive'),
+      path.join(tempRoot, 'out.glb'),
+    ))
+    assert.equal(report.status, 'error')
+    assert.equal(report.helperKind, 'native', '没有 WASM 可退时，形态应记为原生')
+    assert.match(report.error, /调用 IVE 转换助手失败/)
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
   }
 })

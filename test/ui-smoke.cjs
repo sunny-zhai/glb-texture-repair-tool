@@ -40,8 +40,11 @@ const failures = []
 // 已执行的断言数：脚本里有 25 处 `if (step) { check(...) }`，某一步 Runtime.evaluate 超时
 // 返回 undefined 时整块断言会被**静默跳过**、仍然 exit 0。收尾用数量下限兜住这种假绿。
 let checksRun = 0
-// 断言调用点总数（99）。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
-const EXPECTED_CHECK_COUNT = 112
+// 断言调用点总数。新增断言后必须同步抬高；低于它说明有整块断言被静默跳过。
+// （TASK-018 加了「4 档降采样」与「档位进入 IPC 载荷」2 条 → 112 + 2 = 114；
+//   REQ-011/TASK-024 加了 6 条占比不变量、旧版迁移与夹取恢复 → 114 + 6 = 120；
+//   REQ-011/TASK-025 加了 6 条多尺寸自适应矩阵不变量 → 120 + 6 = 126）
+const EXPECTED_CHECK_COUNT = 132
 const check = (label, condition, detail) => {
   checksRun += 1
   if (condition) return
@@ -178,12 +181,46 @@ async function main() {
     version: 1, left: 320, right: 380, bottom: 240,
     logCollapsed: false, rightCollapsed: false, drawerOpen: false, ...over,
   })
+  // REQ-011：布局的用户意图是**占比**（version 2）。种入时直接给占比，断言再按同一可用空间
+  // （`appShell.clientWidth - 8` × `appShell.clientHeight`）折算回像素——分母必须与实现一致，
+  // 用 window.innerHeight 会差一条自定义标题栏的高度（实测 757 vs 800）。
+  const RATIO_SEED = ({ left = 0.25, right = 0.3, bottom = 0.3, ...flags } = {}) => ({
+    version: 2,
+    left, right, bottom,
+    logCollapsed: false, rightCollapsed: false, drawerOpen: false, ...flags,
+  })
+  // 页面内探针：一次读出各栏像素、占比、落盘载荷与整页滚动情况（占比断言的唯一口径）
+  const SHARE_PROBE = `(() => {
+    const shell = document.getElementById('appShell');
+    const read = (name) => parseFloat(getComputedStyle(shell).getPropertyValue(name)) || 0;
+    const spaceWidth = shell.clientWidth - 8;
+    const spaceHeight = shell.clientHeight;
+    const left = read('--pane-left');
+    const right = read('--pane-right');
+    const bottom = read('--pane-bottom');
+    const center = spaceWidth - left - right;
+    const se = document.scrollingElement;
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      left, right, bottom, center,
+      leftShare: left / spaceWidth,
+      rightShare: right / spaceWidth,
+      centerShare: center / spaceWidth,
+      bottomShare: bottom / spaceHeight,
+      narrow: shell.classList.contains('narrow'),
+      collapsed: shell.classList.contains('log-collapsed'),
+      saved: localStorage.getItem(window.__layout.key),
+      ratio: window.__layout.getRatio(),
+      scrollWidth: se.scrollWidth, clientWidth: se.clientWidth, scrollHeight: se.scrollHeight,
+      canvasHeight: Math.round(document.getElementById('cesiumContainer').getBoundingClientRect().height),
+    };
+  })()`
 
   // ---------------------------------------------------------------- 启动恢复 + 读取时夹取（REQ-006 标准 5）
   // 先切到 1280×800：Emulation 的视口覆写在 Page.reload 之后依然生效
   await installErrorCollector()
   await setViewport(1280, 800)
-  await seedLayout(LAYOUT_SEED(), '种入布局并重载页面')
+  await seedLayout(RATIO_SEED(), '种入占比布局并重载页面')
   const startRestore = await run('启动时从 localStorage 恢复布局', `(() => {
     const shell = document.getElementById('appShell');
     return {
@@ -192,18 +229,25 @@ async function main() {
       varRight: getComputedStyle(shell).getPropertyValue('--pane-right').trim(),
       varBottom: getComputedStyle(shell).getPropertyValue('--pane-bottom').trim(),
       layout: window.__layout.get(),
+      ratio: window.__layout.getRatio(),
+      space: { width: shell.clientWidth - 8, height: shell.clientHeight },
       scrollWidth: document.scrollingElement.scrollWidth,
       clientWidth: document.scrollingElement.clientWidth,
     };
   })()`)
   if (startRestore) {
-    check('重载后必须按 localStorage 恢复三栏尺寸（不是默认值）',
-      startRestore.varLeft === '320px' && startRestore.varRight === '380px' && startRestore.varBottom === '240px',
-      JSON.stringify(startRestore))
+    // 期望像素由**同一可用空间**与落盘占比推出（左边 0.25、右边 0.30、底部 0.30）
+    const space = startRestore.space
+    const expectLeft = `${Math.round(startRestore.ratio.left * space.width)}px`
+    const expectRight = `${Math.round(startRestore.ratio.right * space.width)}px`
+    const expectBottom = `${Math.round(startRestore.ratio.bottom * space.height)}px`
+    check('重载后必须按 localStorage 里的**占比**恢复三栏像素（不是默认值）',
+      startRestore.varLeft === expectLeft && startRestore.varRight === expectRight && startRestore.varBottom === expectBottom,
+      JSON.stringify({ expect: [expectLeft, expectRight, expectBottom], actual: [startRestore.varLeft, startRestore.varRight, startRestore.varBottom], space }))
   }
 
-  // 大屏存下来的越界值：读取时必须夹到合法区间，且不得顶出滚动条
-  await seedLayout(LAYOUT_SEED({ left: 99999, right: 99999, bottom: 99999 }), '种入越界布局并重载页面')
+  // 大屏存下来的越界占比：读取时必须夹到比例上限，且不得顶出滚动条
+  await seedLayout(RATIO_SEED({ left: 0.99, right: 0.99, bottom: 0.99 }), '种入越界占比并重载页面')
   const clampedStart = await run('启动时夹取越界布局（大屏像素值不能弄坏小窗口）', `(() => {
     const shell = document.getElementById('appShell');
     const se = document.scrollingElement;
@@ -221,9 +265,16 @@ async function main() {
   })()`)
   if (clampedStart) {
     const limits = clampedStart.limits
-    check('越界宽度必须在启动时就夹到上限',
-      clampedStart.layout.left <= limits.left.max && clampedStart.layout.right <= limits.right.max
-        && clampedStart.layout.bottom <= limits.bottom.max,
+    // REQ-011：像素上限已由**比例上限**承担，这里按比例上限 × 可用空间折算回像素比较。
+    // 用 `?.` 而不是直接取：老实现（像素模型）没有 limits.ratio，这里应当**断言失败**而不是整跑崩掉。
+    const ratioLimits = limits.ratio
+    const spaceWidth = clampedStart.innerWidth - 8
+    const spaceHeight = clampedStart.innerHeight
+    check('越界占比必须在启动时就夹到比例上限',
+      Boolean(ratioLimits)
+        && clampedStart.layout.left <= Math.round(ratioLimits.left.max * spaceWidth) + 1
+        && clampedStart.layout.right <= Math.round(ratioLimits.right.max * spaceWidth) + 1
+        && clampedStart.layout.bottom <= Math.round(ratioLimits.bottom.max * spaceHeight) + 1,
       JSON.stringify(clampedStart))
     check('夹取后必须仍给中栏留出最小宽度（不出现中栏为 0 的布局）',
       clampedStart.centerWidth >= limits.centerMinWidth, JSON.stringify(clampedStart))
@@ -232,8 +283,79 @@ async function main() {
       JSON.stringify(clampedStart))
   }
 
-  // 确定性起点：默认布局 + 干净的状态栏
-  await seedLayout(LAYOUT_SEED({ left: 260, right: 340, bottom: 200 }), '回到默认布局并重载页面')
+  // 确定性起点：默认占比 + 干净的状态栏
+  await seedLayout(RATIO_SEED(), '回到默认占比并重载页面')
+
+  // ---------------------------------------------------------------- REQ-011：占比不随窗口漂移（核心）
+  await setViewport(1280, 800)
+  // 旧版（version 1）像素载荷迁移：种入 320/380/240 像素，重载后像素应还原且载荷升到 v2
+  await seedLayout(LAYOUT_SEED({ left: 320, right: 380, bottom: 240 }), '种入旧版像素布局并重载页面')
+  const migratedLayout = await run('旧版像素布局必须迁移为占比（version 1 → 2）', `(() => {
+    const shell = document.getElementById('appShell');
+    const read = (name) => parseFloat(getComputedStyle(shell).getPropertyValue(name)) || 0;
+    return {
+      stored: JSON.parse(localStorage.getItem(window.__layout.key) || '{}'),
+      left: read('--pane-left'), right: read('--pane-right'), bottom: read('--pane-bottom'),
+      ratio: window.__layout.getRatio(),
+    };
+  })()`)
+  if (migratedLayout) {
+    check('旧版 version:1 像素布局必须迁移成 version:2 占比并还原像素（±1px）',
+      migratedLayout.stored.version === 2
+        && Math.abs(migratedLayout.left - 320) <= 1
+        && Math.abs(migratedLayout.right - 380) <= 1
+        && Math.abs(migratedLayout.bottom - 240) <= 1
+        && typeof migratedLayout.ratio?.left === 'number',
+      JSON.stringify(migratedLayout))
+  }
+
+  await seedLayout(RATIO_SEED({ left: 0.24, right: 0.28, bottom: 0.28 }), '为占比断言种入非默认占比')
+  const ratioReference = await run('占比参照（1280×800）', SHARE_PROBE)
+  const ratioSamples = []
+  for (const [width, height] of [[1100, 760], [1440, 900], [1920, 1200]]) {
+    await setViewport(width, height)
+    ratioSamples.push({ size: `${width}×${height}`, sample: await run(`占比采样（${width}×${height}）`, SHARE_PROBE) })
+  }
+  // 夹取到极限再恢复：占比必须失而复得（ADR-011 决策 c/d）
+  await setViewport(880, 640)
+  const clampedRatio = await run('占比被夹到极限（880×640）', SHARE_PROBE)
+  await setViewport(1600, 900)
+  const ratioRestored = await run('窗口恢复后占比必须回来（1600×900）', SHARE_PROBE)
+  await setViewport(1920, 1200)
+  const ratioAtLarge = await run('大窗口下的占比', SHARE_PROBE)
+
+  if (ratioReference && ratioSamples.every((entry) => entry.sample) && clampedRatio && ratioRestored && ratioAtLarge) {
+    const shareDelta = (a, b, key) => Math.abs(a[key] - b[key])
+    const drifted = ratioSamples.filter(({ sample }) => (
+      shareDelta(sample, ratioReference, 'leftShare') > 0.01
+      || shareDelta(sample, ratioReference, 'rightShare') > 0.01
+      || shareDelta(sample, ratioReference, 'centerShare') > 0.01
+      || shareDelta(sample, ratioReference, 'bottomShare') > 0.01
+    ))
+    check('窗口缩放后各栏占比必须保持不变（≤1 个百分点，REQ-011 核心）',
+      drifted.length === 0,
+      JSON.stringify({ reference: ratioReference, drifted }))
+    check('窗口缩放不得改写落盘的占比载荷（resize 不是用户操作）',
+      ratioSamples.every(({ sample }) => sample.saved === ratioReference.saved && !sample.collapsed),
+      JSON.stringify(ratioSamples.map(({ size, sample }) => ({ size, saved: sample.saved, collapsed: sample.collapsed }))))
+    check('占比重算后中栏仍是最宽的一栏（REQ-006 标准 2 不回归）',
+      ratioSamples.every(({ sample }) => sample.center > sample.left && sample.center > sample.right),
+      JSON.stringify(ratioSamples.map(({ size, sample }) => ({ size, center: sample.center, left: sample.left, right: sample.right }))))
+    check('任一档窗口都不得出现整页滚动',
+      ratioSamples.concat([{ size: '880×640', sample: clampedRatio }]).every(({ sample }) => (
+        sample.scrollHeight <= sample.viewport.height + 1 && sample.scrollWidth <= sample.clientWidth + 1)),
+      JSON.stringify(ratioSamples.map(({ size, sample }) => ({ size, scrollHeight: sample.scrollHeight, viewport: sample.viewport }))))
+    check('占比被极小窗口夹取后，窗口恢复必须回到用户设定的占比（≤1 个百分点）',
+      shareDelta(ratioRestored, ratioReference, 'leftShare') <= 0.01
+        && shareDelta(ratioRestored, ratioReference, 'rightShare') <= 0.01
+        && shareDelta(ratioRestored, ratioReference, 'bottomShare') <= 0.01
+        && shareDelta(ratioAtLarge, ratioReference, 'leftShare') <= 0.01,
+      JSON.stringify({ reference: ratioReference, clamped: clampedRatio, restored: ratioRestored, large: ratioAtLarge }))
+  }
+
+  // 回到 1280×800 + 默认占比，后续步骤继续按既有假设运行
+  await setViewport(1280, 800)
+  await seedLayout(RATIO_SEED(), '占比断言后回到默认占比')
 
   const modules = await run('模块与元素', `(() => ({
     reportFormat: typeof window.reportFormat,
@@ -248,7 +370,7 @@ async function main() {
       'splitterLeft','splitterRight','splitterBottom','toggleLog','toggleDrawer','helpPanel',
       'capabilityHint','progressWrap','statusModel','statusModelSize','statusInspect','statusProgress',
       'inputSummary','inputList','outputSummary','resultList','pickFiles','pickDir','clearInputs',
-      'pickOutput','pickValidation','resetView','runRepair','freezePose','minimizeWindow',
+      'pickOutput','pickValidation','resetView','runRepair','freezePose','textureMaxSize','minimizeWindow',
       'maximizeWindow','closeWindow'].reduce((acc, id) => (acc[id] = Boolean(document.getElementById(id)), acc), {}),
     layoutApi: typeof window.__layout,
   }))()`)
@@ -351,8 +473,9 @@ async function main() {
     if (!help.hidden) { document.getElementById('toggleHelp').click(); await new Promise((r) => setTimeout(r, 200)); }
     // 把日志高度顶到**当前窗口下的上限**：默认 200px 离上限（1280×800 约 363px）很远，
     // 内容变高根本触发不到夹取，断言就会自我满足（旧代码也能过）。顶到上限后才咬得住。
-    const current = window.__layout.get();
-    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 1, ...current, bottom: 99999 }));
+    // 把日志高度顶到**当前窗口下的上限**：默认占比离上限远，内容变高根本触发不到夹取，
+    // 断言就会自我满足（旧代码也能过）。顶到**比例上限**（0.6）后才咬得住。
+    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 2, ...window.__layout.getRatio(), bottom: 0.6, logCollapsed: false, rightCollapsed: false, drawerOpen: false }));
     window.__layout.restore();
     // 走一次真实的用户保存路径（键盘微调 0px：夹取后原值 → commitLayout + saveLayout），
     // 否则 localStorage 里还是刚种进去的 99999，"不得改写落盘值"就成了自我满足的断言
@@ -376,7 +499,7 @@ async function main() {
     const restored = snap();
     // 帮助断言同样要咬得住：先在"帮助关闭"状态下把日志重新顶到上限并保存。否则
     // 旧代码（把帮助高度算进预算）也不会被这两条抓到——实测日志 290px 时离上限还有 100px 余量。
-    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 1, ...window.__layout.get(), bottom: 99999 }));
+    localStorage.setItem(window.__layout.key, JSON.stringify({ version: 2, ...window.__layout.getRatio(), bottom: 0.6, logCollapsed: false, rightCollapsed: false, drawerOpen: false }));
     window.__layout.restore();
     nudgeSplitter('bottom', 0);
     await new Promise((r) => setTimeout(r, 250));
@@ -466,6 +589,191 @@ async function main() {
       JSON.stringify(scrollbars.panes.bottom))
     check('内容灌满后页面本身仍不得整页滚动', scrollbars.pageScrolls === false, String(scrollbars.pageScrolls))
   }
+
+  // ---------------------------------------------------------------- REQ-011：内部元素自适应（多尺寸矩阵）
+  // 占比模型解决了"构图被窗口改写"，但每个区域的**内部**还必须在各个尺寸下都不溢出：
+  // 每区恰好一个滚动容器（BR-029）、无横向溢出、3D 画布 ≥ CANVAS_MIN_HEIGHT、状态栏不换行、
+  // 页面不整页滚动。这里不灌满内容（那是 TASK-012 的职责），只扫尺寸。
+  const ADAPT_PROBE = `(() => {
+    const shell = document.getElementById('appShell');
+    const desc = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+      + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
+    const scrollersIn = (root) => {
+      const out = [];
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        const cs = getComputedStyle(el);
+        if (/auto|scroll/.test(cs.overflowY)) out.push(desc(el));
+      }
+      return out;
+    };
+    const box = (el) => ({
+      clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
+      clientHeight: el.clientHeight, scrollHeight: el.scrollHeight,
+      horizontalOverflow: el.scrollWidth > el.clientWidth + 1,
+      verticalOverflow: el.scrollHeight > el.clientHeight + 1,
+    });
+    const panes = {};
+    for (const [name, id] of [['left', 'paneLeft'], ['right', 'paneRight'], ['bottom', 'paneBottom'], ['center', 'paneCenter']]) {
+      const el = document.getElementById(id);
+      panes[name] = { ...box(el), scrollers: scrollersIn(el) };
+    }
+    const previewBar = document.querySelector('.preview-bar');
+    const statusBar = document.getElementById('statusBar');
+    const container = document.getElementById('cesiumContainer');
+    const se = document.scrollingElement;
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      narrow: shell.classList.contains('narrow'),
+      panes,
+      canvasHeight: Math.round(container.getBoundingClientRect().height),
+      canvasMinHeight: window.__layout.limits.canvasMinHeight,
+      previewBar: { height: Math.round(previewBar.getBoundingClientRect().height), ...box(previewBar) },
+      statusBar: { height: Math.round(statusBar.getBoundingClientRect().height), ...box(statusBar) },
+      page: { scrollWidth: se.scrollWidth, clientWidth: se.clientWidth, scrollHeight: se.scrollHeight, innerHeight: window.innerHeight },
+      ratio: window.__layout.getRatio(),
+    };
+  })()`
+
+  // 先种入一组**均衡**占比并重载：前面的极限拖拽把日志留在了比例上限，画布正好贴在下限上，
+  // 那样"画布 ≥ 下限"就是恒真的空断言。均衡占比让画布有富余，扫描才有意义。
+  await setViewport(1280, 800)
+  await seedLayout(RATIO_SEED(), '自适应扫描前种入均衡占比')
+
+  const adaptSamples = []
+  for (const [width, height] of [[900, 700], [1100, 760], [1280, 800], [1440, 900], [1920, 1200]]) {
+    await setViewport(width, height)
+    adaptSamples.push({ size: `${width}×${height}`, sample: await run(`自适应采样（${width}×${height}）`, ADAPT_PROBE) })
+  }
+  const adaptRows = adaptSamples.map(({ size, sample }) => sample && ({
+    size,
+    narrow: sample.narrow,
+    scrollers: {
+      left: sample.panes.left.scrollers.length,
+      right: sample.panes.right.scrollers.length,
+      bottom: sample.panes.bottom.scrollers.length,
+      center: sample.panes.center.scrollers.length,
+    },
+    overflow: ['left', 'right', 'bottom', 'center'].filter((name) => sample.panes[name].horizontalOverflow),
+    canvas: sample.canvasHeight,
+    canvasMin: sample.canvasMinHeight,
+    previewBar: sample.previewBar.height,
+    previewOverflow: sample.previewBar.horizontalOverflow,
+    statusBar: sample.statusBar.height,
+    statusOverflow: sample.statusBar.horizontalOverflow,
+    page: sample.page,
+  }))
+  console.log('自适应矩阵采样：' + JSON.stringify(adaptRows))
+  if (adaptRows.every(Boolean)) {
+    check('自适应矩阵：五个尺寸都要采到数据',
+      adaptRows.length === 5 && adaptRows.every((row) => row.scrollers && row.canvas > 0),
+      JSON.stringify(adaptRows.map((row) => row.size)))
+    check('自适应矩阵：每个区域恰好一个滚动容器（左/右/日志 1，中栏 0），任何尺寸都成立',
+      adaptRows.every((row) => row.scrollers.left === 1 && row.scrollers.right === 1
+        && row.scrollers.bottom === 1 && row.scrollers.center === 0),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, scrollers: row.scrollers }))))
+    check('自适应矩阵：任何尺寸下各区域都不得横向溢出',
+      adaptRows.every((row) => row.overflow.length === 0),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, overflow: row.overflow }))))
+    check('自适应矩阵：任何尺寸下 3D 画布都必须 ≥ CANVAS_MIN_HEIGHT（且不是贴在下限上就算过）',
+      adaptRows.every((row) => row.canvas >= row.canvasMin)
+        && adaptRows.filter((row) => row.canvas > row.canvasMin).length >= 3,
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, canvas: row.canvas, min: row.canvasMin }))))
+    check('自适应矩阵：状态栏不得换行（高度恒定）也不得横向溢出',
+      new Set(adaptRows.map((row) => row.statusBar)).size === 1
+        && adaptRows.every((row) => row.statusOverflow === false),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, statusBar: row.statusBar, overflow: row.statusOverflow }))))
+    check('自适应矩阵：预览控件条允许换行但不得横向溢出，且页面任何尺寸都不得整页滚动',
+      adaptRows.every((row) => row.previewOverflow === false)
+        && adaptRows.every((row) => row.page.scrollHeight <= row.page.innerHeight + 1
+          && row.page.scrollWidth <= row.page.clientWidth + 1),
+      JSON.stringify(adaptRows.map((row) => ({ size: row.size, previewBar: row.previewBar, previewOverflow: row.previewOverflow, page: row.page }))))
+  }
+  await setViewport(1280, 800)
+
+  // ---------------------------------------------------------------- REQ-010：预览三态记忆（TASK-023）
+  // 三条硬要求：① 只记"用户显式选过"的（从未动过不写键）；② 显式选回 auto 也要记住；
+  // ③ 坏载荷不崩、规整到合法区间。输入文件的 shasum 不变由冒烟末尾的既有断言负责。
+  const PREVIEW_MEMORY_KEY = 'glb-repair.preview'
+  const PREVIEW_PROBE = `(() => ({
+    yaw: document.getElementById('previewYaw').value,
+    scale: document.getElementById('previewScale').value,
+    axis: document.getElementById('previewAxis').value,
+    stored: localStorage.getItem(window.__preview.key),
+    value: window.__preview.get(),
+    logTail: document.getElementById('log').textContent.slice(-240),
+  }))()`
+  await rawEval(`localStorage.removeItem('${PREVIEW_MEMORY_KEY}')`)
+  await reloadPage('清掉预览记忆并重载页面')
+  const previewUntouched = await run('从未动过预览控件时不写记忆', PREVIEW_PROBE)
+  if (previewUntouched) {
+    check('从未动过预览控件时不得写入 localStorage，且控件为默认 auto / 0° / 1.00×',
+      previewUntouched.stored === null && previewUntouched.yaw === '0'
+        && previewUntouched.scale === '1' && previewUntouched.axis === 'auto',
+      JSON.stringify(previewUntouched))
+  }
+
+  const previewSet = await run('设置预览三态（Z-up / 90° / 2×）', `(() => {
+    const fire = (id, value) => {
+      const el = document.getElementById(id);
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    fire('previewYaw', '90');
+    fire('previewScale', '2');
+    fire('previewAxis', 'z');
+    return { stored: localStorage.getItem(window.__preview.key), value: window.__preview.get() };
+  })()`)
+  await reloadPage('带着预览记忆重载页面')
+  const previewRestored = await run('重启后预览三态必须复原', PREVIEW_PROBE)
+  if (previewSet && previewRestored) {
+    const stored = JSON.parse(previewSet.stored || '{}')
+    check('显式选择必须落盘为独立记录（version 1 + 三态），且与控件一致',
+      stored.version === 1 && stored.yawDeg === 90 && stored.scale === 2 && stored.axis === 'z'
+        && previewSet.value && previewSet.value.yawDeg === 90 && previewSet.value.scale === 2 && previewSet.value.axis === 'z',
+      JSON.stringify({ stored, value: previewSet.value }))
+    check('重启后预览三态必须复原为上次选择，且日志说明"沿用上次选择"',
+      previewRestored.yaw === '90' && previewRestored.scale === '2' && previewRestored.axis === 'z'
+        && /已沿用上次选择/.test(previewRestored.logTail),
+      JSON.stringify(previewRestored))
+  }
+
+  await run('把上轴显式选回 auto', `(() => {
+    const el = document.getElementById('previewAxis');
+    el.value = 'auto';
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return window.__preview.get();
+  })()`)
+  await reloadPage('显式 auto 后重载页面')
+  const previewExplicitAuto = await run('显式 auto 必须被记住', PREVIEW_PROBE)
+  if (previewExplicitAuto) {
+    check('显式选回 auto 后重启仍是 auto，且记录仍然存在（不是被当成"从未选过"）',
+      previewExplicitAuto.axis === 'auto' && previewExplicitAuto.stored !== null,
+      JSON.stringify(previewExplicitAuto))
+  }
+
+  await rawEval(`localStorage.setItem('${PREVIEW_MEMORY_KEY}', 'not json')`)
+  await reloadPage('种入坏 JSON 的预览记忆并重载页面')
+  const previewGarbage = await run('坏 JSON 的预览记忆必须回落默认', PREVIEW_PROBE)
+  if (previewGarbage) {
+    check('预览记忆是坏 JSON 时必须回落默认值且不抛异常',
+      previewGarbage.yaw === '0' && previewGarbage.scale === '1' && previewGarbage.axis === 'auto',
+      JSON.stringify(previewGarbage))
+  }
+
+  await rawEval(`localStorage.setItem('${PREVIEW_MEMORY_KEY}', JSON.stringify({ version: 1, yawDeg: 999, scale: -3, axis: 'nope' }))`)
+  await reloadPage('种入越界/未知档位的预览记忆并重载页面')
+  const previewOutOfRange = await run('越界与未知档位必须被规整到合法区间', PREVIEW_PROBE)
+  if (previewOutOfRange) {
+    check('越界方向/缩放/未知上轴必须被规整到合法区间（不崩、不留非法值）',
+      Number(previewOutOfRange.yaw) >= 0 && Number(previewOutOfRange.yaw) <= 355
+        && Number(previewOutOfRange.yaw) % 5 === 0
+        && Number(previewOutOfRange.scale) >= 0.1 && Number(previewOutOfRange.scale) <= 5
+        && previewOutOfRange.axis === 'auto',
+      JSON.stringify(previewOutOfRange))
+  }
+  // 收尾：清掉记忆，避免影响后续步骤（后续步骤不依赖预览记忆，但保持状态可预期）
+  await rawEval(`localStorage.removeItem('${PREVIEW_MEMORY_KEY}')`)
+  await reloadPage('清理预览记忆并重载页面')
 
   // 种入一组**与默认值和 styles.css 初值都不同**的布局并重载：只有真的走了
   // "读 localStorage → clamp → 写 CSS 变量"这条链路才会得到这组数，否则断言无从通过
@@ -731,7 +1039,9 @@ async function main() {
       before, during, after,
       viewerResizeCalls: resizeCalls,
       layout: window.__layout.get(),
+      ratio: window.__layout.getRatio(),
       stored: localStorage.getItem(window.__layout.key),
+      spaceWidth: window.innerWidth - 8,
     };
   })()`, true)
   if (splitterDrag) {
@@ -748,7 +1058,13 @@ async function main() {
     check('拖拽必须调用 state.viewer.resize()（Cesium 只监听 window resize）',
       splitterDrag.viewerResizeCalls > 0 && splitterDrag.after.resizeCount > splitterDrag.before.resizeCount,
       JSON.stringify({ patched: splitterDrag.viewerResizeCalls, internal: [splitterDrag.before.resizeCount, splitterDrag.after.resizeCount] }))
-    check('拖拽后布局必须写入 localStorage', /"left":320/.test(splitterDrag.stored || ''), String(splitterDrag.stored))
+    // REQ-011：落盘的必须是**占比**（version 2），且该占比 × 可用宽度要能还原屏幕上的像素
+    const storedLayout = JSON.parse(splitterDrag.stored || '{}')
+    check('拖拽后必须把**占比**写入 localStorage（version 2，且能还原屏幕像素）',
+      storedLayout.version === 2
+        && typeof storedLayout.left === 'number'
+        && Math.abs(storedLayout.left * splitterDrag.spaceWidth - afterLeft) <= 1,
+      JSON.stringify({ stored: storedLayout, afterLeft, spaceWidth: splitterDrag.spaceWidth }))
   }
 
   // 拖到各个极限：任何一栏都不得被拖到 0（每栏有最小尺寸）
@@ -784,19 +1100,29 @@ async function main() {
     const bottomMin = measure();
     drag('splitterBottom', 0, -4000);
     const bottomMax = measure();
-    return { leftMin, leftMax, rightMin, rightMax, bottomMin, bottomMax, limits: window.__layout.limits };
+    // REQ-011：上限由**比例上限**决定，折算成当前窗口下的像素再比较。
+    // 老实现没有 limits.ratio —— 用哨兵值让断言失败（而不是在页面里抛异常拖垮整步）。
+    const shellWidth = shell.clientWidth - 8;
+    const shellHeight = shell.clientHeight;
+    const ratioLimits = window.__layout.limits.ratio || { left: { max: 0 }, right: { max: 0 }, bottom: { max: 0 } };
+    const caps = {
+      left: Math.round(ratioLimits.left.max * shellWidth) + 1,
+      right: Math.round(ratioLimits.right.max * shellWidth) + 1,
+      bottom: Math.round(ratioLimits.bottom.max * shellHeight) + 1,
+    };
+    return { leftMin, leftMax, rightMin, rightMax, bottomMin, bottomMax, limits: window.__layout.limits, caps };
   })()`, true)
   if (dragToZero) {
     const limits = dragToZero.limits
-    check('左栏不能被拖到 0，也不能超过上限',
-      dragToZero.leftMin.left === limits.left.min && dragToZero.leftMax.left <= limits.left.max && dragToZero.leftMax.left >= limits.left.min,
-      JSON.stringify({ min: dragToZero.leftMin.left, max: dragToZero.leftMax.left, limits }))
-    check('右栏不能被拖到 0，也不能超过上限',
-      dragToZero.rightMin.right === limits.right.min && dragToZero.rightMax.right <= limits.right.max && dragToZero.rightMax.right >= limits.right.min,
+    check('左栏不能被拖到 0，也不能超过比例上限',
+      dragToZero.leftMin.left === limits.left.min && dragToZero.leftMax.left <= dragToZero.caps.left && dragToZero.leftMax.left >= limits.left.min,
+      JSON.stringify({ min: dragToZero.leftMin.left, max: dragToZero.leftMax.left, caps: dragToZero.caps }))
+    check('右栏不能被拖到 0，也不能超过比例上限',
+      dragToZero.rightMin.right === limits.right.min && dragToZero.rightMax.right <= dragToZero.caps.right && dragToZero.rightMax.right >= limits.right.min,
       JSON.stringify({ min: dragToZero.rightMin.right, max: dragToZero.rightMax.right, limits }))
     check('日志不能被拖到 0，也不能吃满整屏',
-      dragToZero.bottomMin.bottom === limits.bottom.min && dragToZero.bottomMax.bottom <= limits.bottom.max,
-      JSON.stringify({ min: dragToZero.bottomMin.bottom, max: dragToZero.bottomMax.bottom, limits }))
+      dragToZero.bottomMin.bottom === limits.bottom.min && dragToZero.bottomMax.bottom <= dragToZero.caps.bottom,
+      JSON.stringify({ min: dragToZero.bottomMin.bottom, max: dragToZero.bottomMax.bottom, caps: dragToZero.caps }))
     check('把日志拖到上限后 3D 画布仍必须 ≥ CANVAS_MIN_HEIGHT（中栏标题行与预览控件条都要算进高度预算）',
       dragToZero.bottomMax.canvas >= limits.canvasMinHeight,
       JSON.stringify({ canvas: dragToZero.bottomMax.canvas, min: limits.canvasMinHeight, bottom: dragToZero.bottomMax.bottom }))
@@ -848,7 +1174,9 @@ async function main() {
   const persist = await run('布局记忆与恢复（越界值必须夹到合法区间）', `(async () => {
     const shell = document.getElementById('appShell');
     const key = window.__layout.key;
-    const seeded = { version: 1, left: 320, right: 380, bottom: 240, logCollapsed: false, rightCollapsed: false, drawerOpen: false };
+    const space = { width: shell.clientWidth - 8, height: shell.clientHeight };
+    // REQ-011：种入的是**占比**载荷（version 2），按同一可用空间换算回 320/380/240 像素
+    const seeded = { version: 2, left: 320 / space.width, right: 380 / space.width, bottom: 240 / space.height, logCollapsed: false, rightCollapsed: false, drawerOpen: false };
     localStorage.setItem(key, JSON.stringify(seeded));
     const applied = window.__layout.restore();
     await new Promise((r) => setTimeout(r, 250));
@@ -858,20 +1186,24 @@ async function main() {
     const big = { left: 99999, right: 99999, bottom: 99999, logCollapsed: false, rightCollapsed: false, drawerOpen: false };
     const clamped = window.__layout.clamp(big);
     const stored = JSON.parse(localStorage.getItem(key));
-    return { key, stored, applied, varLeft, varRight, varBottom, clamped, limits: window.__layout.limits, innerWidth: window.innerWidth };
+    return { key, stored, applied, varLeft, varRight, varBottom, clamped, limits: window.__layout.limits, innerWidth: window.innerWidth, space };
   })()`, true)
   if (persist) {
     check('localStorage 键必须是 glb-repair.layout', persist.key === 'glb-repair.layout', String(persist.key))
-    check('restore() 必须从 localStorage 读回并落到 CSS 变量上',
-      persist.stored.left === 320 && persist.stored.right === 380 && persist.stored.bottom === 240,
+    check('localStorage 载荷必须是 version 2 的占比而不是像素',
+      persist.stored.version === 2 && typeof persist.stored.left === 'number' && persist.stored.left < 1,
       JSON.stringify(persist.stored))
-    check('恢复后的布局必须落到 CSS 变量上',
-      persist.varLeft === '320px' && persist.varRight === '380px' && persist.varBottom === '240px',
-      JSON.stringify([persist.varLeft, persist.varRight, persist.varBottom]))
+    check('恢复后的占比必须按同一可用空间落成像素（±1px）',
+      Math.abs(parseFloat(persist.varLeft) - 320) <= 1
+        && Math.abs(parseFloat(persist.varRight) - 380) <= 1
+        && Math.abs(parseFloat(persist.varBottom) - 240) <= 1,
+      JSON.stringify({ actual: [persist.varLeft, persist.varRight, persist.varBottom], space: persist.space }))
     const limits = persist.limits
-    check('越界的宽度必须被夹到上限内',
-      persist.clamped.left <= limits.left.max && persist.clamped.right <= limits.right.max && persist.clamped.bottom <= limits.bottom.max,
-      JSON.stringify(persist.clamped))
+    // 像素级 clamp 不套比例上限（那是拖拽与落盘的约束），它只保证"不挤掉中栏的可用空间"
+    check('越界的像素必须被夹到不挤掉中栏最小宽度',
+      persist.innerWidth - 8 - persist.clamped.left - persist.clamped.right >= limits.centerMinWidth - 1
+        && persist.clamped.left >= limits.left.min && persist.clamped.right >= limits.right.min,
+      JSON.stringify({ clamped: persist.clamped, limits }))
     check('夹取后必须仍给中栏留出最小宽度',
       persist.innerWidth - persist.clamped.left - persist.clamped.right - 8 >= limits.centerMinWidth,
       JSON.stringify({ clamped: persist.clamped, innerWidth: persist.innerWidth, centerMin: limits.centerMinWidth }))
@@ -884,8 +1216,8 @@ async function main() {
     const se = document.scrollingElement;
     const rect = (id) => { const r = document.getElementById(id).getBoundingClientRect();
       return { x: Math.round(r.x), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right) }; };
-    // 先用一个"大屏存下来的"越界值，验证读取时的 clamp 在窄窗口下也兜得住
-    const big = { version: 1, left: 9999, right: 9999, bottom: 9999, logCollapsed: false, rightCollapsed: false, drawerOpen: false };
+    // 先用一个"大屏存下来的"越界占比，验证读取时的 clamp 在窄窗口下也兜得住
+    const big = { version: 2, left: 0.99, right: 0.99, bottom: 0.99, logCollapsed: false, rightCollapsed: false, drawerOpen: false };
     localStorage.setItem(window.__layout.key, JSON.stringify(big));
     const applied = window.__layout.restore();
     await new Promise((r) => setTimeout(r, 300));
@@ -943,8 +1275,9 @@ async function main() {
       JSON.stringify([narrow.closed.splitterRightDisplay, narrow.closed.rightVisibility]))
     check('窄布局下 3D 视口仍必须是两栏里最宽的',
       narrow.closed.center.w > narrow.closed.left.w, JSON.stringify({ left: narrow.closed.left.w, center: narrow.closed.center.w }))
-    check('大屏存下的越界宽度在窄窗口下必须被夹住（不留横向滚动）',
-      narrow.closed.applied.left <= narrow.limits.left.max
+    check('大屏存下的越界占比在窄窗口下必须被夹住（不留横向滚动）',
+      Boolean(narrow.limits.ratio)
+        && narrow.closed.applied.left <= Math.round(narrow.limits.ratio.left.max * (narrow.closed.innerWidth - 8)) + 1
         && narrow.closed.innerWidth - narrow.closed.applied.left - 4 >= narrow.limits.centerMinWidth,
       JSON.stringify({ applied: narrow.closed.applied, innerWidth: narrow.closed.innerWidth }))
     check('抽屉按钮必须能把右栏拉出来（且不制造横向滚动）',
@@ -1013,10 +1346,39 @@ async function main() {
   check('体检失败必须是 { ok:false, error } 而不是 reject',
     missing?.ok === false && (missing?.error || '').length > 0, JSON.stringify(missing))
 
+  // ---------------------------------------------------------------- 修复选项接线（BR-032 贴图降采样）
+  const optionWiring = await run('修复选项必须真的进入 IPC 载荷（BR-032）', `(() => {
+    const select = document.getElementById('textureMaxSize');
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    const selectedByDefault = select.value;
+    const payloads = {};
+    for (const value of ['0', '2048', '1024', '512']) {
+      select.value = value;
+      payloads[value] = collectRepairOptions();
+    }
+    select.value = selectedByDefault;
+    return {
+      optionValues,
+      selectedByDefault,
+      maxTextureSizeByValue: Object.fromEntries(Object.entries(payloads).map(([value, payload]) => [value, payload.maxTextureSize])),
+      freezePoseIsBoolean: Object.values(payloads).every((payload) => typeof payload.freezePose === 'boolean'),
+    };
+  })()`)
+  if (optionWiring) {
+    check('贴图降采样必须是 4 档（不降/2048/1024/512）且默认不降',
+      JSON.stringify(optionWiring.optionValues) === JSON.stringify(['0', '2048', '1024', '512'])
+        && optionWiring.selectedByDefault === '0',
+      JSON.stringify(optionWiring))
+    check('所选档位必须原样进入 IPC 载荷（「不降」= 0，不能丢字段）',
+      JSON.stringify(optionWiring.maxTextureSizeByValue) === JSON.stringify({ 0: 0, 2048: 2048, 1024: 1024, 512: 512 })
+        && optionWiring.freezePoseIsBoolean === true,
+      JSON.stringify(optionWiring))
+  }
+
   // ---------------------------------------------------------------- 键盘可达与焦点样式（REQ-006 标准 6）
   const focusables = await run('键盘可达性：操作栏与预览控件可聚焦', `(() => {
     const ids = ['pickFiles','pickDir','clearInputs','pickOutput','pickValidation','resetView','runRepair',
-      'freezePose','previewYaw','previewScale','previewAxis','resetPreview','toggleLog','toggleDrawer'];
+      'freezePose','textureMaxSize','previewYaw','previewScale','previewAxis','resetPreview','toggleLog','toggleDrawer'];
     const out = {};
     for (const id of ids) {
       const el = document.getElementById(id);

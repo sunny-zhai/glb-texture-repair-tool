@@ -4,7 +4,7 @@
 //   node scripts/memory.mjs sync [--root <path>]
 //   node scripts/memory.mjs log --task TASK-XXX [--req REQ-XXX] [--event completed|reopened]
 //                               --evidence "<命令或路径 → 结果>" [--commit <sha>] [--note <text>] [--root <path>]
-//   node scripts/memory.mjs check [--root <path>]
+//   node scripts/memory.mjs check [--root <path>] [--report]   # --report：失败时往问题台账落一条（默认关）
 //
 // 边界：
 //   - 权威状态在 docs/requirements/TASKS.md；本文件是**派生的历史**，不是状态源；
@@ -15,8 +15,12 @@ import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_DONE, loadRequirements } from './requirements-parse.mjs'
+import { ISSUE_FILE, logIssue } from './platform-issue.mjs'
+import { isExcluded, readLock, readLockMeta } from './lock-meta.mjs'
 
-const FILE = 'docs/PROJECT_MEMORY.md'
+// 记忆线文件路径：这里是**唯一**定义（doctor 的入库检查也用它，避免两处各写一份字面量）。
+export const MEMORY_FILE = 'docs/PROJECT_MEMORY.md'
+const FILE = MEMORY_FILE
 const S_BEGIN = '<!-- memory:structure:begin -->'
 const S_END = '<!-- memory:structure:end -->'
 const C_BEGIN = '<!-- memory:completion:begin -->'
@@ -128,15 +132,8 @@ function trackedPaths() {
   }
 }
 
-function readLock() {
-  const path = join(root, '.ai/platform-lock.json')
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'))
-  } catch {
-    return null
-  }
-}
+// 受管清单读取与排除判定统一走交付模块 `lock-meta.mjs`：排除语义只有一处定义
+const lockMeta = readLockMeta(root)
 
 function packageScripts() {
   const path = join(root, 'package.json')
@@ -202,7 +199,7 @@ function generateStructure() {
   lines.push('')
 
   const lockPath = join(root, '.ai/platform-lock.json')
-  const lock = readLock()
+  const lock = readLock(root)
   let typeLine
   if (!existsSync(lockPath)) {
     typeLine = '本仓库是平台母体（无 `.ai/platform-lock.json`）'
@@ -238,6 +235,8 @@ function generateStructure() {
 
   const docs = DOC_SEEDS.map((name) => {
     const rel = `${DOC_DIRS[name]}/${name}`
+    // 已声明不适用的种子显示「不适用」——显示 `—` 会被读成"缺失"（交付脚本不得引用母体需求编号）
+    if (isExcluded(rel, lockMeta)) return `${name} 不适用`
     const ok = tracked === null ? existsSync(join(root, rel)) : tracked.has(rel)
     return `${name} ${ok ? '✓' : '—'}`
   })
@@ -262,6 +261,11 @@ function generateStructure() {
 }
 
 // ---- 完成线 ----
+// 导出：完成线行格式的**唯一**解析器（`scripts/spec-first.mjs` 复用它读 REQ→实现提交）。
+export function parseCompletionRows(text) {
+  return parseCompletion(text)
+}
+
 function parseCompletion(text) {
   const body = section(text, C_BEGIN, C_END)
   if (body === null) return null
@@ -426,6 +430,21 @@ if (isEntry) {
   if (violations.length > 0) {
     console.error(`memory: check 未通过（${violations.length} 项）`)
     for (const message of violations) console.error(`  - ${message}`)
+    // 可选上报：默认**关**。check 在每次合并点都会跑，而它多数失败是"台账没跟上"
+    // （忘了 sync / 忘了 log），那是项目侧动作缺失，不是平台缺陷——默认上报会把
+    // 母体的待分诊队列淹掉。需要留痕时显式加 --report。
+    if (argv.includes('--report')) {
+      const result = logIssue(root, {
+        category: 'rule-gap',
+        severity: 'minor',
+        trigger: 'memory.mjs:check',
+        summary: `memory check 未通过：${violations[0]}`,
+        evidence: `${violations.length} 项｜${violations.slice(0, 3).join('；')}`,
+      }, { dedup: true })
+      console.error(result.skipped
+        ? `memory: 已有未关闭的同类问题 ${result.id}，未重复记录`
+        : `memory: 已上报 ${result.id} 到 ${ISSUE_FILE}`)
+    }
     process.exit(1)
   }
   if (command === 'check') console.log('memory: check 通过（结构快照与完成线均与权威来源一致）')

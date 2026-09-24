@@ -54,7 +54,7 @@ function corpusFiles() {
 }
 
 function corpusSkipReason() {
-  return corpusFiles().length ? false : `缺少样例 GLB（${corpusDirs.join('、')}）`
+  return corpusFiles().length ? false : `缺少样例 GLB（${corpusDirs.join('、')}）；样例不入库，恢复方法见 docs/testing/TEST_PLAN.md 的「夹具」行`
 }
 
 /** @description 造一个 APP1(Exif) 段超过 1KB 的 JPEG —— 头部扫描若被截断就读不到宽高。 */
@@ -478,6 +478,181 @@ test('inspect: 内嵌 JPEG 即使 APP1 段很长也能读出宽高并判定 NPOT
     assert.equal(report.images[0].npot, true)
     // NPOT + REPEAT + mipmap 必须被报出来（截断扫描时这里会静默失效）
     assert.ok(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// 多张贴图的最小 GLB：sizes 给每张图的 [宽, 高]（用带长 APP1 的 JPEG，模拟真实"SOF 在后面"），
+// textures/samplers 由调用方给，用来精确构造 NPOT × 采样器的绑定关系。
+function glbWithTextures({ sizes, textures, samplers }) {
+  let bin = Buffer.alloc(0)
+  const bufferViews = []
+  const images = []
+  for (const [width, height] of sizes) {
+    const jpeg = jpegWithLargeApp1(width, height, 3200)
+    bufferViews.push({ buffer: 0, byteOffset: bin.length, byteLength: jpeg.length })
+    images.push({ bufferView: bufferViews.length - 1, mimeType: 'image/jpeg' })
+    bin = Buffer.concat([bin, jpeg])
+  }
+  const json = glb({
+    bufferViews,
+    buffers: [{ byteLength: bin.length }],
+    images,
+    textures,
+    ...(samplers ? { samplers } : {}),
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+  })
+  return { json, bin }
+}
+
+test('inspect: 完全没写采样器的 NPOT 贴图也算 REPEAT + mipmap（规范默认值），不得漏报', () => {
+  const workDir = makeTempDir()
+  try {
+    // glTF 规范：sampler 缺省 ⇒ wrapS/wrapT = REPEAT、minFilter = LINEAR_MIPMAP_LINEAR
+    const { json, bin } = glbWithTextures({ sizes: [[3, 2]], textures: [{ source: 0 }] })
+    const file = writeTemp(workDir, 'default-sampler.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.ok(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'))
+    assert.deepEqual(report.npotSamplerBindings, [{ texture: 0, image: 0, sampler: null }])
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 写了采样器但漏写 minFilter 的 NPOT 贴图同样是 mipmap 路径，不得漏报', () => {
+  const workDir = makeTempDir()
+  try {
+    const { json, bin } = glbWithTextures({
+      sizes: [[3, 2]],
+      textures: [{ source: 0, sampler: 0 }],
+      samplers: [{ wrapS: 10497, wrapT: 10497 }],
+    })
+    const file = writeTemp(workDir, 'no-min-filter.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.equal(report.samplers[0].mipmapped, true)
+    assert.ok(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'))
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: REPEAT + mipmap 属于另一张 POT 贴图时不得误报 NPOT_WITH_REPEAT_MIPMAP', () => {
+  const workDir = makeTempDir()
+  try {
+    // 这正是旧口径的场景：文件里既有 NPOT 贴图、又有 REPEAT+mipmap 采样器，但两者并不相干。
+    // POT 贴图用 REPEAT+mipmap 完全合法，NPOT 那张已经退化为 CLAMP_TO_EDGE + LINEAR。
+    const { json, bin } = glbWithTextures({
+      sizes: [[4, 4], [3, 2]],
+      textures: [{ source: 0, sampler: 0 }, { source: 1, sampler: 1 }],
+      samplers: [
+        { wrapS: 10497, wrapT: 10497, minFilter: 9987 },
+        { wrapS: 33071, wrapT: 33071, minFilter: 9729 },
+      ],
+    })
+    const file = writeTemp(workDir, 'pot-shares-sampler.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.equal(report.issues.some((issue) => issue.code === 'NPOT_WITH_REPEAT_MIPMAP'), false)
+    assert.deepEqual(report.npotSamplerBindings, [])
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 同一文件里 NPOT 贴图逐个绑定判定，只报真正非法的那条', () => {
+  const workDir = makeTempDir()
+  try {
+    const { json, bin } = glbWithTextures({
+      sizes: [[3, 2], [5, 3]],
+      textures: [{ source: 0, sampler: 0 }, { source: 1, sampler: 1 }],
+      samplers: [
+        { wrapS: 10497, wrapT: 10497, minFilter: 9987 },
+        { wrapS: 33071, wrapT: 33071, minFilter: 9729 },
+      ],
+    })
+    const file = writeTemp(workDir, 'per-binding.glb', json, bin)
+
+    const report = inspect(file)
+
+    assert.deepEqual(report.npotSamplerBindings, [{ texture: 0, image: 0, sampler: 0 }])
+    const issue = report.issues.find((entry) => entry.code === 'NPOT_WITH_REPEAT_MIPMAP')
+    assert.ok(issue)
+    assert.match(issue.message, /1 张贴图/)
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+// 图元只有 TEXCOORD_0，而材质经 KHR_texture_transform 以 texCoord: 1 采样贴图。
+// 这类文件在旧口径下"看着没问题"（检查的是 TEXCOORD_0，它存在），实际 Cesium 会因为缺
+// TEXCOORD_1 让着色器编译失败并停止整个场景渲染——正是要钉住的漏报（REQ-008 验收标准 9）。
+function glbWithTextureTransform(extensions) {
+  const bin = Buffer.concat([Buffer.alloc(72), TINY_PNG])
+  const json = glb({
+    accessors: [triangleAccessor(), { count: 3, type: 'VEC2', componentType: 5126 }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: 36 },
+      { buffer: 0, byteOffset: 36, byteLength: 24 },
+      { buffer: 0, byteOffset: 72, byteLength: TINY_PNG.length },
+    ],
+    buffers: [{ byteLength: bin.length }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 0 }] }],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorTexture: extensions ? { index: 0, extensions } : { index: 0 },
+      },
+    }],
+    textures: [{ source: 0 }],
+    images: [{ bufferView: 2, mimeType: 'image/png' }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+  })
+  return { json, bin }
+}
+
+test('inspect: KHR_texture_transform.texCoord 覆盖必须被采纳，漏报会让整个场景不渲染', () => {
+  const workDir = makeTempDir()
+  try {
+    const overridden = glbWithTextureTransform({ KHR_texture_transform: { texCoord: 1 } })
+    const file = writeTemp(workDir, 'transform-texcoord-1.glb', overridden.json, overridden.bin)
+
+    const report = inspect(file)
+    const issue = report.issues.find((entry) => entry.code === 'MISSING_TEXCOORD')
+
+    assert.ok(issue, '实际采样 TEXCOORD_1 而图元只有 TEXCOORD_0，必须报 MISSING_TEXCOORD')
+    assert.equal(issue.level, 'error')
+    assert.match(issue.message, /TEXCOORD_1/)
+
+    // 对照：同一模型去掉扩展覆盖后，采样的就是存在的 TEXCOORD_0，不得报（防止断言恒真）
+    const plain = glbWithTextureTransform(null)
+    const plainFile = writeTemp(workDir, 'transform-plain.glb', plain.json, plain.bin)
+    assert.equal(
+      inspect(plainFile).issues.some((entry) => entry.code === 'MISSING_TEXCOORD'),
+      false,
+    )
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true })
+  }
+})
+
+test('inspect: 槽位自身 texCoord 存在但没有扩展覆盖时，报的是槽位那个通道', () => {
+  const workDir = makeTempDir()
+  try {
+    // 槽位写 texCoord: 1（无扩展），图元只有 TEXCOORD_0 → 同样要报 TEXCOORD_1
+    const { json, bin } = glbWithTextureTransform(null)
+    json.materials[0].pbrMetallicRoughness.baseColorTexture.texCoord = 1
+    const file = writeTemp(workDir, 'slot-texcoord-1.glb', json, bin)
+
+    const report = inspect(file)
+    const issue = report.issues.find((entry) => entry.code === 'MISSING_TEXCOORD')
+    assert.ok(issue)
+    assert.match(issue.message, /TEXCOORD_1/)
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true })
   }

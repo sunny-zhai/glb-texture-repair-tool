@@ -8,7 +8,7 @@
 //   node scripts/task-flow.mjs request [--base master] [--remote origin] [--dry-run]
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, relative } from 'node:path'
 
 const PROTECTED = ['main', 'master']
 const argv = process.argv.slice(2)
@@ -249,16 +249,23 @@ if (command === 'request') {
   const log = git(['log', '--pretty=format:%h %s', `${base}..${version.current}`])
     .split('\n')
     .filter(Boolean)
+  // 快照锚点：清单与计数描述的是「生成那一刻」，而承载本文件的申请提交在此之后
+  // 才落地——没有锚点时「分支顶端比清单多 1」会被人工复核误读成漏列（v0.1.0 写 75 实为 76、
+  // v0.1.1 写 77 实为 78，两轮交付都踩过）。锚点让这份文件自洽且可判定。
+  const snapshot = git(['rev-parse', '--short', version.current])
   const title = `release: ${version.version ?? version.current} → ${base}`
   const body = [
     `# ${title}`,
     '',
     `- version branch: \`${version.current}\``,
     `- target: \`${base}\`（受保护分支，需人工合并）`,
-    `- commits: ${log.length}`,
+    `- snapshot: \`${snapshot}\`（本清单与计数对应的版本分支顶端）`,
+    `- commits: ${log.length}（\`${base}..${version.current}\` 在 snapshot 处的计数）`,
     '',
     '## 变更',
     ...(log.length > 0 ? log.map((line) => `- ${line}`) : ['- （无新增提交）']),
+    '',
+    `> 承载本文件的申请提交在 snapshot \`${snapshot}\` 之后落地，因此**不在清单与计数内**——分支顶端可能比 snapshot 多 1 个提交。这是自指，不是漏列。`,
     '',
     '## 验收前请确认',
     '- [ ] 版本分支上的测试/门禁全绿（`docs/testing/TEST_PLAN.md`）',
@@ -282,13 +289,21 @@ if (command === 'request') {
     compareUrl = ''
   }
 
-  const hasGh = (() => {
-    try {
-      execFileSync('gh', ['--version'], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
+  // `gh` 必须**尽力而为**：把"工具存在"当成"工具可用"会让 request 在 gh 未登录时抛栈崩溃，
+  // 而此时正文与 compare URL 都已就绪（实测缺陷见台账 ISSUE-013）。可用 = 装了 + 已登录 + 远端是 GitHub。
+  const ghState = (() => {
+    const run = (args) => {
+      try {
+        execFileSync('gh', args, { cwd: root, stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
     }
+    if (!run(['--version'])) return { usable: false, reason: '未安装 gh CLI' }
+    if (!run(['auth', 'status'])) return { usable: false, reason: 'gh 已安装但未登录（gh auth login）' }
+    if (!/github\.com/.test(compareUrl)) return { usable: false, reason: '远端不是 GitHub（无可创建 PR 的地址）' }
+    return { usable: true, reason: '' }
   })()
 
   if (dryRun) {
@@ -297,17 +312,27 @@ if (command === 'request') {
     process.exit(0)
   }
 
-  console.log(`task-flow: wrote merge request body to docs/release/MERGE_REQUEST.md`)
-  if (hasGh) {
-    execFileSync('gh', [
-      'pr', 'create', '--base', base, '--head', version.current,
-      '--title', title, '--body-file', requestPath,
-    ], { cwd: root, stdio: 'inherit' })
-    console.log('task-flow: merge request created — a human merges it on the protected branch')
-  } else {
-    console.log('task-flow: gh CLI not found; open the compare page and create the PR manually:')
+  console.log('task-flow: wrote merge request body to docs/release/MERGE_REQUEST.md')
+  const manual = (why) => {
+    console.log(`task-flow: ${why}；用手动路径创建合并申请（正文已写好）：`)
     if (compareUrl) console.log(`  ${compareUrl}`)
     else console.log('  (add a remote with `git remote add origin <url>` to get a compare link)')
+    console.log(`  正文：${relative(root, requestPath) || requestPath}`)
+  }
+  if (ghState.usable) {
+    try {
+      execFileSync('gh', [
+        'pr', 'create', '--base', base, '--head', version.current,
+        '--title', title, '--body-file', requestPath,
+      ], { cwd: root, stdio: 'inherit' })
+      console.log('task-flow: merge request created — a human merges it on the protected branch')
+    } catch (error) {
+      // gh 可用但创建失败（无权限/网络/分支未推送）——不能让已经写好的申请白写
+      const detail = `${error.stderr ?? ''}${error.stdout ?? ''}`.trim().split('\n').slice(0, 3).join(' / ')
+      manual(`gh pr create 失败${detail ? `：${detail}` : ''}`)
+    }
+  } else {
+    manual(ghState.reason)
   }
   console.log('task-flow: after the human merges, record it: node scripts/record-approval.mjs --gate delivery --decision approved --actor <you>')
   process.exit(0)

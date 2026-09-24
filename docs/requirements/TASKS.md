@@ -229,6 +229,287 @@
   ⑦ 次要项：模块编号改 **MOD-012**（不再与 transform 撞号）；REQ-007 #4 与 ADR-008(d) 的口径统一为"保留材质槽 + 1×1 占位"（与 BR-030 一致）；ADR-008 的包体积口径改为约 4.2MB 并写明 npm 报的 8.7MB 是整目录解包体积；`convert.test.js` 去掉自我满足断言与不必要的夹具门控、补"相对路径 / 同级同名 / `.fbm` 内同名"三种解析顺序用例；冒烟补"预览产物不得残留外部 uri + 有告警必须落日志"的直接断言，并把抽屉几何断言改为**测试期关闭过渡**（消除冷审与本次都复现过的 flaky，根因是合成器把 0.16s transition 停在中途）。ADR-008 另补两条已知代价：`ConvertFileList` 同步阻塞主进程（FBX 单次 4~6s）、重复转换时 wasm 侧内存增长。
   ⑧ 全量：`npm run lint` 通过；`npm test` → **119 用例 / 115 通过 / 0 失败 / 4 跳过**；冒烟 GLB / IVE / FBX / OBJ **各 35 步 / 112 条断言 / 0 失败**。
 
+### TASK-017 采样器规范化：修掉 NPOT × REPEAT × mipmap 的非法组合
+- **关联需求**：REQ-008（验收标准 1、2、3）
+- **依赖**：无
+- **做什么**：在 `src/repair.js` 新增采样器规范化步骤——对每个"贴图 + 采样器"对，若贴图任一维非 2 次幂且采样器同时使用 `REPEAT`（wrapS/wrapT）与 mipmap 过滤（minFilter 含 `MIPMAP`），则改为 `CLAMP_TO_EDGE` + `LINEAR`（**与 `src/ive.js` 既有 NPOT 退化规则、以及 `inspect.js` 那条问题的既有中文提示保持一致**，见 ADR-009）。判定必须按"贴图维度 × 采样器"逐对进行：采样器被多材质共用时不得因共用而漏改或误改；POT 与已合法的组合**一个字段都不改**。步骤位置在贴图内嵌与降采样之后（降采样可能产生新的 NPOT，见 TASK-018）。
+  **实现中追加的范围（2026-09-20）**：体检那侧的 NPOT 判定也必须改成同一口径，否则验收标准 1 无法判定——旧实现是"文件里有 NPOT 图像"×"文件里有 REPEAT+mipmap 采样器"两条独立事实相乘，**既会误报**（REPEAT+mipmap 属于另一张 POT 贴图）**也会漏报**（glTF 规范里 sampler 缺省即 `REPEAT` + `LINEAR_MIPMAP_LINEAR`，`report.samplers` 为空时整条检查被跳过）。因此本任务同时把 `src/inspect.js` 的该判定改为按"贴图 × 采样器"逐绑定，并新增 `report.npotSamplerBindings` 作为可断言的结构化证据。
+- **产出**：`src/repair.js`、`src/inspect.js`、`test/repair.test.js`、`test/inspect.test.js`
+- **文件范围**：`src/repair.js`, `src/inspect.js`, `test/repair.test.js`, `test/inspect.test.js`
+- **验证方式**：`node --test test/repair.test.js test/inspect.test.js`——① 合成 NPOT(512×341)+REPEAT+mipmap 修复后采样器为 `CLAMP_TO_EDGE`+`LINEAR` 且 `inspect()` 不再报 `NPOT_WITH_REPEAT_MIPMAP`（且修复前**必须**报，证明夹具有效）；② POT+REPEAT+mipmap 与 NPOT+CLAMP+LINEAR 修复前后采样器 JSON **逐字段相同**；③ 采样器被 POT 贴图共用时**复制**退化采样器、POT 那条仍指向原采样器；④ 缺省采样器与漏写 minFilter 两种"规范默认"都要被判为 mipmap 并新建显式采样器（这两条在旧代码上必红）；⑤ POT 贴图用 REPEAT+mipmap + NPOT 贴图已退化时**不得**误报（旧代码必红）
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js test/inspect.test.js` → **68 用例 / 67 通过 / 1 跳过（缺 `o-model/运输车.glb`）/ 0 失败**；全量 `npm test` → **129 用例 / 125 通过 / 0 失败 / 4 跳过**（TASK-016 时基线为 119/115/0/4，净增 10 条用例）。
+  ② 修复侧 6 条新用例：NPOT 独占采样器退化为 `{wrapS:33071, wrapT:33071, minFilter:9729}` 且 `samplersNormalized === 1`、产物 `npotSamplerBindings` 为空；POT(256×256) 采样器 JSON 逐字段不变（`samplersNormalized === 0`）；NPOT 已是 `CLAMP+LINEAR` 时不动；共用采样器时**复制**一份退化采样器（`samplersCloned === 1`），`json.samplers[0]` 仍是原 `REPEAT+mipmap`、`textures[0].sampler` 仍指 0；缺省采样器与"多张 NPOT 共用一份退化采样器（去重，`samplers.length === 1`）"各一条。
+  ③ 体检侧 4 条新用例：完全没写 `samplers` 的 NPOT 贴图报出问题且 `npotSamplerBindings === [{texture:0,image:0,sampler:null}]`（旧代码漏报）；写了采样器但漏写 `minFilter` 的同样报出（`report.samplers[0].mipmapped === true`，旧代码漏报）；REPEAT+mipmap 属于另一张 POT 贴图时**不报**（旧代码误报）；同一文件两张 NPOT 贴图只报真正非法的 `texture 0`。**旧口径的两处偏差（一误报一漏报）各有一条断言钉住。**
+  ④ 真实模型不误伤：`model/person-stand.glb`（采样器是空对象 `{}`，即全默认；3 张贴图 1024×1024 POT）修复后 `samplersNormalized === 0`、`json.samplers` 仍为 `[{}]`、`textures[].sampler` 全部不变。本地语料 4 个 GLB 均无 NPOT 贴图，故不变量断言（"产物中不存在 NPOT 且 REPEAT+mipmap 的绑定"）由合成夹具承担，语料未提供额外覆盖。
+  ⑤ `npm run lint` 通过；`node scripts/memory.mjs check` 通过。
+
+### TASK-018 贴图降采样四档 + 选项接线
+- **关联需求**：REQ-008（验收标准 4、5、6、7、8）
+- **依赖**：TASK-017（同一文件；且阶段顺序必须是"内嵌 PNG → 降采样 → 采样器规范化"）
+- **做什么**：在 `src/repair.js` 的贴图内嵌之后新增降采样步骤：用**已在 `dependencies` 的 `pngjs`** 解码 PNG、按最长边目标值做**盒式平均**（不是最近邻抽样）、重新编码回 PNG 并替换该 bufferView 字节；保持宽高比、四舍五入规则写进注释。修复选项新增 `maxTextureSize`（`0` = 不降，默认；可选 `2048/1024/512`），在界面修复选项区加中文下拉与提示，经既有 `repair-glb` 选项透传。报告新增 `texturesDownsampled` / `textureBytesBefore` / `textureBytesAfter`。
+- **产出**：`src/repair.js`、`src/renderer.js`、`src/index.html`、`test/repair.test.js`、`test/ui-smoke.cjs`
+- **文件范围**：`src/repair.js`, `src/renderer.js`, `src/index.html`, `test/repair.test.js`, `test/ui-smoke.cjs`
+- **验证方式**：`node --test test/repair.test.js`——2048² 已知图案 → 1024² 逐像素等于 2×2 盒式平均；3000×1000 → 1024×341；「不降」产物与现状字节一致；几何 bufferView 逐字节不变；`model/person-stand.glb` 体积只降不升且贴图张数不变（IVE 夹具缺失时门控跳过）。`node test/ui-smoke.cjs` 四格式仍全绿
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js` → **34 用例 / 34 通过 / 0 失败**；全量 `npm test` → **137 用例 / 133 通过 / 0 失败 / 4 跳过**（TASK-017 后基线 129/125/0/4，净增 8 条）；`npm run lint` 通过。
+  ② **像素正确性**：2048² 已知图案 → 1024²，期望值由**解码后的源像素**独立算出（不复用实现公式），1024×1024×4 通道逐像素比对 **mismatches = 0**。透明像素按 alpha 预乘：2×2 中一个全透明红 + 三个不透明白 → 颜色仍是白、alpha = 191（不把颜色拉黑）。尺寸已达标或读不出宽高时返回 `null`，不做无谓重编码。
+  ③ **档位与默认**：3000×1000 + `maxTextureSize: 1024` → **1024×341**（等比，取整规则 `Math.round` 且至少 1 像素）；不传 / `0` / `-5` 三种情况都落到"不降"，且 `textureBytesAfter === textureBytesBefore > 0`（未降采样是有内容的陈述，不是静默省略）。
+  ④ **只动贴图**：2048² + 1024 档修复后，几何的三个 bufferView（POSITION / 索引 / TEXCOORD_0）**逐字节相同**，accessor `min`/`max`/`count` 不变；外部贴图（`uri` 引用）同样被降采样，且**落盘的是缩小后的字节**（`view.byteLength < 原文件大小`），不是"报告说降了、文件里还是原图"。
+  ⑤ **顺序证明（ADR-009 决策 d）**：3000×1000（POT）配 `REPEAT + 9987` 采样器，1024 档修复后贴图变成 NPOT(1024×341)，采样器**在同一趟里**被退化为 `CLAMP_TO_EDGE + LINEAR`（`samplersNormalized === 1`），产物 `npotSamplerBindings` 为空——若规范化排在降采样之前，这条必然漏网。
+  ⑥ **本地基线（验收标准 6 的等价物）**：`model/person-stand.glb`（源 2.17MB，贴图为 JPEG）——不降档 **14.31MB**（BR-002 的 PNG 膨胀，与本次改动无关）→ 1024 档 **4.95MB（2 张降采样）** → 512 档 **1.86MB（3 张）**；三档贴图张数均为 3、几何统计不变、产物无 NPOT 绑定。需求里"9.74MB → ≤4MB"用的是**缺失的 IVE 转换产物夹具**（`o-model/person-stand.ive` 不在本地），未复测；本地等价基线按需求只断言"体积只降不升 + 贴图张数不变"，用例按夹具存在性门控。
+  ⑦ **冒烟（四格式全跑）**：`node test/ui-smoke.cjs` 在 `model/蹲姿.glb`、`o-model/蹲姿.ive`、`o-model/蹲姿.fbx`、`o-model/蹲姿.obj` 上**各 36 步 / 114 条断言 / 0 失败**（新增 2 条：4 档且默认不降、所选档位原样进入 IPC 载荷，`EXPECTED_CHECK_COUNT` 112 → 114）。为此把渲染进程的选项收集抽成 `collectRepairOptions()`，让冒烟能直接断言接线而不必真的跑修复。
+  ⑧ **环境备注（不影响产品）**：本机本轮跑 Electron 出现 `sandbox initialization failed: Operation not permitted` → GPU 进程崩溃 → `SIGTRAP`，需加 `--no-sandbox` 才能起应用（只在人工冒烟命令里加，产品代码未改）。这也是第一次 FBX 冒烟"卡住 600s"的原因：调试端口被一个已崩坏的旧实例占着，页面不响应。
+  ⑨ 顺带发现（留给 TASK-020 的文档回填）：`docs/002-requirements.md` §3 列出的报告字段 `textureBytes` 在 `inspect()` 里**并不存在**（贴图字节只在 `report.images[].bytes` 上逐张给出）。
+
+### TASK-019 `KHR_texture_transform.texCoord` 覆盖：体检不漏报、修复补对通道
+- **关联需求**：REQ-008（验收标准 9、10）
+- **依赖**：TASK-018（同改 `src/repair.js`）
+- **做什么**：`src/inspect.js` 的 `collectTextureSlots` 与 `src/repair.js` 的 `collectMaterialTexCoords` 在读取贴图槽时，一并读取 `material.extensions.KHR_texture_transform.texCoord` 覆盖（扩展里的 `texCoord` 优先于槽位自身的 `texCoord`）——当前两处都忽略它，导致"材质实际采样 `TEXCOORD_1` 却只检查 `TEXCOORD_0`"的漏报，而漏报的后果是 Cesium 整个场景不渲染。两处口径必须一致。
+- **产出**：`src/inspect.js`、`src/repair.js`、`test/inspect.test.js`、`test/repair.test.js`
+- **文件范围**：`src/inspect.js`, `src/repair.js`, `test/inspect.test.js`, `test/repair.test.js`
+- **验证方式**：`node --test test/inspect.test.js test/repair.test.js`——构造"图元**有** `TEXCOORD_0`、材质经 `KHR_texture_transform` 以 `texCoord: 1` 采样"的合成 GLB（这个形状是必须的：若图元连 `TEXCOORD_0` 都没有，旧代码检查 `TEXCOORD_0` 时同样会报，用例就不是红的了）：体检必须报 `MISSING_TEXCOORD` 且**点名 `TEXCOORD_1`**，修复必须补出全零 `TEXCOORD_1`；对照组（去掉扩展覆盖）不得报
+- **状态**：已完成
+- **验证结果**：
+  ① `node --test test/repair.test.js test/inspect.test.js` → **80 用例 / 79 通过 / 1 跳过（缺 `o-model/运输车.glb`）/ 0 失败**；全量 `npm test` → **141 用例 / 137 通过 / 0 失败 / 4 跳过**（TASK-018 后基线 137/133/0/4，净增 4 条）；`npm run lint` 通过。
+  ② **旧代码必红（实测，不是推断）**：把 `src/inspect.js`、`src/repair.js` 用 `git stash` 临时还原到 TASK-019 之前、只保留新用例再跑，4 条里 **3 条红**——体检漏报那条、体检"点名通道"那条、修复"补对通道"那条；唯一绿的是"没有扩展覆盖"的对照组（它本就该在两侧都绿）。恢复改动后 4 条全绿。
+  ③ **体检侧**：`MISSING_TEXCOORD` 为 `error` 级，文案把缺失语义点名为 `TEXCOORD_1`（旧文案只写「缺少对应 TEXCOORD_n」，用户会去补错的通道）；对照组（无扩展覆盖、采样的 `TEXCOORD_0` 存在）不报。
+  ④ **修复侧**：补出的是 `TEXCOORD_1`（`VEC2` / `componentType 5126` / `count 3` / 24 字节全 0），原 `TEXCOORD_0` 仍指向原 accessor；修复后 `inspect()` 不再报该问题。无扩展覆盖时不回归（仍补 `TEXCOORD_0`）。
+  ⑤ **口径同源**：`textureTexCoordOf(reference)` 定义在 `src/repair.js` 并导出，`src/inspect.js` 直接 `require` 它（inspect 本就依赖 repair；反过来 require 会形成循环），因此体检与修复不存在第二套口径。
+  ⑥ **冒烟**：`node test/ui-smoke.cjs` 在 GLB / IVE / FBX / OBJ 四格式上各 **36 步 / 114 条断言 / 0 失败**（本条改动不碰 UI 与断言，属回归确认）。
+
+### TASK-020 REQ-008 的文档与规则回填
+- **关联需求**：REQ-008
+- **依赖**：TASK-017、TASK-018、TASK-019
+- **做什么**：`docs/001-code-design.md` 新增 BR-031（采样器规范化的判定口径与"不误伤 POT"）与 BR-032（降采样：默认不降、盒式平均、只动贴图字节、顺序在采样器规范化之前）；模块表补 `repair.js` 的新步骤与选项；`docs/testing/TEST_PLAN.md` 新增 TC-019~TC-021 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的修复管线章节补两步与降采样档位口径。**另需订正 `docs/002-requirements.md` §3 的报告字段清单**：`textureBytes` 在 `inspect()` 里并不存在（只有 `report.images[].bytes` 逐张给出），与先前标注的 `contentHash` 同属"文档列了但没实现"的字段，一并按实情注明。
+- **产出**：`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR/TC 措辞与实现一致（数值取自实测，不写估计值）
+- **状态**：已完成
+- **验证结果**：
+  ① `docs/001-code-design.md`：BR 表新增 **BR-031**（采样器规范化：逐「贴图 × 采样器」绑定、共用则复制、POT 不动、缺省采样器按规范默认判定、体检同口径 + `report.npotSamplerBindings`）、**BR-032**（降采样：默认不降、面积加权盒式平均、alpha 预乘、只动贴图字节、顺序在内嵌与规范化之间、无原生依赖、报告字段）、**BR-033**（`KHR_texture_transform.texCoord` 覆盖优先、`textureTexCoordOf` 同源、`MISSING_TEXCOORD` 点名语义）；MOD-002/MOD-007 模块说明补新步骤与新判定；§2.3 策略补两条；§5.1 修复报告字段补 `samplersNormalized`/`samplersCloned`/`maxTextureSize`/`texturesDownsampled`/`textureBytesBefore`/`textureBytesAfter`；§6 测试要点新增 16~18 条（含"3 红 1 绿"的旧代码实测）。
+  ② `docs/testing/TEST_PLAN.md`：TC-019/TC-020/TC-021 写入结果汇总（含逐像素 mismatches=0、person-stand 三档体积、旧代码 3 红 1 绿）；总计更新为 **141 用例 / 137 通过 / 0 失败 / 4 跳过**，全新克隆 **141 / 121 / 0 / 20**（逐文件在干净检出实测）；覆盖率按 2026-09-20 复测重填（all files **94.35 / 79.03 / 95.76**，`repair.js` 90.87、`inspect.js` 94.31）；「待执行」区只留 TC-022（Windows）与 TC-023（REQ-010）。
+  ③ `CLAUDE.md`：修复管线由 7 步改为 **9 步**（新增「贴图降采样」「采样器规范化」），`rebuildBinary`/`appendBufferViewToBinary`/`workingBin` 段落的步骤交叉引用同步改为 1–4 与 6–7、6–7 与 6；`fillMissingTexCoords` 段落写明 BR-033 的通道来源；测试段落数字同步为实测值（本地 141/137/0/4，全新克隆 19→20 个跳过）。
+  ④ `docs/002-requirements.md`：§3 报告字段清单注明**两处**与实现不符——`contentHash` 未实现、`textureBytes` 在 `inspect()` 里不存在（只有 `report.images[].bytes`）；BR 表把 BR-031/BR-032 状态改为「已落地」并补 **BR-033** 行。
+  ⑤ `docs/requirements/REQUIREMENTS.md`：REQ-008 状态改为「已完成」并追加一条变更记录。
+  ⑥ 门禁：`node scripts/memory.mjs check` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`npm run lint` 通过。
+
+### TASK-021 构建并入库 Windows x64 的 IVE 助手
+- **关联需求**：REQ-009（验收标准 1、2）
+- **依赖**：无（**需要外部 Windows x64 构建环境；本机 macOS 无 wine，无法完成**）
+- **做什么**：按 `native/ive2glb/README.md` 在 Windows 上构建 `ive2glb.exe`，把可执行文件与其依赖闭包 vendoring 到 `vendor/ive2glb/win32-x64/`（与 darwin 目录同构），并补齐 README 的 Windows 步骤（构建命令、依赖收集、DLL 放置）。**不入库任何第三方非系统 DLL**之外的东西，也不为 Windows 单独改 IVE 解析路径（assimp 没有 IVE importer，见 ADR-010）。
+- **产出**：`vendor/ive2glb/win32-x64/`、`native/ive2glb/README.md`、`package.json`（如 `files`/`asarUnpack` 需调整）
+- **文件范围**：`vendor/ive2glb/win32-x64/`, `native/ive2glb/README.md`, `package.json`
+- **验证方式**：① `dumpbin /dependents vendor/ive2glb/win32-x64/ive2glb.exe`（或等价）证明无第三方非系统依赖；② 在 Windows 上运行应用 → `app-capabilities` 报 `ive: true`、选 `.ive` 能转换/预览/落盘，世界盒与 darwin 产出一致（容差 0.02）；③ `npm test` 不回归
+- **状态**：**已取消（被 REQ-012 取代）**。原状态为「进行中（环境无关部分已完成）」。TASK-027 的 spike 于 2026-09-21 证明 WASM 路线可行，按本文件 DAG 注记与 ADR-012 的既有约定，Windows 原生助手不再需要构建。**已交付的环境无关部分保留有效**（`native/ive2glb/README.md` 的 Windows 配方与依赖闭包自检在排障时仍可用）；下方「部分交付」记录不改写
+- **验证结果（部分交付，2026-09-20）**：
+  ① `native/ive2glb/README.md` 的 Windows 章节从"一段命令 + 一句话"扩成可照做的配方：vcpkg 静态三元组构建命令、目标目录结构、以及三条**由源码推出**的硬约束——(a) 可执行文件必须叫 `ive2glb.exe` 且放在 `vendor/ive2glb/win32-x64/`（`src/ive.js::resolveIveHelper()` 只按这个路径找）；(b) 插件目录名只能是 `osgPlugins` 或 `osgPlugins-3.6.5` 且必须在 exe **同级**（`native/ive2glb/src/main.cpp::registerLocalPluginPath()` 只认这两个名字，并把它们插到插件搜索路径最前面）；(c) **Windows 没有 `@rpath/@executable_path/lib`**，所以动态三元组必须把 `osg*/zlib*/libpng*/freetype*` 等 DLL 放在 **exe 同目录**，不能照搬 macOS 的 `lib/` 约定（推荐静态三元组）。
+  ② 新增「依赖闭包自检」（对 `ive2glb.exe` 与 `osgdb_ive.dll` 各跑一次 `dumpbin /dependents`，只剩系统 DLL 为通过，并列出需要警惕的第三方 DLL 名单）与「不依赖 GUI 的自检」（助手裸跑 + `convertIveToGlb` 全链路，附期望值 `success / [0.538,1.364,1.056] / 11516 / 18924`），并明确标注**未在本仓库验证过**。
+  ③ **打包配置静态核对**：`package.json` 的 `files` 已含 `vendor/ive2glb/**/*`、`asarUnpack` 已含 `vendor/ive2glb/**`；`.gitignore` 没有 `*.exe`/`*.dll` 之类的一刀切规则，`win32-x64/` 产物可正常入库。这部分**无需 Windows 即已满足**，但"包内实际含有助手"仍待 TASK-022 在 Windows 上验证。
+  ④ **仍未完成**：`ive2glb.exe` 尚未构建与入库（本机 macOS、无 wine，无法交叉构建），因此 REQ-009 验收标准 1、2 未判定，任务不能关闭。
+
+### TASK-022 重打 Windows 安装包并回填发布清单与冒烟
+- **关联需求**：REQ-009（验收标准 3、4、5）
+- **依赖**：TASK-021
+- **做什么**：在具备 Windows/打包能力的环境执行 `npm run dist:win`，产出新安装包与便携版；按 `RELEASE_CHECKLIST.md` §4 逐行冒烟（`.ive`/`.glb`/`.fbx`/`.obj`、嵌套目录、输出体积、坏输入不阻断、Windows 安装包），把实际值与结果回填；同步测试/覆盖率总数；更新发布记录与发布说明。**`dist/` 产物不入库。**
+- **产出**：`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、（本地产物 `dist/`，不入库）
+- **文件范围**：`docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`
+- **验证方式**：安装包时间戳新于本次提交且包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；§4 每行都有实际值与结果；`RELEASE_CHECKLIST.md` 预检除显式"不适用"外全勾；`node scripts/memory.mjs check` 通过
+- **状态**：**已取消（被 REQ-012 取代）**，随 TASK-021 一并取消——Windows 原生助手不再构建，重打 Windows 安装包的前提消失。原状态为「进行中（环境无关部分已完成）」。**发布冒烟表与人工目视清单继续有效**（它们是平台无关的发布检查项，由 TASK-029 改为四平台口径）；下方「部分交付」记录不改写
+- **验证结果（部分交付，2026-09-20）**：
+  ① `docs/release/RELEASE_CHECKLIST.md` §4 从 **7 行扩到 15 行**：补上此前缺失的「GLB 修复」「FBX 转换」「OBJ 转换」「贴图降采样（REQ-008）」「预览修正记忆（REQ-010）」「布局占比（REQ-011）」以及「包内容」「依赖闭包」「助手自检」三行；**Windows-only 的行首标 `★`**（包内容 / 依赖闭包 / 助手自检 / Windows 安装包），其余行在 macOS 开发机上即可执行并回填——这样 Windows 环境到位时只剩"填实际值与勾选"。
+  ② `docs/testing/TEST_PLAN.md` 新增「人工目视清单」（M-1~M-8）：把 TC-014~TC-018 与 REQ-009/010/011 的人工部分写成可复制的步骤与判定口径（含 OBJ 那张 1×1 占位贴图属预期的说明），确认后即可把台账里的"待人工"改为"已确认"。
+  ③ **仍未完成**：`npm run dist:win` 未执行（本机无 wine，无法产出 NSIS/portable 包；`dist/` 里现存的是 2026-09-15 的旧 `0.1.0` 包）；§4 的"实际/结果"列、§3 的打包勾选与发布记录都还等 Windows 环境回填。
+
+### TASK-023 预览三态记忆：上轴/方向/缩放重启后保持
+- **关联需求**：REQ-010（验收标准 1~5）
+- **依赖**：无
+- **做什么**：把预览的上轴三态、偏航与缩放并入既有的 `localStorage` 持久化（新键或既有键的 `version` 升级，读取时 clamp），并区分"用户显式选过"与"从未选过"——未动过控件时不落盘，显式选回 `auto` 也要记住；界面提示说明该值来自上次选择。复用 `src/preview-transform.js` 的 `clampPreview`/默认值，不新写一套校验。
+- **产出**：`src/renderer.js`、`test/ui-smoke.cjs`
+- **文件范围**：`src/renderer.js`, `test/ui-smoke.cjs`
+- **验证方式**：`node test/ui-smoke.cjs`——设置 `Z-up/90°/2×` 后重载页面三个控件复原且提示可见；从未动过时不写 `localStorage`；显式选回 `auto` 后重载仍是 `auto`；垃圾载荷落回默认且页面异常 0；输入文件 `shasum` 前后一致（不写回）
+- **状态**：已完成
+- **验证结果**：
+  ① **实现**：新增 `localStorage` 键 `glb-repair.preview`（`version: 1`，`{yawDeg, scale, axis}`）。只在控件的 `change`（松手/选完）与「重置预览修正」按钮上写入——拖动过程的 `input` 不写；"从未动过"表现为**键不存在**，因此与"显式选了 `auto`"可区分。启动时与新模型加载时都用 `previewTools.clampPreview` 规整后摆回控件，并在日志里说明「已沿用上次选择」；`window.__preview`（`key`/`get`/`stored`）只读暴露给冒烟（沿用 `window.__layout` 的既有做法）。
+  ② **冒烟**：`node test/ui-smoke.cjs model/蹲姿.glb --port 9333` → **66 步 / 132 条断言 / 0 失败**（新增 6 条：从未动过不写键且为默认 `auto/0°/1.00×`、显式选择落盘形状与控件一致、重启后复原且日志含「已沿用上次选择」、显式选回 `auto` 后记录仍在且重启仍是 `auto`、坏 JSON 回落默认、越界/未知档位（`yawDeg: 999 / scale: -3 / axis: 'nope'`）被规整到合法区间）。既有断言一条未删；`EXPECTED_CHECK_COUNT` 126 → **132**。
+  ③ **旧实现必然为红（推理，未单独跑 A/B）**：旧代码既没有 `glb-repair.preview` 也没有 `window.__preview`，重载后控件回到默认，`axis === 'z'` 与"记录存在"两类断言无法成立；而且探针取不到 `window.__preview` 时新断言整块被跳过，冒烟的"已执行断言数下限"会先报红。**未做** stashed A/B 实测（与 TASK-017/019/024 的实测口径不同，这里只给推理，不冒充实测）。
+  ④ 顺带把行为变化补进文档（原任务未含文档项，按仓库规则补）：`docs/001-code-design.md` 新增 **BR-035** 与 §6 第 21 条；`REQUIREMENTS.md` 的 REQ-010 状态改为已完成；`docs/testing/TEST_PLAN.md` 汇总口径更新为 66 步 / 132 条断言。
+  ⑤ 门禁：`npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
+
+### TASK-024 布局模型由像素改为占比
+- **关联需求**：REQ-011（验收标准 1、2、3、4、5）；设计决策见 ADR-011
+- **依赖**：无
+- **做什么**：把布局状态从"三栏像素宽 + 日志像素高"改为"**三栏宽占比 + 日志高占比**"：`layoutRatio` 是唯一落盘的量，`layout`（像素）由它乘当前可用宽高推出。拖动分隔条时按当前可用空间把新像素**换算回占比**；窗口缩放只重算像素、不改占比。夹取规则必须确定：先等比整体压缩以满足各区最小尺寸，仍不满足时按固定优先级依次触底；窗口恢复到足够大后占比回到用户设定值。`localStorage` 键加版本（`version: 2`），`version:1` 的像素载荷迁移为等价占比或安全回落默认值。**保留所有既有元素 id 与事件绑定**，只改布局的内部模型。
+- **产出**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`
+- **文件范围**：`src/renderer.js`, `src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：`node test/ui-smoke.cjs <模型> --port <端口>` 新增占比断言——同一组拖拽结果在 1100×760 / 1440×900 / 1920×1200 三档窗口下，左/中/右占可用宽度与底部占高度的百分比变化 ≤ 1 个百分点（**该断言在当前实现上必须为红**）；拖拽后新占比随后续缩放保持；重启（重载页面）后占比还原（像素误差 ≤ 1px）；旧版 `version:1` 像素载荷被安全迁移；夹取到极限再恢复后占比不失真。`npm run lint` + `npm test` 全绿
+- **状态**：已完成
+- **验证结果**：
+  ① **模型**：`layoutRatio`（占比）是唯一落盘意图，`layout`（像素）由 `ratioToPixels(占比, 可用空间)` 派生；拖拽把新像素经 `ratioFromPixels` 换算回占比再落盘；窗口缩放只 `refitLayout()` 重算像素（占比不动、不落盘）。可用空间 = `appShell.clientWidth − 8`（两条 4px 分隔条）× `appShell.clientHeight`——**不能用 `window.innerHeight`**，实测差一条自定义标题栏（757 vs 800），用错会让底部占比整体偏移。
+  ② **上限改为比例**：`PANE_RATIO_LIMITS` = 左 0.06~0.40 / 右 0.07~0.45 / 底 0.06~0.60（旧的像素上限 480/560/560 已删）。比例**下限**刻意低于像素下限所对应的比例——先前用 0.12 时实测 0.12 × 757 = 91 > 90，把日志"拖到底"卡在 91px 下不来；现在像素下限（90/180/220）在正常窗口下始终可达。
+  ③ **旧版迁移**：`version: 1` 的像素载荷按当前窗口换算成占比，`initLayout()`/`restore()` 迁移成功后**立即回写 v2**（不再每次启动重算）。
+  ④ **冒烟**：`node test/ui-smoke.cjs model/蹲姿.glb --port 9333` → **47 步 / 120 条断言 / 0 失败**（新增 6 条：占比不漂移 ≤1pp、resize 不得改写落盘占比、占比重算后中栏仍最宽、各档不整页滚动、极小窗口夹取后窗口恢复回设定占比、旧版 v1→v2 迁移且像素还原 ±1px；既有断言全部保留，仅把 3 条的期望值从写死像素改成"按同一可用空间折算"，因为底部像素现在由占比派生）。
+  ⑤ **旧实现必红（实测 A/B，不是推断）**：把 `src/renderer.js` 用 `git stash` 暂时还原成像素模型、只额外加一个只读 `getRatio` 探针（避免因 API 缺失而假红），同一套断言给出漂移——以 1280×800 为参照（左 20.44% / 右 26.73% / 中 52.83% / 底 26.46%）：**1100×760** → 23.81 / 31.14 / 45.05 / 27.93（左 +3.37pp、中 −7.78pp）；**1440×900** → 18.16 / 23.74 / 58.10 / 23.36（中 +5.27pp）；**1920×1200** → 13.60 / 17.78 / 68.62 / 17.30（左 −6.84pp、右 −8.95pp、中 +15.79pp、底 −9.15pp）——全部远超 1pp 阈值，"夹取后恢复"也红（恢复后 16.33% ≠ 设定 20.44%）。恢复新实现后这 6 条全绿。
+  ⑥ **顺带修掉冒烟自身的脆弱**：旧实现没有 `limits.ratio` 时，`limits.ratio.left.max` 会让整跑崩栈（`Cannot read properties of undefined`）而不是报红；现在三处访问都改为"缺字段即断言失败"。
+  ⑦ `npm run lint` 通过；`npm test` 不受影响（`renderer.js` 不在单测插桩范围）；`node scripts/memory.mjs check` 通过。
+
+### TASK-025 内部元素自适应收口（多尺寸矩阵）
+- **关联需求**：REQ-011（验收标准 6）
+- **依赖**：TASK-024（同改 `src/renderer.js`/`src/styles.css`/`test/ui-smoke.cjs`）
+- **做什么**：在 900×700 / 1100×760 / 1280×800 / 1440×900 / 1920×1200 的尺寸矩阵下逐区排查内部元素是否自适应：每个区域"overflow 为 auto|scroll 的元素"必须恰好 1 个（BR-029 不回归）、无横向溢出、中栏 3D 画布 ≥ `CANVAS_MIN_HEIGHT`、预览控件条与状态栏不换行（长路径用省略号 + `title`）、帮助面板限高自滚且不参与高度预算（BR-028 不回归）。**发现即修**，每个修掉的溢出都要在冒烟里留一条断言；若排查后确认无缺陷，则在冒烟里留下这组"多尺寸无溢出"断言作为回归网，并在任务记录里说明未发现缺陷。
+- **产出**：`src/renderer.js`、`src/styles.css`、`test/ui-smoke.cjs`（按实际发现）
+- **文件范围**：`src/renderer.js`, `src/styles.css`, `test/ui-smoke.cjs`
+- **验证方式**：冒烟在五个尺寸下逐区断言上述四类不变量；任一断言失败即红；`npm test` 与既有断言不回归
+- **状态**：已完成
+- **验证结果**：
+  ① **结论：未发现内部元素自适应缺陷**。五个尺寸实测（先种入均衡占比 0.25/0.30/0.30 再扫，否则画布正好贴在下限上、"画布 ≥ 下限"会变成恒真断言）：
+
+     | 尺寸 | 滚动容器 左/右/底/中 | 横向溢出 | 3D 画布 | 预览条 | 状态栏 | 页面滚动 |
+     | :-- | :-- | :-- | --: | --: | --: | :-- |
+     | 900×700（窄） | 1/1/1/0 | 无 | 243px | 99px | 28px | 无 |
+     | 1100×760 | 1/1/1/0 | 无 | 259px | 126px | 28px | 无 |
+     | 1280×800 | 1/1/1/0 | 无 | 313px | 99px | 28px | 无 |
+     | 1440×900 | 1/1/1/0 | 无 | 383px | 99px | 28px | 无 |
+     | 1920×1200 | 1/1/1/0 | 无 | 590px | 103px | 28px | 无 |
+
+     画布随窗口同比增长（243 → 590），说明占比模型在高度方向也生效（旧像素模型下画布几乎不变）。
+  ② **新增 6 条断言作为回归网**（采样齐全、每区滚动容器数量、"任何尺寸无横向溢出"、画布 ≥ 下限**且不许永远贴在下限**（要求至少 3 档高于下限）、状态栏高度恒定且不溢出、预览条不溢出且页面不滚动）；`EXPECTED_CHECK_COUNT` 120 → **126**；冒烟 → **53 步 / 126 条断言 / 0 失败**。
+  ③ **按实测澄清验收标准**：REQ-011 标准 6 原写"预览控件条不换行"，实测它在较窄的中栏宽度下会换行（99px ↔ 126px）——控件是静态按钮/输入框，无法用"单行省略号"消除。判据已改为"**状态栏**不换行 + 预览条**允许换行**但不溢出/不裁切/不把画布压到下限以下"，并在 `REQUIREMENTS.md` 变更记录里留痕（规格改动不静默）。
+  ④ `npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
+
+### TASK-026 REQ-011 的文档与规则回填
+- **关联需求**：REQ-011；设计决策见 ADR-011
+- **依赖**：TASK-024、TASK-025
+- **做什么**：`docs/001-code-design.md` 新增 **BR-034**（布局以占比为唯一用户意图、像素只是派生物；夹取优先级确定；旧版像素载荷迁移）并更新 MOD-011 与 BR-027/BR-028 的交叉引用；`docs/design/ADR.md` 把 ADR-011 状态改为已采纳；`docs/testing/TEST_PLAN.md` 新增 TC-024 与汇总行、刷新总数/覆盖率；`CLAUDE.md` 的渲染进程段落把"像素 + clamp"口径改成"占比 + 派生像素"。
+- **产出**：`docs/001-code-design.md`、`docs/design/ADR.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/design/ADR.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-034/TC-024 措辞与实现一致（数值取自实测）
+- **状态**：已完成
+- **验证结果**：
+  ① `docs/001-code-design.md`：新增 **BR-034**（占比是唯一用户意图、像素是派生物；可用空间必须是 `appShell.clientWidth − 8` × `appShell.clientHeight` 而不是 `window.innerHeight`；像素上限改比例上限；比例下限刻意低于像素下限对应比例；夹取规则确定；`version:1` 迁移并回写；附修复前实测的反例数字）；**BR-027** 的"布局状态写 `localStorage` 并在读取时 clamp"改为"以占比写入并按比例夹取（见 BR-034）"；**BR-028** 的"`layoutDesired` 是用户设定的尺寸"改为"`layoutRatio`（占比）是用户设定的比例，`layout` 是由比例派生的生效像素"；**MOD-011** 补上占比模型；§6 测试要点新增第 19、20 条。
+  ② `docs/design/ADR.md`：ADR-011 状态由"待确认"改为**已采纳**（闸门 ② 架构 · sunny-zhai · 2026-09-20）。
+  ③ `docs/testing/TEST_PLAN.md`：结果汇总新增 **TC-024**（占比不漂移、resize 不改写落盘占比、夹取后恢复、v1 迁移、五档自适性矩阵；含旧模型上的漂移数字），总计里的冒烟口径更新为 **53 步 / 126 条断言**（并注明"36 步 / 114 条"是 TASK-018 时代的口径）。
+  ④ `CLAUDE.md`：渲染进程段落从"4px splitters 拖 CSS 变量并 clamp 后存 `localStorage`"改为"布局以**占比**存储（`version: 2`）、像素每次渲染派生、拖拽按像素跟手但落盘换算回占比、resize 不改写意图、可用空间口径与 v1 迁移"。
+  ⑤ `docs/requirements/REQUIREMENTS.md`：验收标准 6 的澄清与变更记录已在 TASK-025 一并落地（本任务只补充文档引用一致性）。
+  ⑥ 门禁：`node scripts/memory.mjs check` 通过；`npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过。
+
+### TASK-027 IVE 跨平台路线 spike：把 OSG+IVE 编到 WASM 是否可行
+- **关联需求**：REQ-012（验收标准 6，以及标准 2/3 的路线选择）；设计决策见 ADR-012
+- **依赖**：无（**需要 emsdk；本机未安装、需联网安装**）
+- **做什么**：用 emscripten 尝试把 `native/ive2glb` 连同 OSG（`osgDB` + `osg` + `OpenThreads` + IVE 插件 + zlib/libpng/freetype）编成 WASM，并在 Node 里跑通 `o-model/蹲姿.ive` → `scene.json` + `data.bin`。要回答四个问题：① 能否链接成功；② IVE 插件能否**静态注册**（emscripten 下没有 `dlopen`，`osgDB::Registry` 的插件加载机制需要改写）；③ 文件 IO 走 `-sNODERAWFS` 还是虚拟 FS + 预加载；④ 产物体积与单文件耗时。**允许失败，但失败必须给具体失败点与已尝试命令**（不得只写"不可行"）。
+- **产出**：`docs/design/ADR.md` 的 ADR-012 结论段；`native/ive2glb/WASM-SPIKE.md`（命令与实测/失败记录）；可选 `scripts/build-ive2glb-wasm.sh` 草稿
+- **文件范围**：`native/ive2glb/`, `docs/design/ADR.md`
+- **验证方式**：成功 → 在 Node 里跑通 `蹲姿.ive` 并与 darwin 助手产物比对（世界盒 `0.538×1.364×1.056`、顶点 `11516`、三角面 `18924`）；失败 → ADR-012 写出失败点 + 可复现命令 + 已排除的替代做法
+- **状态**：已完成（结论：**路线 A 可行**）
+- **验证结果**（2026-09-21）：
+  ① **四个问题全部有肯定答案**，完整记录见 `native/ive2glb/WASM-SPIKE.md`，复现脚本 `scripts/build-ive2glb-wasm.sh`（端到端实跑退出码 0，自检输出与原生助手逐字一致）。环境：**Emscripten 6.0.9 + OpenSceneGraph 3.6.5**（与本机 darwin 助手同版本），OSG **630 个编译目标全部通过**。
+  ② **①能否链接**：能。`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 **0**，零未定义符号。
+  ③ **②插件静态注册**：能，且**未改动 OSG 源码**。`DYNAMIC_OPENSCENEGRAPH=OFF` 使 `osgdb_ive` 本身就是静态库；`REGISTER_OSGPLUGIN`（`include/osgDB/Registry:743`）与 `REGISTER_OBJECT_WRAPPER`（`include/osgDB/ObjectWrapper:236`）生成静态注册代理，靠 `-Wl,--whole-archive` 保住；**`Registry::getReaderWriterForExtension()` 先遍历已注册的 `_rwList`（`Registry.cpp:881-887`）并直接返回，`dlopen` 路径根本走不到**——实测符号闭包里**没有任何非 GL 的未定义符号**，即 `dlopen`/`dlsym` 链未进入 wasm，无需给它打桩。
+  ④ **③文件 IO**：`-sNODERAWFS=1` 即可，无需虚拟 FS 预加载。绝对路径、自动创建输出目录、相对路径按进程 CWD 解析、退出码（成功 0 / 输入不存在 1 / 非 IVE 1 / 参数数不对 2）**全部与原生助手逐项一致**，中文错误文案也相同 → `src/ive.js` 的 spawn/解析逻辑可原样复用。
+  ⑤ **④体积与耗时**：`ive2glb.wasm` **2.66 MB** + `ive2glb.js` **0.25 MB** = **2.91 MB**（预算 30 MB）；`o-model/蹲姿.ive` 单文件 **100.2 ms**（darwin 对照 59.4 ms，各 7 次取最好，WASM 含 Node 启动与实例化），预算 10 s。均达标。
+  ⑥ **等价性达到逐字节级别**：助手产物 `scene.json`/`data.bin` 与 darwin 助手 **SHA-256 相同**（`a96011bc…` / `4b82fd20…`）；全链路 `convertIveToGlb` 产出的 GLB **SHA-256 相同**（2,544,480 B，`76e34b58…`）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`（焊接前 56772）、`triangles 18924`、`axisMode bake` 与 REQ-012 标准 1 完全一致；`GLB_REPAIR_IVE2GLB=… node --test test/ive.test.js` → **24 用例 / 21 通过 / 0 失败 / 3 跳过**（跳过项缺 `person-move.ive`，与原生基线一致）。
+  ⑦ **过程中 6 处失败点**（GLES2 profile 触发 `EGL_LIBRARY` 缺失 → 改用 GL2 profile，兼保住 C++ 异常；C++17 移除 `std::mem_fun_ref`（tri_stripper）→ `-include` 兼容头注入，不改 vendored 源码；X11/GLX 后端 → `-DOSG_WINDOWING_SYSTEM=None`；漏链 `libosgGA.a`；emscripten 默认 `-lc++-noexcept` 关掉异常捕获而 `main.cpp` 用 `try/catch` → `-fexceptions`；53 个固定管线 GL 入口点缺失 → `-sLEGACY_GL_EMULATION=1` + **23 个显式陷阱桩**）逐条记入 spike 文档第四节。陷阱桩**实测**有效：直接调用 `glNewList` 会打印中文错误并返回退出码 **3**（刻意不做静默空实现，避免渲染路径被误触发时悄悄产出错误几何）。
+  ⑧ **据此触发 TASKS.md 已写明的取代关系**：TASK-021/TASK-022（Windows 原生助手与安装包）标为「已取消（被 REQ-012 取代）」，不再等待外部 Windows 环境。**尚未验证**、属 TASK-028 的：`test/ui-smoke.cjs` 四格式冒烟、打包后 `app-capabilities` 报 `ive: true`、BR-012 缺助手降级不回归；另本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的，TASK-028 应补一个不同来源的 IVE 复核。
+
+### TASK-028 按 spike 结论落地跨平台 IVE
+- **关联需求**：REQ-012（标准 1、2 或 3、4、5、7）；设计决策见 ADR-012
+- **依赖**：TASK-027
+- **做什么**：二选一，**不改 IVE 解析语义**。**路线 A（WASM 可行）**：把 WASM 助手接进 `src/ive.js`（与 `resolveIveHelper` 并列或替换），wasm 资源按 `asarUnpack` 分发；**路线 B（WASM 不可行）**：补齐 `vendor/ive2glb/darwin-x64`（或 universal2，本机可做）并按 README 配方补 win32-x64 / linux-x64。两条路都要给 `package.json` 加 `mac`/`linux` 打包目标，并保证打包后助手可用（`ive: true`）与缺助手时 BR-012 降级不回归。
+- **产出**：`src/ive.js`（或 `vendor/ive2glb/**`）、`package.json`、`scripts/`（构建脚本）、`test/ive.test.js`
+- **文件范围**：`src/ive.js`, `package.json`, `scripts/`, `vendor/ive2glb/`, `test/ive.test.js`
+- **验证方式**：`npm run lint` + `npm test` 全绿；`node test/ui-smoke.cjs o-model/蹲姿.ive` 全绿；四平台能力判定（标准 1）与打包后 `ive: true`（标准 4）；体积/耗时实测入 ADR（标准 7）；缺助手时的中文降级不回归（标准 5）
+- **状态**：已完成（路线 A：WASM）
+- **验证结果**（2026-09-21）：
+  ① **产物 vendoring**：`scripts/build-ive2glb-wasm.sh` 的默认输出改为 `vendor/ive2glb/wasm/`，产物 `ive2glb.js` 0.13 MB + `ive2glb.wasm` 2.65 MB = **2.79 MB**（入库；被 `package.json` 的 `files`/`asarUnpack` 通配 `vendor/ive2glb/**` 覆盖，这两项无需改动）。构建入口补 `npm run build:ive2glb:wasm`。
+  ② **解析改造（不改 IVE 解析语义）**：`resolveIveHelper()` 由"只认可执行文件路径"改为返回描述符，顺序为 `GLB_REPAIR_IVE2GLB`（指向 `.js` 时按 WASM 处理）→ 本平台原生助手 → WASM 助手；`.wasm` 与 `.js` **必须成对存在**，否则不算可用（避免"起得来但读不到模块"的假可用）。`runHelper()` 对 WASM 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 起进程。无效的覆盖值仍按旧语义回退到内置路径。
+  ③ **顺带修掉一个既有缺陷（打包后 IVE 转换整体失效）**：旧实现按 `vendor/ive2glb` → `app.asar.unpacked/...` 的顺序查找，但 `asarUnpack` 的文件在 asar 索引里仍可见、`fs.statSync` 也会成功，于是打包后解析停在 **asar 内路径**，`spawnSync` 报 `ENOTDIR`。实测复现：打包应用内 `convertIveToGlb` → `status: error`，`error: 调用 IVE 转换助手失败：spawnSync …/app.asar/vendor/ive2glb/darwin-arm64/ive2glb ENOTDIR`。TASK-030 当时只验证了"unpacked 里的助手能直接执行"，没走应用自身的解析，所以漏掉了。改为 **unpacked 优先**（开发态两 root 相同，只查一次），并用纯函数 `vendorRootsFor()` 把顺序钉进回归网。
+  ④ **等价性**：`test/ive.test.js` 新增 6 条用例，其中"WASM 与原生助手产出逐字节相同"在 darwin-arm64 上**实际执行**（非跳过）——`worldSize`/`worldCenter`/`vertices`/`verticesBefore`/`triangles`/`axisMode` 全部相等且 GLB 字节相同；另钉住 REQ-012 标准 1 的 `0.538 × 1.364 × 1.056` / `11516` / `18924`。
+  ⑤ **BR-012 降级不回归**：新增用例把 `src/` 复制到一个**没有 `vendor/`** 的临时根下（真环境、非 mock），断言 `available === false`、`kind === ''`、中文信息含 `缺少 IVE 转换助手`、两个构建脚本名与 `GLB_REPAIR_IVE2GLB`，且**逐条列出** `searched` 里的每个路径。
+  ⑥ **打包后可用（标准 4）**：`npx electron-builder --mac --dir` 后 `app.asar.unpacked/vendor/ive2glb/wasm/` 两个文件齐备；**在打包应用内**实测 `convertIveToGlb('o-model/蹲姿.ive')` → `success`、`11516` / `18924` / `0.538×1.364×1.056`，解析到 `app.asar.unpacked/vendor/ive2glb/darwin-arm64/ive2glb`；再以 WASM 助手跑同一文件 → `success` 且产物与原生路径**逐字节相同**（这即非 darwin 平台上 `ive: true` 的依据）。
+  ⑦ **门禁**：`npm run lint` 通过；`npm test` → **146 用例 / 142 通过 / 0 失败 / 4 跳过**（TASK-027 后基线 141/137/0/4，净增 5 条，全部为本次新增）；`node test/ui-smoke.cjs o-model/蹲姿.ive` 在**开发态**与**打包应用**上各 **66 步 / 132 条断言 / 0 失败**；体积/耗时已入 ADR-012（标准 7）。
+  ⑧ **未做（属 TASK-029）**：`docs/001-code-design.md` 的 BR-036 与 MOD-005/006 完整回填、`RELEASE_CHECKLIST.md` 的四平台口径、`CLAUDE.md` 的 IVE 章节。本次只同步了 `001-code-design.md` §4.3.1 的解析顺序（行为已变，必须同步）。**遗留**：本地仍只有 `o-model/蹲姿.ive` 一个 IVE 夹具，等价性是单模型结论。
+
+### TASK-029 REQ-012 的文档与发布清单回填
+- **关联需求**：REQ-012；设计决策见 ADR-012
+- **依赖**：TASK-028
+- **做什么**：`docs/001-code-design.md` 新增 **BR-036**（跨平台 IVE 的交付口径：优先一次构建的 WASM；缺助手时按 BR-012 降级、GLB/FBX/OBJ 不受影响）并更新 MOD-005/006 与 ADR-008 的交叉引用；`RELEASE_CHECKLIST.md` §3/§4 把"只有 Windows 缺助手"改成四平台口径并补 mac/linux 打包检查；`CLAUDE.md` 的 IVE 章节写清产物形态与平台覆盖。
+- **产出**：`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`node scripts/memory.mjs check` 通过；人工复核 BR-036/清单措辞与实现一致（数字取自实测）
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **BR-036 与 §6 第 22 条**：新增跨平台 IVE 的交付口径（WASM 优先、平台原生仍优先于 WASM、解析顺序 `GLB_REPAIR_IVE2GLB` → `<platform>-<arch>` → `wasm/`、`app.asar.unpacked` 先于 `app.asar`、`.wasm`/`.js` 必须成对、WASM 由 Node 起进程、缺助手按 BR-012 降级），并写成 §6 第 22 条的 6 小项可判定断言；MOD-005 由"原生助手"改写为**两种形态**（原生 + WASM），MOD-006 补 `resolveIveHelper()` 的解析顺序与 `searched`；BR-030 增加与 ADR-008「一次构建、不按平台分发二进制」的交叉引用。
+  ② **措辞与实现逐条核对**（`src/ive.js:73-141`）：`vendorRootsFor()` 把 `app.asar` 段替换为 `app.asar.unpacked`、开发态两个根相同只返回一个；`wasmHelperUsable()` 同时检查 `.js` 与同目录 `ive2glb.wasm`；解析顺序确为覆盖 → 原生 → WASM。BR-036 的每条描述都能在代码里找到对应行，不是转述结论。
+  ③ **数字取自实测**：`vendor/ive2glb/wasm/` 实测 `ive2glb.js` 136K + `ive2glb.wasm` 2.7M（≈**2.79 MB**，与 ADR-012 一致）；`11516` / `18924` / `0.538×1.364×1.056` 沿用 TASK-027/028 的打包应用内实测，未新编数字；`scripts/build-ive2glb-wasm.sh`、`npm run build:ive2glb:wasm`、`files`/`asarUnpack` 通配均已核对存在。
+  ④ **发布清单四平台口径**：§3 目标环境改为 win32-x64 / darwin-arm64 / darwin-x64 / linux-x64，§4 的 ★ 行改为"目标平台"并新增两行（包内不得出现平台相关 IVE 二进制、缺助手时 BR-012 降级不回归），§6 把"发布已推迟"改为**阻塞已解除**并如实声明实测边界只在 darwin-arm64（其余三平台是由 WASM 与平台无关推出的待回填项）。
+  ⑤ **口径修正（本次发现的既有问题）**：文档把"本地 4 跳过"当成常量，而夹具是本地可变数据（本轮本地语料被裁剪为只剩 `o-model/蹲姿.*`、`model/` 为空）。已改为**与夹具集一起陈述**：当前本地实测 **148 用例 / 142 通过 / 0 失败 / 6 跳过**（多出的 2 个 = 1 个需 `model/蹲姿.glb` + 1 个需 `model/person-stand.glb`），并保留已验证的干净检出 **148 / 126 / 0 / 22**。`TEST_PLAN.md`/`RELEASE_CHECKLIST.md`/`CLAUDE.md` 三处同口径改齐。
+  ⑥ **门禁**：`npm run lint` 通过；`npm test` → 148 / 142 / 0 / 6；干净检出（`git worktree add --detach` + 软链 `node_modules`）实测 148 / 126 / 0 / 22；覆盖率 `all files` 95.32 / 81.19 / 96.72（命令含 `--test-coverage-exclude="vendor/**"`，逐文件数字在裁剪后的夹具集上复测一致，分支率单次运行 ±0.1pp）；`node scripts/memory.mjs check` 通过；`node scripts/platform-issue.mjs check` 通过。
+  ⑦ **文件范围扩列一项并已登记**：`docs/testing/TEST_PLAN.md`（补 TC-026 的 TASK-028 打包实测、新增 TC-027、覆盖率排除命令）不在本任务原定范围内——它属 TASK-028 交付时应回填而漏掉的部分，本次一并补齐，故文件范围由 3 个扩为 4 个。
+
+### TASK-030 打包目标与平台矩阵（不依赖 spike，先行的净收益部分）
+- **关联需求**：REQ-012（验收标准 3、4、5）；设计决策见 ADR-012
+- **依赖**：无（**独立于 TASK-027 的 spike 结论**：打包目标与平台矩阵两条路线都要）
+- **做什么**：① `package.json` 补 `mac`（dmg + zip）与 `linux`（AppImage + deb）打包目标及 `dist:mac`/`dist:linux` 脚本，mac 明确 `identity: null`（本机不签名，签名/公证是另一个议题）；② `native/ive2glb/README.md` 增加**平台支持矩阵**（哪四个目标平台、各自需要什么构建前置、产物目录怎么写）与「新增一个平台」的步骤清单；③ 如实写明 darwin-x64 的前置是 **x86_64 的 OSG**（本机只有 arm64 Homebrew，`/usr/local` 下没有 x86_64 工具链），Windows 需要 Windows 环境、Linux 需要 Linux 或容器——把"本机能做什么、不能做什么"写清，不再留含糊。
+- **产出**：`package.json`、`native/ive2glb/README.md`、（本地产物 `dist/`，不入库）
+- **文件范围**：`package.json`, `native/ive2glb/README.md`
+- **验证方式**：`npx electron-builder --mac --dir` 能在本机产出未签名 `.app`，且**包内确实含有** `app.asar.unpacked/vendor/ive2glb/darwin-arm64/ive2glb` 与 `node_modules/assimpjs/dist/assimpjs.wasm`（REQ-012 标准 4 的 macOS 半边）；`node -e "require('./package.json').build.mac && require('./package.json').build.linux"` 配置可解析；`npm run lint` + `npm test` 全绿
+- **状态**：已完成
+- **验证结果**：
+  ① `package.json` 新增 `mac`（dmg + zip，`identity: null` 本机不签名）与 `linux`（AppImage + deb）目标，以及 `dist:mac`/`dist:linux` 脚本；`node -e` 解析两段配置通过。
+  ② **本机实跑**：`ELECTRON_CACHE=$PWD/.cache/electron ELECTRON_BUILDER_CACHE=$PWD/.cache/electron-builder npx electron-builder --mac --dir` → 打包成功（Electron 32.3.3 darwin-arm64，下载 99MB 用时 1m24s，`skipped macOS code signing reason=identity explicitly is set to null`），产出 `dist/mac-arm64/GLB Texture Repair Tool.app`（`app.asar` 25MB）。
+  ③ **包内容实测**（REQ-012 标准 4 的 macOS 半边）：`app.asar.unpacked/vendor/ive2glb/darwin-arm64/` 共 **17 个文件**（1 个 exe + 14 个 `lib/*.dylib` + 2 个 `osgPlugins/*.so`），`node_modules/assimpjs/dist/assimpjs.wasm` 与两份许可证文件均在。
+  ④ **包内助手可运行**：直接执行包内的 `ive2glb` 跑 `o-model/蹲姿.ive` → `{"status":"success","images":3,"meshes":3,"binBytes":28782480}`、退出码 0、生成 `scene.json` + `data.bin`；`DYLD_PRINT_LIBRARIES=1` 下 **Homebrew 加载数为 0**，证明 `@rpath/@executable_path/lib` 在应用包布局里也成立。
+  ⑤ **踩到的坑与修法**：electron-builder 默认把 Electron 缓存写到 `~/Library/Caches/electron`，在本机受限环境里被拒绝（`operation not permitted`）；改用 `ELECTRON_CACHE`/`ELECTRON_BUILDER_CACHE` 指到工作区 `.cache/`（已加进 `.gitignore`）后成功。该注意点已写进 `RELEASE_CHECKLIST.md` §3。
+  ⑥ **本机做不到的部分（如实记录）**：`darwin-x64` 需要 x86_64 的 OSG（本机 Rosetta 可用，但 `/usr/local` 下没有 x86_64 Homebrew/OSG，装它属系统级改动）；`win32-x64` 需 Windows 环境；`linux-x64` 需 Linux 或容器（本机 docker 不可用）。`native/ive2glb/README.md` 的平台支持矩阵已逐条写明，并给出"新增一个平台"的六步清单。
+  ⑦ `npm run lint` 通过；`npm test` → 141 用例 / 137 通过 / 0 失败 / 4 跳过；`node scripts/memory.mjs check` 通过。
+
+### TASK-031 REQ-012 冷审返工：打包只带 WASM、deb 元数据、原生失败回退 WASM 与文档口径校正
+- **关联需求**：REQ-012（**不改写 TASK-027~030 的历史结论**；缺陷由它们的交付暴露）；冷审发现逐条见下方「验证结果」
+- **依赖**：TASK-029、TASK-030
+- **做什么**：两轮冷上下文独立审查（2026-09-22）判定「有条件通过」，本任务修掉全部 major 与低成本 minor：
+  ① **打包只带 WASM**（人决策 2026-09-22，sunny-zhai）：`package.json` 的 `files`/`asarUnpack` 由 `vendor/ive2glb/**` 收窄为 `vendor/ive2glb/wasm/**`——REQ-012 标准 2 要求包内不含平台相关的原生助手可执行文件，而原通配会把 `darwin-arm64/`（1 exe + 14 dylib + 2 插件，11 MB）打进**每一个**平台的安装包（实测 `find … -name 'ive2glb*'` 在真实 macOS 包上命中了它，`RELEASE_CHECKLIST.md` §4 原写的断言因此不成立）。原生助手**仍留在仓库**，供开发态与「原生↔WASM 逐字节等价」用例使用；**不改**已批准的标准 2。
+  ② **补齐 electron-builder 元数据**（人决策 2026-09-22：用 GitHub noreply 邮箱）：补 `author`（含 email）、`homepage`、`repository`，使 `dist:linux` 的 `deb` 目标不再因 `authorEmailIsMissed`（`app-builder-lib/out/targets/FpmTarget.js:62-72`）中止——REQ-012 标准 4 要求 `npm run dist:linux` 能产出安装包，而当前配置下 deb 必失败。
+  ③ **原生失败回退 WASM**：`runHelper()` 在原生助手存在但**起不来**（EACCES / 被隔离 / 部分解包）时改走 WASM，而不是直接按 BR-012 报错丢弃 IVE 能力（实测：原生不可执行时报 `spawnSync … EACCES`，同一环境删掉原生目录即走 WASM 成功）。
+  ④ `resolveIveHelper()` 的 `searched` 去重（传入配对的 `.js` 覆盖时实测为 `[js, js, wasm]`）。
+  ⑤ `test/ive.test.js` 的跳过信息补**恢复命令**，与 `test/repair.test.js` 同口径（否则 CLAUDE.md「跳过都会打印恢复命令」的说法对 IVE 用例不成立）。
+  ⑥ **文档口径校正**：BR-036 ①② 现自相矛盾（①「WASM 优先交付」vs ②「原生优先」）→ 把「**交付形态**」与「**开发态解析顺序**」分开写；`RELEASE_CHECKLIST.md` §4 里「macOS 可以留 darwin-arm64，但它不是 Windows/Linux 包的一部分」这句在无条件通配下不成立，改为与收窄后的实际一致；ADR-012/BR-036 的 `100.2 / 101.6 ms` 标注为**起助手**耗时并补全链路实测（冷审实测 0.55~0.65 s）；`native/ive2glb/README.md` 的平台矩阵与 `resolveIveHelper()` 描述按 TASK-028 后的实现更新。
+- **产出**：`package.json`、`src/ive.js`、`test/ive.test.js`、`test/convert.test.js`、`test/inspect.test.js`、`native/ive2glb/README.md`、`docs/001-code-design.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/design/ADR.md`、`docs/testing/TEST_PLAN.md`、`CLAUDE.md`
+- **文件范围**：`package.json`, `src/ive.js`, `test/ive.test.js`, `test/convert.test.js`, `test/inspect.test.js`, `native/ive2glb/README.md`, `docs/001-code-design.md`, `docs/release/RELEASE_CHECKLIST.md`, `docs/design/ADR.md`, `docs/testing/TEST_PLAN.md`, `CLAUDE.md`
+- **验证方式**：`npx electron-builder --mac --dir` 后，包内 `find resources/app.asar.unpacked/vendor/ive2glb -type f -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` 与 `wasm/ive2glb.wasm`；打包应用内 `convertIveToGlb('o-model/蹲姿.ive')` 仍 `success`（`11516` / `18924` / `0.538×1.364×1.056`）且解析到 WASM；`npm run dist:linux` 能产出 AppImage 与 deb（本机不可行时如实记录失败点与环境）；把原生助手替换为不可执行文件后转换**回退 WASM 并成功**；`searched` 无重复；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **标准 2 成立（原为 major）**：`files`/`asarUnpack` 收窄为 `vendor/ive2glb/wasm/**` 后重打 macOS 包，`find … -type f -name 'ive2glb*'` **只**命中 `wasm/ive2glb.js` + `wasm/ive2glb.wasm`，`@electron/asar list app.asar` 里 `darwin-arm64` 出现 **0** 次（修复前包内实测带着 11 MB 的 `darwin-arm64/`，且无条件通配会把同一目录塞进 win/linux 包）；`npx electron-builder --linux --x64` 产物同样是 wasm 两个文件，坐实了"每个平台都带原生助手"的判断。
+  ② **打包应用内可用（走 WASM）**：以 `ELECTRON_RUN_AS_NODE=1` 起打包应用自身的 Electron，`resolveIveHelper()` → `kind: 'wasm'`、路径解析到 `app.asar.unpacked/vendor/ive2glb/wasm/ive2glb.js`；`convertIveToGlb('o-model/蹲姿.ive')` → `success`、`[0.538,1.364,1.056]` / `11516` / `18924` / 2544480 B，与开发态原生助手（`kind: 'native'`）产物 **`cmp` 逐字节相同**。
+  ③ **`dist:linux` 可产出（原为 major）**：补 `author.email`（`sunny-zhai@users.noreply.github.com`）/`homepage`/`repository`/`linux.maintainer` 后，`npx electron-builder --linux --x64` **实跑成功**产出 `AppImage`(x86_64) + `deb`(amd64)；解包 control 实测 `Maintainer`/`Vendor`/`Homepage` 齐备（修复前 `FpmTarget.js:62-72` 必抛 `authorEmailIsMissed`）。
+  ④ **验证阶段新发现并修掉的一处矩阵不符**：`dist:linux` 原先不带 `--x64`，不带时按**宿主架构**产出——本机第一次跑出的是 linux-arm64 包，而矩阵里只有 linux-x64。已把脚本固定为 `--linux --x64`，`darwin-x64` 的产出方式（`--mac --x64`）写进清单与 README。
+  ⑤ **原生失败回退（minor）**：`runHelper()` 对"起不来"标记 `launchFailure`，`convertIveToGlb()` 据此调 `resolveWasmHelper()` 回退；新增用例把覆盖值指向存在但不可执行的文件，实测转换仍 `success`、`report.helperKind === 'wasm'`、`warnings` 含「已回退到 WASM 助手」；助手真的跑起来并报转换失败则**不**回退（不掩盖真实错误）。
+  ⑥ **`searched` 去重（minor）**：`makeHelperResolver()` 统一去重，配对的 `.js` 覆盖不再出现 `[js, js, wasm]`；新增断言 `new Set(searched).size === searched.length`。
+  ⑦ **跳过信息可照做（minor）**：`test/ive.test.js` 区分"缺样例"（指向 `TEST_PLAN.md` 的夹具行）与"缺助手"（给两条构建命令）；`test/convert.test.js`、`test/inspect.test.js` 一并补上（CLAUDE.md 原先"跳过都会打印恢复命令"的说法此前对这三个文件都不成立）。
+  ⑧ **文档口径（minor）**：BR-036 把「发布形态只有 WASM」与「开发态解析顺序原生优先」分成两条，消除自相矛盾，并补 ③ 回退、④ `searched` 去重；`RELEASE_CHECKLIST.md` §4 的 `find` 断言改为 `-type f` 且如实写明修复前它在真实包上跑不通；ADR-012 的 `100.2 / 101.6 ms` 标注为**起助手**耗时并补全链路实测 **0.55~0.65 s**（同为标准 7 的证据，远低于 10 s 预算）；`native/ive2glb/README.md` 的平台矩阵改为"路线 B 已被 A 取代、发布形态只有 WASM"。
+  ⑨ **顺带修掉的台账不一致（冷审 B 发现）**：`CLAUDE.md` 的 `git ls-files docs/` 数 13 → **14**（补 `docs/PLATFORM_ISSUES.md`）；`TEST_PLAN.md` 的 TC-001/TC-002/TC-013 各套件计数与汇总行按实测订正（TC-001 20→36/35/1、TC-002 24→35/32/3、TC-013 35/1→44/42/2、TC-007「五个文件」→10 个）；「待执行」段改为"已完成/已取代"（REQ-010/TC-023 已完成且由 TC-025 覆盖、TC-022 被 REQ-012 的 ★ 行取代）；ADR-012 收尾段把已交付项从"尚未验证"改为已核。
+  ⑩ **门禁**：`npm run lint` 通过；`npm test` → **152 用例 / 146 通过 / 0 失败 / 6 跳过**；干净检出（`git worktree add --detach` + 软链 `node_modules`）实测 **152 / 128 / 0 / 24**；覆盖率 `all files` **95.39 / 81.23 / 96.78**（`ive.js` 96.00 / 72.66 / 98.41，命令含 `--test-coverage-exclude="vendor/**"`，分支率单次运行 ±0.1pp）；`node scripts/memory.mjs check` 通过。
+  ⑪ **文件范围扩列说明**：由登记的 7 个扩为 11 个——`test/convert.test.js`/`test/inspect.test.js`（⑦ 的恢复命令，属同一 minor）、`docs/testing/TEST_PLAN.md` 与 `CLAUDE.md`（⑨ 的台账订正，与冷审 B 的发现同批）。均为冷审发现的低成本项，串行执行，无并行冲突。
+  ⑫ **仍未验证（如实标注）**：`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**未做（本机只有 darwin-arm64 宿主；linux-x64 只做到"安装包产出且内容正确"）；单 IVE 夹具（`o-model/蹲姿.ive`）上的逐字节等价性仍是单模型结论。
+
+### TASK-032 REQ-012 复核收口：both-fail 错误可读性、helperKind 语义与台账残留不一致
+- **关联需求**：REQ-012（**不改写 TASK-027~031 的历史结论**）；缺陷由对 TASK-031 返工的两轮冷上下文复核暴露（实现/打包方 PASS + 3 minor；台账方 CONDITIONAL PASS + 7 项）
+- **依赖**：TASK-031
+- **做什么**：① **both-fail 可读性**：原生助手起不来、WASM 也没成时，原生失败原因被丢弃，且 `report.error` 会把子进程 stderr 全文塞进消息（冷审实测 **65,792 字符**）——改为把原生原因一并带出，并把长 stderr **截断+标注**（保留前 600 字符与总长度）；② **`report.helperKind` 语义**：现在只在成功路径有值，错误路径为 `undefined`，而 BR-036 ③ 与 `001-code-design.md` 的措辞读起来像"总是记录"——改为**解析后立即写**（失败时表示"最后尝试的形态"），并把文档措辞改成"成功时=实际使用、失败时=最后尝试"；③ **`TEST_PLAN.md` TC-001 期望行**自相矛盾（写「36 通过 / 0 失败」，同节实际是 35/1/0）——按实测订正；④ **台账残留不一致**（冷审台账方逐条列出）：`RELEASE_CHECKLIST.md` §1 仍称「REQ-008/REQ-009 的规格闸门 ① 与架构闸门 ② 待确认」而两者均已批准（`APPROVALS.md`）、REQ-001/REQ-002 的 `确认` 仍是模板「待确认」与「已完成」冲突、REQ-006 **整个 `确认` 字段缺失**、REQ-012 的「关联任务」与清单预检漏 TASK-030/031、REQ-009 的 abandon 未进 `REQUIREMENTS.md` 变更记录、`TASKS.md` 并行批次表行序 19/20 排在 29 之后；⑤ 把 TASK-027/028/030 在**feature 分支内**写台账这一单写者违规记进 `docs/PLATFORM_ISSUES.md`（`.ai/AGENTS.md` §3 要求）。
+- **产出**：`src/ive.js`、`test/ive.test.js`、`docs/001-code-design.md`、`docs/testing/TEST_PLAN.md`、`docs/release/RELEASE_CHECKLIST.md`、`docs/requirements/REQUIREMENTS.md`（变更记录由合并点写，见下）
+- **文件范围**：`src/ive.js`, `test/ive.test.js`, `docs/001-code-design.md`, `docs/testing/TEST_PLAN.md`, `docs/release/RELEASE_CHECKLIST.md`
+- **验证方式**：新增用例——在**没有 `vendor/`** 的临时根下放一份"存在但会被执行且失败"的 WASM 助手（`.js` 打印超长 stderr 后退出非零）并把 `GLB_REPAIR_IVE2GLB` 指向不可执行的原生文件，断言 `report.error` **同时**含原生失败原因与「已截断」标记、且长度受控；`report.helperKind` 在错误路径不再是 `undefined`；`npm run lint` + `npm test` 全绿；`node scripts/memory.mjs check` 通过；冷审方点名的每条措辞按实测订正
+- **状态**：已完成
+- **验证结果**（2026-09-22）：
+  ① **both-fail 可读性（minor A）**：新增 `shortenForError(text, limit=600)`——超长文本截断为前 600 字符并标注「已截断，原文共 N 字符」；`runHelper()` 的「未返回有效结果」与助手自报错误都过这一层。两路都失败时在错误串尾部补「（原生助手也无法启动：…）」，并各自再截到 400 字符——此前原生原因被完全丢弃、错误串实测达 **65,792** 字符。新增用例（无 `vendor/` 的 src 副本 + 打印 5000 字符 stderr 的 WASM 桩 + 不可执行的原生覆盖值）断言：错误串同时含原生原因与「已截断」、总长 < 1500、`helperKind === 'wasm'`。
+  ② **`helperKind` 语义（minor B）**：`report.helperKind` 改为**解析后立即写**——成功时=实际使用的形态，失败时=最后尝试的形态（无 WASM 兜底时仍是 `native`），错误路径不再 `undefined`；失败路径同时带出 `iveWarnings`。BR-036 ③、MOD-006、CLAUDE.md 的措辞按此改写。
+  ③ **TC-001 期望行（minor C）**：由「36 通过 / 0 失败」改为「36 用例 / 35 通过 / 1 跳过 / 0 失败」，与同节「实际 35/1/0」一致。
+  ④ **台账残留（冷审台账方 7 项）**：`RELEASE_CHECKLIST.md` §1 的「REQ-008/REQ-009 规格闸门 ① 与架构闸门 ② 待确认」已失实（两者均已批准）→ 改为已批准并注明订正；REQ-012 的预检条目补 TASK-030/031；REQ-001/REQ-002 的 `确认` 按 v0.1.0 的 PR #6/#7 留痕补齐、REQ-006 **新增缺失的 `确认` 字段**、REQ-012 的「关联任务」补 TASK-030/031/032、变更记录补 REQ-009 abandon 与 REQ-012 交付两行；`TASKS.md` 并行批次表的 19/20 行序归位（上述 REQUIREMENTS 项在合并点写入，见 `030456c` 之后的收口提交）。
+  ⑤ **单写者违规留痕**：TASK-027/028/030 曾在 feature 分支内直接改 `TASKS.md` 状态行（`.ai/AGENTS.md` §3 要求只在合并点写），已按平台问题流程记入 `docs/PLATFORM_ISSUES.md`，不改写历史提交。
+  ⑥ **门禁**：`npm run lint` 通过；`npm test` → **155 用例 / 149 通过 / 0 失败 / 6 跳过**（新增 3 条，且**不依赖夹具**）；覆盖率 `all files` **95.38 / 81.22 / 96.82**（`ive.js` 95.62 / 72.54 / 98.44，行率因新增分支略降、函数率上升）；`node scripts/memory.mjs check` 通过。
+  ⑦ **仍未验证（如实标注）**：`win32-x64` / `linux-x64` / `darwin-x64` 上安装包的**实际安装与运行**；逐字节等价性仍是单 IVE 夹具结论。与 TASK-031 ⑫ 同。
+
 ## 依赖 DAG
 
 ```text
@@ -248,6 +529,25 @@ TASK-011 ──▶ TASK-012（体验细化：细滚动条 + 每区只留最外�
 TASK-013 ──▶ TASK-014 ──▶ TASK-015（REQ-007 多格式输入：内核 → 接线与打包 → 文档与规则）
 
 TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本次要项）
+
+TASK-017 ──▶ TASK-018 ──▶ TASK-019 ──▶ TASK-020（REQ-008 贴图规格收口：采样器规范化 → 降采样与接线 → KHR_texture_transform → 文档回填；四者依次改同一个 `src/repair.js`，必须串行）
+
+TASK-021 ──▶ TASK-022（REQ-009 Windows 分发：助手入库 → 安装包重打与冒烟；TASK-021 需外部 Windows x64 环境，未就绪前 TASK-022 不启动）
+
+TASK-027 ──▶ TASK-028 ──▶ TASK-029（REQ-012 跨平台 IVE：WASM 可行性 spike → 按结论落地 → 文档与清单）
+TASK-030（REQ-012 打包目标与平台矩阵；**独立于 spike**，与 TASK-027 文件范围不重叠，可并行）
+
+TASK-029 ──▶ TASK-031（REQ-012 冷审返工：打包只带 WASM + deb 元数据 + 原生失败回退 + 文档口径）
+TASK-030 ──▶ TASK-031（与 TASK-030 同改 `package.json`，故必须排在其后串行）
+
+TASK-031 ──▶ TASK-032（REQ-012 复核收口：both-fail 错误可读性 + helperKind 语义 + 台账残留不一致；
+两轮复核均为 PASS/CONDITIONAL PASS，只剩 minor，故这是收尾任务而非返工）
+
+> REQ-012 与 REQ-009 的范围有交集：若 TASK-027 的 spike 证明 WASM 可行，**TASK-021/TASK-022（Windows 原生助手）即被取代**，应把它们标为「已取消（被 REQ-012 取代）」而不是继续等 Windows 环境；若 spike 失败，则两条线互补（REQ-009 补 Windows 原生产物，REQ-012 补 Intel Mac / Linux 与打包目标）。
+>
+> **该条件已于 2026-09-21 由 TASK-027 判定为「WASM 可行」**（结论与证据见 `docs/design/ADR.md` 的 ADR-012 结论段与 `native/ive2glb/WASM-SPIKE.md`），因此 TASK-021/TASK-022 已标为「已取消（被 REQ-012 取代）」，原先阻塞在外部 Windows/Docker 环境的两条任务由此解开。REQ-009 的需求状态是否随之终止，留交付闸门（③）由人确认——本文件不单方面改需求状态。
+
+TASK-023（REQ-010 预览三态记忆，独立；与 TASK-018 的 `renderer.js`/`ui-smoke.cjs` 重叠，故与 TASK-018 串行，但与 TASK-019 的文件范围不重叠）
 ```
 
 ## 并行批次
@@ -272,6 +572,21 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 | 13 | TASK-014 | 依赖 TASK-013；改 `main.js`/`package.json`/`ui-smoke.cjs` |
 | 14 | TASK-015 | 依赖 TASK-014（文档要引用最终实现与实测数字） |
 | 15 | TASK-016 | 依赖 TASK-015（缺陷由冷审暴露） |
+| 16 | TASK-017, TASK-021 | TASK-017 无依赖（REQ-008 起点）；TASK-021 无依赖但需外部 Windows 环境；二者文件范围不重叠（`src/repair.js`+`src/inspect.js`+两个单测文件 vs `native/`、`vendor/`） |
+| 17 | TASK-018 | 依赖 TASK-017；改 `repair.js`/`renderer.js`/`index.html`/`ui-smoke.cjs`，与 TASK-023 的 `renderer.js` 重叠，故与 TASK-023 分属不同批次 |
+| 18 | TASK-019, TASK-023 | TASK-019 依赖 TASK-018（同改 `repair.js`）；TASK-023 无依赖且只改 `renderer.js`/`ui-smoke.cjs`，与 TASK-019 的 `inspect.js`/`repair.js` 不重叠，可并行 |
+| 21 | TASK-023 | REQ-010 预览记忆；与 TASK-024 同改 `renderer.js`/`ui-smoke.cjs`，故两者必须串行（先做哪个都行，这里按登记顺序） |
+| 22 | TASK-024 | REQ-011 占比模型；无依赖，但排在 TASK-023 之后以避免争抢 `renderer.js`/`ui-smoke.cjs` |
+| 23 | TASK-025 | 依赖 TASK-024（同一批文件；多尺寸矩阵排查要基于占比模型） |
+| 24 | TASK-026 | 依赖 TASK-024、TASK-025（文档要引用实测数字） |
+| 25 | TASK-027 | ~~REQ-012 的先决 spike（需联网装 emsdk）；与 TASK-021 文件范围不重叠，可并行~~ **已于 2026-09-21 完成**，结论「路线 A（WASM）可行」；TASK-028 据此落地 |
+| 26 | TASK-028 | ~~依赖 TASK-027 的结论（**已定为路线 A**）；改 `src/ive.js`/`package.json`/`scripts/`/`vendor/`~~ **已于 2026-09-21 完成**，TASK-029 据此回填文档 |
+| 19 | TASK-020 | 依赖 TASK-017~019（文档要引用最终实现与实测数字） |
+| 20 | TASK-022 | 依赖 TASK-021；与 TASK-020 共用 `docs/testing/TEST_PLAN.md`，故排在 TASK-020 之后 |
+| 27 | TASK-029 | 依赖 TASK-028（文档要引用最终产物形态与实测数字；**产物形态与数字已定**：`vendor/ive2glb/wasm/` 2.79 MB、单文件约 102 ms） |
+| 28 | TASK-030 | REQ-012 的打包目标与平台矩阵；无依赖，与 TASK-027 不重叠（`package.json`/README vs `native`+ADR） |
+| 29 | TASK-031 | REQ-012 冷审返工；依赖 TASK-029 与 TASK-030（同改 `package.json` 与 `docs/001-code-design.md`），必须串行 |
+| 30 | TASK-032 | REQ-012 复核收口；依赖 TASK-031（同改 `src/ive.js` 与 `docs/001-code-design.md`），必须串行 |
 
 ## 进度
 
@@ -284,12 +599,28 @@ TASK-015 ──▶ TASK-016（缺陷修复：冷审 6 条重要项 + 低成本�
 | TASK-005 | REQ-003 | 已完成 | ☑（追溯） |
 | TASK-006 | REQ-004 | 已完成 | ☑（追溯） |
 | TASK-007 | REQ-005 | 已完成（经两轮冷上下文复审） | ☑ |
-| TASK-008 | REQ-005 | 已完成（待人工目视确认） | ☑ 自动 / ☐ 人工 |
-| TASK-009 | REQ-005 | 已完成（待冷审查与人工目视） | ☑ |
-| TASK-010 | REQ-006 | 已完成（待人工目视） | ☑ 自动 / ☐ 人工 |
-| TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-008 | REQ-005 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-009 | REQ-005 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-010 | REQ-006 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-011 | REQ-006 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-012 | REQ-006 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
 | TASK-013 | REQ-007 | 已完成 | ☑ 自动 |
-| TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
-| TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☐ 人工 |
+| TASK-014 | REQ-007 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-015 | REQ-007 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-016 | REQ-007 | 已完成 | ☑ 自动 / ☑ 人工（2026-09-20） |
+| TASK-017 | REQ-008 | 已完成 | ☑ 自动 |
+| TASK-018 | REQ-008 | 已完成 | ☑ 自动 |
+| TASK-019 | REQ-008 | 已完成 | ☑ 自动 |
+| TASK-020 | REQ-008 | 已完成 | ☑ 自动 |
+| TASK-024 | REQ-011 | 已完成 | ☑ 自动 |
+| TASK-025 | REQ-011 | 已完成（矩阵普查未发现缺陷，留回归网） | ☑ 自动 |
+| TASK-026 | REQ-011 | 已完成 | ☑ 自动 |
+| TASK-021 | REQ-009 | 已取消（被 REQ-012 取代；README 配方/自检/打包核对仍有效） | ☐ |
+| TASK-022 | REQ-009 | 已取消（被 REQ-012 取代；冒烟表与人工目视清单仍有效） | ☐ |
+| TASK-023 | REQ-010 | 已完成 | ☑ 自动 |
+| TASK-027 | REQ-012 | 已完成（结论：WASM 路线可行；产物逐字节等价、2.91 MB、100.2 ms） | ☑ 自动 |
+| TASK-028 | REQ-012 | 已完成（路线 A：WASM 助手 2.79MB 已 vendoring；顺带修掉打包后 asar 路径导致 IVE 转换失效的既有缺陷） | ☑ 自动 |
+| TASK-029 | REQ-012 | 已完成（BR-036 与四平台发布清单回填；顺带把"本地跳过数"改为随夹具集陈述） | ☑ 自动 |
+| TASK-030 | REQ-012 | 已完成 | ☑ 自动（macOS 打包与包内容实测；win/linux 待各自环境） |
+| TASK-031 | REQ-012 | 已完成（冷审返工：发布形态收窄为只带 WASM 使标准 2 成立、补 deb 元数据使 `dist:linux` 可产出、原生失败回退 WASM、台账与文档口径校正；验证阶段另修掉 `dist:linux` 未固定 `--x64` 的矩阵不符） | ☑ 自动（打包应用内走 WASM 且与原生逐字节相同；linux-x64 安装包产出实测；仍是单 IVE 夹具） |
+| TASK-032 | REQ-012 | 已完成（复核收口：both-fail 错误串保留原生原因并截断、`helperKind` 解析后即写、TC-001 期望行订正、台账残留 7 项；单写者违规已留痕） | ☑ 自动（新增 3 条**不依赖夹具**的用例，干净检出上也执行） |

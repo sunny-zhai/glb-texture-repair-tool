@@ -165,6 +165,10 @@ ipcMain.handle('repair-glb', async (event, payload) => {
   fs.mkdirSync(outputDir, { recursive: true })
   const options = {}
   if (payload?.freezePose) options.poseTime = 'start'
+  // REQ-008/BR-032：贴图降采样档位（0 = 不降，可选 2048/1024/512）。IPC 载荷不可信，
+  // 只接受有限正数；非法值一律按"不降"处理，与 repair.js 的口径一致。
+  const maxTextureSize = Number(payload?.maxTextureSize)
+  if (Number.isFinite(maxTextureSize) && maxTextureSize > 0) options.maxTextureSize = maxTextureSize
   const sender = event.sender
   const sendProgress = (progress) => {
     if (sender.isDestroyed()) return

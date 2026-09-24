@@ -109,3 +109,93 @@
 - **替代方案**：① 原生 `FBX2glTF`（官方链、质量高）：否决为主后端，它只支持 FBX 且每平台一个二进制；若日后 assimp 在同名 FBX 上出现质量回归，可作为**双备**再引入。② 扩写 `native/ive2glb` 链 assimp：每平台一个二进制，Windows 继续卡住。③ `osgconv`→OBJ→`assimp export`：**实测否决**（600,680B 空壳 GLB、MTL 内是 `images\…tga` 反斜杠路径、贴图全丢）。④ 要求用户自备 assimp：违背"开箱即用"，Windows 基本不可用。
 - **影响面**：新增 `src/convert.js`（`convertToGlb` / `convertManyToGlb` / `assimpAvailable` / `collectSidecarFiles`）、`test/convert.test.js`；`src/main.js`（过滤器加 `fbx`/`obj`、三条 IPC 的转换前置、`app-capabilities` 增加 `assimp`）、`src/renderer.js`（提示文案）、`package.json`（`dependencies.assimpjs`、`asarUnpack`）、`src/ive.js`（只复用其导出，不改）、`docs/001-code-design.md` 新增 BR-030、`docs/002-requirements.md` §6 问题 4 追加翻案说明、`CLAUDE.md`（"不 shell 外部二进制"→"外部二进制须随包分发；本需求不引入外部二进制"的措辞澄清）。
 - **验证方式**：`node --test test/convert.test.js`——FBX 面数 18,924 且 ≥3 张内嵌贴图、OBJ 世界盒 0.54×1.36×1.06（容差 0.02）、焊接后顶点数显著下降而面数不变、坏文件返回中文错误且 `repairMany` 不中断；`node test/ui-smoke.cjs` 在 FBX 与 OBJ 上各跑一遍（预览路径无外部 `uri` 残留）；外加人工目视（FBX/OBJ 模型在 Cesium 里直立贴地、贴图正确）。
+
+## ADR-009 贴图规格收口：非法采样器组合按既有口径退化，降采样默认关且进程内做
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-017~020）
+- **关联需求**：REQ-008（落地 `docs/002-requirements.md` M3「修得全（贴图规格）」的口径）
+- **背景/问题**：M3 的"贴图规格"两项一直没有实现：① 非 2 次幂（NPOT）贴图若同时用 `REPEAT` + mipmap，在 WebGL1 下是非法组合，`src/inspect.js` 已能报出 `NPOT_WITH_REPEAT_MIPMAP` 并写了中文提示"需改为 CLAMP_TO_EDGE + LINEAR"，但 `src/repair.js` **没有任何修复步骤**——能看见、修不了；② BR-002 统一 JPEG→PNG 后照片类贴图膨胀（实测 2048² 2.1MB → 10.25MB），发布说明自认"真正的解法是贴图降采样，尚未做"，`docs/002-requirements.md` §6 问题 5 早已定了"默认不降、提供 2048/1024/512/不降四档"的口径，界面上却没有这个旋钮。两者叠加的后果是：用户读了体检报告也无法消除该问题，只能忍受体积膨胀。
+- **决策**：
+  (a) **非法组合的修法 = `CLAMP_TO_EDGE`（wrapS/wrapT）+ `LINEAR`（minFilter）**——即"按贴图退化"，与 `src/ive.js` 既有的 NPOT 退化规则、以及 `inspect.js` 那条问题的既有中文提示**完全一致**。同一工具的两条路径（IVE 转换产物 vs GLB 修复产物）不允许给出不同口径。
+  (b) **判定粒度是"贴图维度 × 采样器"逐个材质/贴图对**，不是"文件里存在 NPOT 就整体退化"：采样器被多材质共用时要逐个判定；**POT 贴图与已经合法的组合一个字段都不改**（不做无差别重写，避免把用户原本正确的素材改坏）。
+  (c) **降采样在进程内用 `pngjs` 做盒式平均**（box filter），按最长边目标值等比缩放，**默认不降**（`maxTextureSize: 0`），可选 `2048/1024/512`。不引入 `sharp`/`canvas` 等原生依赖——本仓"转码自包含、不按平台分发二进制"的约定（REQ-007/ADR-008 与 `jpeg-js`/`pngjs` 的既有教训）不变。
+  (d) **管线顺序固定为"贴图内嵌（PNG）→ 降采样 → 采样器规范化"**：降采样可能把 POT 变成 NPOT（例如 3000×1000 → 1024×341），所以采样器规范化必须在降采样**之后**跑，否则判定的是过期维度。该顺序由不变量断言守住。
+  (e) `KHR_texture_transform.texCoord` 的覆盖在 `src/inspect.js` 与 `src/repair.js` 两处**同源读取**（扩展里的 `texCoord` 优先于槽位自身），消除 TASK-007 挂账的 `MISSING_TEXCOORD` 漏报——体检与修复不允许有两套口径。
+- **理由**：`CLAMP_TO_EDGE + LINEAR` 是**已被本仓两次选定**的口径（`ive.js` 生成侧 + `inspect.js` 提示侧），跟着既有口径走才能让"体检提示 → 修复结果"闭环，也才不需要解释"为什么提示写 A 而修复做 B"。判定逐对进行、POT 不改，是"最小必要"原则在修复管线里的体现：修复工具越少动用户原本正确的字节，越不容易引入回归。降采样默认关，因为它是**有损且不可逆**的画质决策，应由用户显式开启；`pngjs` 已在 `dependencies`，用它不增加包体积与平台风险。
+- **后果**：正面——体检报得出、修复修得掉，M3 的两项验收标准第一次有实现承载；降采样默认关使"不改变现状"成为默认行为，回归风险集中在显式开启的路径上。**代价与风险**：① `CLAMP_TO_EDGE` 会让原本靠 `REPEAT` 平铺的资产失去平铺（可见变化），因此**只在非法组合上动手**，并在修复报告里如实记录改了哪些采样器；② mipmap 被去掉后远处缩小的画面可能出现闪烁/摩尔纹——这是选中"按贴图退化"而非"去 mipmap 保 REPEAT"的代价，若日后闪烁成为主要痛点，应新立需求做成可选策略，而不是静默改口径；③ `pngjs` 盒式平均是纯 CPU 操作，大贴图批量降采样会明显变慢（在 TASK-018 实测并把耗时写进日志/文档，必要时才考虑 `utilityProcess`）；④ 降采样会改写贴图字节，因此"只动贴图、几何逐字节不变"必须由不变量断言守住。
+- **替代方案**：① **把 NPOT 补成 POT**（padding 或缩放）——否决：会改像素语义与画面比例，且体检仍会报 NPOT，属于把问题藏起来；② **保留 `REPEAT`、只把 minFilter 降为非 mipmap**——技术上能消掉 WebGL1 的非法组合且保住平铺，但与本仓既有提示和 `ive.js` 口径不一致，会让同一工具两条路径产出不同采样器；故仅作为"若闪烁成为主要痛点"的后续可选策略（见代价 ②）；③ **引入 `sharp`**——否决：原生依赖、按平台分发，正是 REQ-007/ADR-008 要摆脱的形态；④ **只报告不修复**——否决：M3 验收标准明确要求修复后不再出现该组合。
+- **影响面**：`src/repair.js`（新增采样器规范化步骤、降采样步骤、`collectMaterialTexCoords` 读扩展覆盖、报告字段）、`src/inspect.js`（`collectTextureSlots` 读扩展覆盖）、`src/renderer.js` + `src/index.html`（降采样档位下拉与中文提示）、`test/repair.test.js`、`test/inspect.test.js`、`test/ui-smoke.cjs`、`docs/001-code-design.md`（BR-031 / BR-032）、`docs/testing/TEST_PLAN.md`（TC-019~TC-021）。
+- **验证方式**：`node --test test/repair.test.js test/inspect.test.js`——NPOT+REPEAT+mipmap 修复后为 `CLAMP_TO_EDGE`+`LINEAR` 且体检不再报该问题；POT 与已合法组合的采样器 JSON 逐字段不变；产物全量不变量（无"NPOT 且 REPEAT+mipmap"）；2048² → 1024² 逐像素等于 2×2 盒式平均；3000×1000 → 1024×341；「不降」档产物字节与现状一致；几何 bufferView 逐字节不变；`KHR_texture_transform` 用例在旧代码上为红。`node test/ui-smoke.cjs` 在 GLB/IVE/FBX/OBJ 上仍全绿。
+
+## ADR-010 Windows 的 IVE 仍走原生 OSG 助手，不改走 assimp/WASM
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-021/022）
+- **关联需求**：REQ-009（订正 REQ-007 描述里"顺带解决 Windows 没有 ive2glb.exe 的既有缺口"这一设想）
+- **背景/问题**：决定 v0.1.1 暂不发布、等补齐 Windows 支持后，必须回答"Windows 上的 IVE 怎么办"。REQ-007 的描述曾设想"用 assimpjs 统一多格式与 Windows 分发，顺带解决 Windows 没有 `ive2glb.exe` 的缺口"。但 `assimp` **没有 IVE importer**（IVE 是 OpenSceneGraph 的私有序列化格式），npm 生态也没有 JS/WASM 的 IVE 解析器（只有 `.osgb/.osgt` 序列化库）——该设想不成立。当前事实：`vendor/ive2glb/` 只有 `darwin-arm64`；`dist/` 里的产物是 2026-09-15 的 `0.1.0` 旧包。
+- **决策**：(a) Windows 的 IVE 能力**继续用原生 OSG 助手**：在 Windows x64 上构建 `ive2glb.exe`，把可执行文件与其依赖闭包 vendoring 到 `vendor/ive2glb/win32-x64/`，目录结构与 darwin 同构；(b) 打包沿用既有约定（`asarUnpack: vendor/ive2glb/**` + `resolveIveHelper` 的平台目录解析 + `app.asar` → `app.asar.unpacked` 回退），**不改解析逻辑**；(c) 找不到助手时仍按 BR-012 给中文降级提示并列已查找路径，不静默。
+- **理由**：IVE 只在原生 OSG 生态里可读，这是格式属性而非实现选择；既有 `src/ive.js` + `native/ive2glb` 链路已在 darwin 上验证过世界盒/顶点/贴图三项真值，把同一条链路搬到 Windows 的风险远低于为 Windows 另写一条 IVE 路径。
+- **后果**：正面——Windows 获得与 macOS 一致的 IVE 能力，REQ-009 的验收标准可判定；打包与解析逻辑零改动。**代价与风险**：① 多一份平台产物要**手工维护**（`scripts/build-ive2glb.sh` 是 macOS-only，Windows 版本只能按 README 人工执行；本机无 wine、无法交叉构建，必须由具备 Windows 环境的人执行）；② `osgdb_ive` 那一整套依赖（含 fontconfig/freetype，darwin 侧约 11MB）在 Windows 上需要单独收集 DLL 闭包，易漏；③ 长期看 IVE 仍是"只在两个平台可用"的格式，若日后要覆盖更多平台，应重新评估是否值得。
+- **替代方案**：① **用 assimp 读 IVE**——不可行（无 importer），背景已说明；② **让用户先自行把 IVE 转成 GLB/FBX 再喂给工具**——否决：违背"开箱即用"；③ **Windows 不支持 IVE，只在发布说明里声明**——这是"暂不发布"之前的默认状态，用户已明确选择"等补齐 Windows 支持"，故不采纳为最终方案（若 Windows 构建环境长期不可得，应回到本方案并在发布说明中显式声明，见 REQ-009 验收标准 6）。
+- **影响面**：`vendor/ive2glb/win32-x64/`（新增，入库）、`native/ive2glb/README.md`（补 Windows 构建步骤）、`package.json`（如需调整 `files`/`asarUnpack`）、`docs/release/RELEASE_CHECKLIST.md`（§3/§4 回填）、`docs/testing/TEST_PLAN.md`。
+- **验证方式**：`dumpbin /dependents ive2glb.exe`（或等价）证明依赖闭包无第三方非系统 DLL；Windows 上 `app-capabilities` 报 `ive: true` 且 `.ive` 能转换/预览/落盘、世界盒与 darwin 一致（容差 0.02）；`npm run dist:win` 的新包内含 `vendor/ive2glb/win32-x64/ive2glb.exe`、`assimpjs/dist/assimpjs.wasm` 与两份许可证；按 `RELEASE_CHECKLIST.md` §4 逐行冒烟并回填实际值。
+
+## ADR-011 布局以**占比**为用户意图，像素只是派生物（修订 ADR-007 的尺寸模型）
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-024~026，均已交付）
+- **关联需求**：REQ-011（修订 ADR-007 的"用户意图 = 像素"设定；BR-027/BR-028 的其余结论不变）
+- **背景/问题**：ADR-007 把用户意图定义为**像素**（`layoutDesired` 是唯一落盘对象），窗口缩放时 `refitLayout()` 只在新窗口下**夹取**这些像素。这解决了"内容不得改写用户尺寸"，但没解决"**窗口尺寸改写构图比例**"：窗口变宽时左右栏与底部像素不变、中栏独吞全部增量，占比随窗口漂移（实测 1280×800 下 左:中:右 = 20.3% : 52.5% : 26.6%，拉到 1600 宽变成 16.3% : 62% : 21.3%，左栏占比掉 4 个百分点）。用户明确要求"每个区域的宽高占比固定不变，用户可以手动调整宽高"。
+- **决策**：
+  (a) 布局的**唯一用户意图是占比**（左栏/右栏各占可用宽度、底部日志占窗口高度），像素是**派生物**：`layoutRatio` 落盘，`layout`（px）每次渲染由占比 × 当前可用空间算出；
+  (b) 拖拽时仍按**像素**跟手（手感不变），但落盘前按当前可用空间把新像素**换算回占比**——用户拖的是像素，记住的是比例；
+  (c) 窗口缩放只重算像素、**绝不改占比**；窗口恢复到足够大时占比回到用户设定值（ADR-007 的"意图 / 生效值分离"继续有效，只是意图的单位从 px 换成比例）；
+  (d) 夹取规则必须**确定**：先按一个公共比例因子整体压缩以满足各区最小尺寸（左 ≥180 / 右 ≥220 / 中 ≥420 宽、3D 画布 ≥160 高），仍不满足时按固定优先级（先右栏、再左栏、最后中栏底线）依次触底；任何情况下不得整页滚动；
+  (e) 像素上限改为**比例上限**（否则大窗口下像素上限会再次破坏占比，例如左栏 480px 上限在 2560 宽下就等于 18.75%）；
+  (f) `localStorage` 载荷升到 `version: 2` 存占比；读到 `version: 1` 的像素载荷时按当前窗口换算成占比（换算不出合法值就回落默认占比，保证可用而不是把某一栏挤到 0）。
+- **理由**：占比才是"构图"，像素只是渲染细节——用户这句话正是把意图的单位说清楚了。保留像素级跟手手感、只在落盘时换成比例，用户几乎感觉不到差异，却能在窗口缩放/换屏/重启后拿回同一张构图。
+- **后果**：正面——窗口缩放不再改写构图，重启与换屏后按比例还原，夹取可预测且可写成回归断言。**代价与风险**：① 必须把"最大像素"上限改成比例上限，否则大窗口下占比仍会被破坏（见决策 e）；② 极小窗口下占比失真不可避免，规则必须写进文档并由测试钉住，否则又会退化成"看情况"；③ 旧 `version:1` 载荷需要迁移逻辑与断言，迁移错误会把用户布局挤扁；④ `layout`/`layoutRatio` 两个概念并存，必须继续用 `commitLayout`/`refitLayout`/`adoptLayout` 收口，禁止裸赋值（ADR-007 的教训）。
+- **替代方案**：① **保持像素，只在窗口变化时按原比例重分配但不落盘比例**——否决：比例每次现算，用户拖拽后没有"设定值"可记，且缩放链路更绕；② **固定列宽不随窗口变**——否决：这正是当前缺陷；③ **把比例完全交给 CSS `fr`**——部分采纳（渲染仍用 `fr`/px 混合），但最小尺寸与夹取优先级必须由 JS 掌握，否则无法保证"每区恰好一个滚动容器"与画布最小高度；④ **引入 split-pane 库**——否决：为一个分隔条引依赖不划算，且不解决占比语义。
+- **影响面**：`src/renderer.js`（`layoutRatio`、`clampLayout`/`refitLayout`/`commitLayout`/`adoptLayout`/`applyLayout`、`saveLayout` 载荷与迁移）、`src/styles.css`（变量由占比推出）、`test/ui-smoke.cjs`（占比不变量 + 多尺寸矩阵）、`docs/001-code-design.md`（BR-034、MOD-011、BR-027/BR-028 交叉引用）、`docs/testing/TEST_PLAN.md`（TC-024）、`CLAUDE.md`。
+- **验证方式**：`node test/ui-smoke.cjs` 在 1100×760 / 1440×900 / 1920×1200 三档下断言各区占比与拖拽时相比变化 ≤ 1 个百分点（**当前实现必然为红**）；拖拽后的比例随后续缩放保持；重载后比例还原（像素误差 ≤ 1px）；`version:1` 像素载荷被安全迁移；夹取到极限再恢复后比例不失真；900×700 ~ 1920×1200 矩阵下每区恰好 1 个滚动容器、无横向溢出、3D 画布 ≥ 160px、页面不整页滚动。
+
+## ADR-012 IVE 跨平台：先 spike「OSG+IVE 编到 WASM」，失败才退回多平台预编译
+
+- **日期**：2026-09-20
+- **状态**：已采纳（闸门 ② 架构 · sunny-zhai · 2026-09-20；实现见 TASK-027~029，另立 TASK-030 做打包目标与平台矩阵，TASK-031 收冷审返工：发布形态收窄为只带 WASM、补 deb 元数据与原生失败回退）。**TASK-027 的 spike 已于 2026-09-21 完成并判定路线 A 可行**，见下"spike 结论"；TASK-021/022（Windows 原生助手）据此被本需求取代。
+- **关联需求**：REQ-012（"支持所有系统"）；与 REQ-009 的范围有交集（见下）
+- **背景/问题**：用户要求"不能改成支持所有系统吗"。核查后的关键事实：**代码侧已经平台无关**——`src/ive.js::platformDirectory()` 返回 `${process.platform}-${process.arch}`，`resolveIveHelper()` 据此在 `vendor/ive2glb/<platform>-<arch>/` 里找 `ive2glb[.exe]`，因此**增加平台不需要改任何代码**；真正的缺口是产物只有 `darwin-arm64` 一份，Windows / Linux / Intel Mac 上的 `.ive` 一律走 BR-012 中文降级。本机现状：**emscripten 未安装、docker 不可用**，能本机构建的只有 darwin 系。两条候选路线：**A = 把 OSG + IVE 插件编成 WASM**（一次构建，四平台通用，与 ADR-008 的 assimpjs 同思路、不按平台分发二进制）；**B = 各平台各编一份原生助手**（沿用现有架构，但 Windows 那份仍需 Windows 机器、Linux 那份需 Linux 或容器）。
+- **决策**：(a) **先做 spike（TASK-027）再定架构**——与 REQ-007 的先例一致（真机 spike 通过后才立规格）；(b) **倾向路线 A**：若 spike 证明 OSG+IVE 能在 emscripten 下链接、IVE 插件能静态注册、文件 IO 在 Node 下可用，则按 WASM 交付（一次构建覆盖 win32-x64 / linux-x64 / darwin-arm64 / darwin-x64），`vendor/ive2glb/<平台>/` 不再是必需；(c) **spike 失败则走路线 B**：至少补齐 darwin-x64（或 universal2，本机可做），Windows/Linux 按 `native/ive2glb/README.md` 的配方在有环境的机器上补，并把自检结果回填；(d) 两条路都必须**保持 IVE 解析语义不变**（轴转换、贴地归心、顶点焊接、贴图内嵌）并保持 BR-012 降级（缺助手时中文提示、不影响 GLB/FBX/OBJ）；(e) 无论走哪条路，都要给 `package.json` 补 `mac`/`linux` 打包目标，否则"支持所有系统"只在开发态成立。
+- **理由**：WASM 把"平台矩阵"压缩成"一次构建"，同时解决 Windows、Linux 与 Intel Mac——这三者当前都缺；它也不需要每个平台一台构建机或一套 CI 矩阵，长期维护成本最低，且与仓库既有的"不按平台分发二进制"约定（`jpeg-js`/`pngjs`/`assimpjs` 的路线）一致。反过来，路线 B 每加一个平台都要一台对应机器 + 一份产物 + 一次依赖闭包自检，Windows 那份至今没有环境就是这个模式的直接代价。
+- **后果**：正面——若 A 成功，四平台一次到位，`README` 的 Windows/Linux 构建章节可退化为"仅用于排障"；打包与分发方式统一。**代价与风险**：① WASM 的未知数集中在三处——OSG 的 emscripten 可编译性、`osgDB::Registry` 的插件**动态加载在 emscripten 下不可用**（需要改成静态注册 `osgdb_ive`）、文件 IO 需 `-sNODERAWFS` 或虚拟 FS 预加载；② 体积与性能：darwin 助手 11MB（含 fontconfig/freetype），WASM 可能更大；基准是单文件 1.5s/全链路 2.5s，超过 10s 需要重新评估；③ 若 spike 失败，则回到 B 的多平台维护成本，且 Windows 那份仍然卡环境；④ 无论哪条路，`ive.test.js` 与冒烟都必须在**当前平台**继续全绿，不许为了跨平台牺牲既有实测口径。
+- **替代方案**：① **维持现状（只在 macOS ARM 上支持 IVE）**——被用户明确否决；② **要求用户自己先把 IVE 转成 GLB/FBX**——否决：违背"开箱即用"，且 Windows 用户没有 osgconv；③ **建 CI 矩阵在三个平台各编原生助手**——不解决"本机没有那些环境"的问题，且仍需维护每平台产物与依赖闭包，只在 A 失败时作为 B 的工程化补充；④ **为 IVE 写一个纯 JS 解析器**——否决：IVE 是 OSG 私有序列化格式，内部类（`osg::Geometry`/`osg::Image`/`StateSet`）无法可靠还原，这也是当初选原生助手的原因。
+- **影响面**：`native/ive2glb/`（新增 WASM 构建路径或维持原生）、`scripts/`（构建脚本）、`vendor/ive2glb/**`（产物形态可能从"每平台一份"变为"一份 WASM"）、`package.json`（`dependencies`/`asarUnpack`/新增 `mac`、`linux` 目标）、`src/ive.js`（WASM 路线的调用方式；解析语义不变）、`test/ive.test.js`、`test/ui-smoke.cjs`、`docs/001-code-design.md`（BR-036）、`docs/release/RELEASE_CHECKLIST.md`、`CLAUDE.md`。
+- **验证方式**：spike 结论（含失败点与命令）写入本节；路线 A 落地后按 REQ-012 标准 1（四平台能力，世界盒 `0.538×1.364×1.056`、顶点 11516、三角面 18924）、标准 2/4（包内无平台相关可执行文件、打包后 `ive: true`）、标准 7（体积/耗时实测入 ADR）判定；路线 B 落地后按标准 3 判定；两条路都必须满足标准 5（BR-012 降级不回归）与标准 8（`npm test` + 四格式冒烟 + `memory check` 全绿）。
+
+### spike 结论（TASK-027，2026-09-21）
+
+**路线 A 可行，采用它；不再需要路线 B 的多平台预编译。** 完整记录（失败点、命令、哈希）见 `native/ive2glb/WASM-SPIKE.md`，复现脚本为 `scripts/build-ive2glb-wasm.sh`。
+
+四个待答问题逐条判定（对应决策 b 的四个前提）：
+
+| 问题 | 结论 | 证据 |
+| :-- | :-- | :-- |
+| ① 能否链接成功 | 能 | Emscripten 6.0.9 + OSG 3.6.5，630 个编译目标全过；`wasm-ld` **严格模式**（默认 `ERROR_ON_UNDEFINED_SYMBOLS=1`）退出码 0 |
+| ② IVE 插件能否静态注册 | 能，**无需改动 OSG 源码** | `DYNAMIC_OPENSCENEGRAPH=OFF` 使插件本身成为静态库，`--whole-archive` 保住其静态注册；`Registry::getReaderWriterForExtension()` 在 `dlopen` 之前就命中已注册的 IVE reader，因此 `dlopen` 链根本不进符号闭包 |
+| ③ 文件 IO 方案 | `-sNODERAWFS=1` 即可，无需虚拟 FS 预加载 | 绝对路径、自动建输出目录、CWD 语义、退出码 0/1/2 全部与原生助手一致 |
+| ④ 产物体积与耗时 | spike 构建 **2.91 MB**（wasm 2.66 + js 0.25）、单文件 **100.2 ms**（darwin 对照 59.4 ms）；TASK-028 重建后为 **2.79 MB**（137,172 + 2,783,434 B）、单文件 **101.6 ms**（darwin 62.7 ms），哈希见 `WASM-SPIKE.md` §6 | 预算 30 MB 与 10 s，均大幅达标。**注意这里量的是"起一次助手"的墙钟时间**，不是整条转换链路——`convertIveToGlb` 全链路实测 **0.55~0.65 s**（TASK-031 复测），同样远低于 10 s |
+
+**等价性达到逐字节级别**：同一份 `src/ive.js`，WASM 助手与 darwin 助手的 `scene.json`、`data.bin` SHA-256 相同；全链路 GLB 亦 SHA-256 相同（2,544,480 B）；`worldSize [0.538, 1.364, 1.056]`、`vertices 11516`、`triangles 18924` 与标准 1 完全一致；`test/ive.test.js` 指向 WASM 助手为 **21 通过 / 0 失败 / 3 跳过**（跳过项为缺失夹具，与原生基线一致）。
+
+对决策 (c) 的影响：**spike 通过即触发 TASKS.md 已写明的取代关系**——TASK-021/TASK-022（构建并入库 Windows 原生助手、重打 Windows 安装包）应标为「已取消（被 REQ-012 取代）」，而不是继续等待外部 Windows 环境；原先因缺少 Windows/Docker 而挂起的两条任务由此解开。
+
+过程中撞到 6 处失败（GLES2 profile 触发 `EGL_LIBRARY` 缺失、C++17 移除 `std::mem_fun_ref`、X11/GLX 后端、漏链 `osgGA`、emscripten 默认 `-lc++-noexcept` 关掉异常捕获、53 个固定管线 GL 入口点缺失），逐条修法与取舍见 spike 文档第四节。其中最需要留意的两条**代价**是：**(a)** OSG 3.6.5 需要 C++17 兼容头（不改 vendored 源码，用 `-include` 注入）；**(b)** 需要 **53 个**显式"陷阱桩"补齐 WebGL 无法实现的固定管线入口点——刻意不启用 emscripten 的 GL 模拟层、也不做静默空实现，被调用即中文报错并退出码 3（已实测），使"渲染路径被误触发"立刻暴露而不是悄悄产出错误几何；反过来，这 53 个桩在真实转换中**一个都没有触发**（stderr 为空、产物逐字节相同），本身就是"只读路径确实不碰渲染"的证据。
+
+**TASK-028 落地后的补充（2026-09-21）**：`resolveIveHelper()` 已改为"原生助手优先、WASM 回退"的形态，产物落在 `vendor/ive2glb/wasm/`，构建入口是 `npm run build:ive2glb:wasm`；已在 Electron 32.3.3 的 Node 20.18.1 上实测可用（打包态经 `ELECTRON_RUN_AS_NODE=1` 起进程）。`test/ive.test.js` 新增 5 条用例把 WASM 路径钉进回归网，其中"WASM 与原生产物逐字节相同"在 darwin-arm64 上实际执行（不是跳过）。
+
+**TASK-028 已验证（原「尚未验证」清单，2026-09-22 落实）**：`test/ui-smoke.cjs` 四格式冒烟（开发态与**打包应用**上各 66 步 / 132 条断言 / 0 失败）、打包后应用内 `convertIveToGlb('o-model/蹲姿.ive')` 成功（`11516` / `18924` / `0.538×1.364×1.056`）、强制 WASM 时产物与原生路径逐字节相同、BR-012 降级不回归（把 `src/` 复制到无 `vendor/` 的临时根下断言中文降级并逐条列出 `searched`）。
+
+**仍然存在的边界（如实保留）**：本地只有 `o-model/蹲姿.ive` 一个 IVE 夹具，逐字节等价性是**在这一个模型上**取得的；补一个不同来源的 IVE 复核仍是未做的收尾项。
+
+**TASK-031 对交付形态的修正（2026-09-22）**：TASK-028 让 `files`/`asarUnpack` 用 `vendor/ive2glb/**` 覆盖 WASM，但同一通配把 11 MB 的 `darwin-arm64/` 原生助手也打进了**每个**平台的安装包，与 REQ-012 标准 2「包内不含平台相关的原生可执行文件」冲突（冷审实测 `find … -name 'ive2glb*'` 在真实 macOS 包上命中 `darwin-arm64/ive2glb`）。现收窄为 **`vendor/ive2glb/wasm/**`**：发布形态只有 WASM，原生助手仅留仓库供开发态与字节等价用例；同时补 `resolveWasmHelper()` 作为"原生文件在但起不来"的回退、`searched` 去重、以及 deb 目标必需的 `author.email`/`homepage` 元数据。解析顺序（开发态原生优先）**未变**。

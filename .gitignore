@@ -49,6 +49,9 @@ docs/requirements/*
 !docs/requirements/REQUIREMENTS.md
 !docs/requirements/TASKS.md
 !docs/PROJECT_MEMORY.md
+# 平台问题台账（Tenon REQ-014）：使用中遇到的问题记录在这里，随项目入库
+# （`docs/*` 会把它一起吞掉，必须显式放行——这正是 ISSUE-001 记录的坑）
+!docs/PLATFORM_ISSUES.md
 !docs/approvals/
 docs/approvals/*
 !docs/approvals/APPROVALS.md
@@ -73,3 +76,10 @@ docs/api/*
 # 已随仓库入库，新克隆即可直接跑通 Tenon 流程，不要再把它们当本机配置忽略。
 # scripts/ 下 ensure-cesium.js、build-ive2glb.sh 与各 *.mjs 全部入库——
 # build-ive2glb.sh 是重建 vendor/ive2glb 助手的唯一途径，不能整目录忽略。
+
+# 构建缓存（TASK-030：electron-builder 默认写 ~/Library/Caches，重定向进工作区以免撞沙箱/污染系统目录）
+/.cache/
+
+# WASM spike 工具链与源码（TASK-027，仅本地）
+/.emsdk/
+/.spike/

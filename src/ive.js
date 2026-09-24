@@ -64,41 +64,120 @@ function platformDirectory() {
 }
 
 /**
- * @description 解析原生助手路径，兼容源码运行、asar 打包与非默认安装位置。
- * @returns {{ path: string, available: boolean, searched: string[] }}
+ * @description 列出查找 vendored 助手的根目录，**unpacked 优先**。
+ *
+ * 打包后 `asarUnpack` 的文件在 asar 索引里仍然可见，`fs.statSync` 对 asar 内路径也会成功，
+ * 但 asar 内的文件**不能被执行**（`spawnSync` 直接报 ENOTDIR）。所以必须先看
+ * `app.asar.unpacked`；开发态两个根目录是同一个路径，此时只查一次，避免 searched 出现重复项。
  */
-function resolveIveHelper() {
-  const executable = process.platform === 'win32' ? 'ive2glb.exe' : 'ive2glb'
-  const searched = []
-  const candidates = []
-
-  if (process.env.GLB_REPAIR_IVE2GLB) {
-    candidates.push(process.env.GLB_REPAIR_IVE2GLB)
-  }
-
-  const vendorRoot = path.join(__dirname, '..', 'vendor', 'ive2glb')
-  // 打包后二进制无法从 asar 内执行，electron-builder 会把它解包到 app.asar.unpacked。
+function vendorRootsFor(dirname) {
+  const vendorRoot = path.join(dirname, '..', 'vendor', 'ive2glb')
   const unpackedRoot = vendorRoot.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
-  for (const root of [vendorRoot, unpackedRoot]) {
-    const candidate = path.join(root, platformDirectory(), executable)
-    if (!candidates.includes(candidate)) candidates.push(candidate)
-  }
-
-  for (const candidate of candidates) {
-    searched.push(candidate)
-    try {
-      if (fs.statSync(candidate).isFile()) {
-        return { path: candidate, available: true, searched }
-      }
-    } catch {
-      // 继续尝试下一个候选路径
-    }
-  }
-  return { path: '', available: false, searched }
+  return unpackedRoot === vendorRoot ? [vendorRoot] : [unpackedRoot, vendorRoot]
 }
 
 /**
- * @description 判断某平台是否已提供 IVE 转换助手。
+ * @description 建一个"查助手"的小工具集，供 resolveIveHelper / resolveWasmHelper 共用。
+ *
+ * `isFile` 会对同一个候选去重：覆盖值先按文件校验、再按"成对存在"复核时会被查两次，
+ * 不去重的话 `searched` 里会出现重复路径（BR-012 要求"逐条列出已查找路径"，
+ * 重复项看起来像缺陷）。
+ */
+function makeHelperResolver() {
+  const searched = []
+  const roots = vendorRootsFor(__dirname)
+
+  const isFile = (candidate) => {
+    if (!searched.includes(candidate)) searched.push(candidate)
+    try {
+      return fs.statSync(candidate).isFile()
+    } catch {
+      return false
+    }
+  }
+
+  const nativeHelper = (file) => ({ kind: 'native', path: file, command: file, prefixArgs: [], available: true, searched })
+  // WASM 助手由 Node 起进程；.wasm 必须与 .js 成对存在，只检查 .js 会得到一个
+  // 起得来但读不到模块的「假可用」，错误信息也会指向别处。
+  const wasmHelper = (script) => ({ kind: 'wasm', path: script, command: process.execPath, prefixArgs: [script], available: true, searched })
+  const wasmHelperUsable = (script) => {
+    const binary = path.join(path.dirname(script), 'ive2glb.wasm')
+    const scriptPresent = isFile(script)
+    const binaryPresent = isFile(binary)
+    return scriptPresent && binaryPresent
+  }
+
+  return { searched, roots, isFile, nativeHelper, wasmHelper, wasmHelperUsable }
+}
+
+/**
+ * @description 解析 IVE 转换助手，兼容源码运行、asar 打包与非默认安装位置。
+ *
+ * 两种形态，优先级从高到低：
+ *   ① 本平台的原生可执行文件 `vendor/ive2glb/<platform>-<arch>/ive2glb[.exe]`
+ *   ② 跨平台的 WASM 助手 `vendor/ive2glb/wasm/ive2glb.js` + `ive2glb.wasm`
+ * WASM 需要由 Node 起进程（打包态是 Electron 的 Node，见 runHelper），因此
+ * win32-x64 / linux-x64 / darwin-x64 不再需要各自的预编译助手（REQ-012 / ADR-012）。
+ *
+ * 解析顺序是**开发态**的取舍：原生助手更快且本机已实测与 WASM 逐字节等价，所以先试它。
+ * **发布形态**只带 WASM（`package.json` 的 files/asarUnpack 只放 `vendor/ive2glb/wasm/**`），
+ * 因此安装后的应用不会看到原生助手，标准 2「包内不含平台相关的原生可执行文件」由此成立。
+ *
+ * @returns {{ kind: 'native'|'wasm'|'', path: string, command: string, prefixArgs: string[],
+ *   available: boolean, searched: string[] }}
+ */
+function resolveIveHelper() {
+  const executable = process.platform === 'win32' ? 'ive2glb.exe' : 'ive2glb'
+  const { searched, roots, isFile, nativeHelper, wasmHelper, wasmHelperUsable } = makeHelperResolver()
+
+  const missing = { kind: '', path: '', command: '', prefixArgs: [], available: false, searched }
+
+  // 显式覆盖优先。覆盖值无效时继续按内置路径查找（保持既有语义，不因写错就整条不可用）；
+  // 指向 .js 时按 WASM 助手处理——这是测试与排障时钉住实现的手段。
+  if (process.env.GLB_REPAIR_IVE2GLB && isFile(process.env.GLB_REPAIR_IVE2GLB)) {
+    const override = process.env.GLB_REPAIR_IVE2GLB
+    if (/\.js$/i.test(override)) {
+      if (wasmHelperUsable(override)) return wasmHelper(override)
+    } else {
+      return nativeHelper(override)
+    }
+  }
+
+  for (const root of roots) {
+    const candidate = path.join(root, platformDirectory(), executable)
+    if (isFile(candidate)) {
+      return nativeHelper(candidate)
+    }
+  }
+
+  for (const root of roots) {
+    const script = path.join(root, 'wasm', 'ive2glb.js')
+    if (wasmHelperUsable(script)) return wasmHelper(script)
+  }
+
+  return missing
+}
+
+/**
+ * @description 只解析跨平台的 WASM 助手（不看平台原生目录），用于"原生助手存在却起不来"时的回退。
+ *
+ * 场景：原生助手的文件在、但进程起不来（未签名/被隔离/部分解包/权限不足）。
+ * WASM 助手能顶上，没必要把 IVE 能力整体丢掉，也不必让用户先去手工删目录。
+ *
+ * @returns {{ kind: 'wasm', path: string, command: string, prefixArgs: string[],
+ *   available: boolean, searched: string[] }|null}
+ */
+function resolveWasmHelper() {
+  const { roots, wasmHelper, wasmHelperUsable } = makeHelperResolver()
+  for (const root of roots) {
+    const script = path.join(root, 'wasm', 'ive2glb.js')
+    if (wasmHelperUsable(script)) return wasmHelper(script)
+  }
+  return null
+}
+
+/**
+ * @description 判断某平台是否已提供 IVE 转换助手（原生或 WASM）。
  */
 function iveConversionAvailable() {
   return resolveIveHelper().available
@@ -109,6 +188,7 @@ function missingIveHelperMessage() {
   return [
     `当前平台（${platformDirectory()}）缺少 IVE 转换助手 ive2glb。`,
     '请在 native/ive2glb 下构建后执行 scripts/build-ive2glb.sh 放入 vendor/ive2glb/，',
+    '或执行 scripts/build-ive2glb-wasm.sh 产出跨平台的 WASM 助手，',
     `或设置环境变量 GLB_REPAIR_IVE2GLB 指向可执行文件。已查找：${helper.searched.join('、')}`,
   ].join('')
 }
@@ -119,14 +199,23 @@ function isIvePath(filePath) {
   return typeof filePath === 'string' && path.extname(filePath).toLowerCase() === '.ive'
 }
 
-function runHelper(helperPath, inputPath, outputDir) {
-  const result = spawnSync(helperPath, [inputPath, outputDir], {
+function runHelper(helper, inputPath, outputDir) {
+  // WASM 助手是个 .js，必须由 Node 执行。打包态 process.execPath 是 Electron 可执行文件，
+  // 需要 ELECTRON_RUN_AS_NODE=1 让它以 Node 模式运行；开发态（纯 node）该变量无副作用。
+  const env = helper.kind === 'wasm'
+    ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    : process.env
+  const result = spawnSync(helper.command, [...helper.prefixArgs, inputPath, outputDir], {
     encoding: 'utf8',
     timeout: 30 * 60 * 1000,
     maxBuffer: 8 * 1024 * 1024,
+    env,
   })
   if (result.error) {
-    throw new Error(`调用 IVE 转换助手失败：${result.error.message}`)
+    const error = new Error(`调用 IVE 转换助手失败：${result.error.message}`)
+    // 标记为「起不来」而不是「转换失败」：调用方据此决定是否回退到 WASM 助手。
+    error.launchFailure = true
+    throw error
   }
 
   const stdout = (result.stdout || '').trim()
@@ -139,13 +228,28 @@ function runHelper(helperPath, inputPath, outputDir) {
   }
 
   if (!summary) {
-    const detail = (result.stderr || '').trim() || lastLine || `退出码 ${result.status}`
-    throw new Error(`IVE 转换助手未返回有效结果：${detail}`)
+    const detail = shortenForError((result.stderr || '').trim() || lastLine || `退出码 ${result.status}`)
+    const error = new Error(`IVE 转换助手未返回有效结果：${detail}`)
+    // 没有可解析的结果同样属于「起不来」（被杀掉、动态库缺失等），允许回退 WASM。
+    error.launchFailure = true
+    throw error
   }
   if (summary.status !== 'success' || result.status !== 0) {
-    throw new Error(summary.error || 'IVE 转换失败')
+    throw new Error(shortenForError(summary.error || 'IVE 转换失败'))
   }
   return summary
+}
+
+/**
+ * @description 把助手 stderr 之类的长文本压到可读长度。
+ *
+ * 错误信息要能一眼看出问题，而不是把子进程的整段输出塞进一句中文里——
+ * 冷审实测过 `report.error` 被塞进 **65,792** 字符的 stderr 全文。
+ */
+function shortenForError(text, limit = 600) {
+  const value = String(text ?? '')
+  if (value.length <= limit) return value
+  return `${value.slice(0, limit)}…（已截断，原文共 ${value.length} 字符）`
 }
 
 // ---------------------------------------------------------------- 贴图编码
@@ -820,6 +924,9 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
     oldBytes: 0,
     newBytes: 0,
   }
+  // 转换过程中产生的告警（目前只有"原生助手起不来、已回退 WASM"），最终与助手自身的
+  // warnings 合并写进 report.warnings。
+  const iveWarnings = []
 
   try {
     if (!isIvePath(inputPath)) {
@@ -837,7 +944,30 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
 
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ive2glb-'))
     try {
-      const summary = runHelper(helper.path, inputPath, workDir)
+      // 原生助手"文件在、但起不来"（未签名 / 被隔离 / 部分解包 / 权限不足）时回退 WASM：
+      // 两者产出已实测逐字节相同，没有理由因此丢掉 IVE 能力。助手真的跑起来并报转换失败
+      //（launchFailure 未标记）则原样抛出，不掩盖真实错误。
+      // 解析后就写：失败时它也代表"最后尝试过的形态"。此前只在成功路径赋值，
+      // 于是错误报告里这个字段是 undefined，与 BR-036 ③ 的措辞不符（冷审 2026-09-22）。
+      report.helperKind = helper.kind
+      let summary
+      try {
+        summary = runHelper(helper, inputPath, workDir)
+      } catch (error) {
+        if (!error.launchFailure || helper.kind !== 'native') throw error
+        const wasmHelper = resolveWasmHelper()
+        if (!wasmHelper) throw error
+        report.helperKind = 'wasm'
+        try {
+          summary = runHelper(wasmHelper, inputPath, workDir)
+        } catch (wasmError) {
+          // 两条路都失败时把原生失败原因一并带出——否则排障只看到后一条，
+          // 不知道"原生本来也在、只是起不来"。两段都截断，避免错误串变成 stderr 全文。
+          wasmError.message = `${shortenForError(wasmError.message, 400)}（原生助手也无法启动：${shortenForError(error.message, 400)}）`
+          throw wasmError
+        }
+        iveWarnings.push(`原生 IVE 助手无法启动（${error.message}），已回退到 WASM 助手。`)
+      }
       const scenePath = path.join(workDir, 'scene.json')
       const binPath = path.join(workDir, 'data.bin')
       const intermediate = JSON.parse(fs.readFileSync(scenePath, 'utf8'))
@@ -877,7 +1007,7 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
         0,
       )
       report.imageDiagnostics = built.diagnostics
-      report.warnings = intermediate.warnings || []
+      report.warnings = [...iveWarnings, ...(intermediate.warnings || [])]
       if (built.conversion.after) {
         const { min, max } = built.conversion.after
         report.worldSize = min.map((value, index) => Number((max[index] - value).toFixed(3)))
@@ -891,6 +1021,8 @@ function convertIveToGlb(inputPath, outputPath, options = {}) {
     }
   } catch (error) {
     report.error = error.message || String(error)
+    // 失败路径也把已产生的告警带出（目前只有"原生起不来、正在回退"），否则排障看不到现场。
+    if (iveWarnings.length) report.warnings = [...iveWarnings]
     report.elapsedMs = Date.now() - startedAt
     return report
   }
@@ -908,8 +1040,11 @@ module.exports = {
   pruneMeshlessSubtrees,
   readImagePixels,
   resolveIveHelper,
+  resolveWasmHelper,
   rotateVector,
+  shortenForError,
   transformVectorArray,
+  vendorRootsFor,
   weldVertices,
   worldBounds,
 }
